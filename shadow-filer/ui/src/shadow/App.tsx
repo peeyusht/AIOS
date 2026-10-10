@@ -169,7 +169,7 @@ export default function ShadowApp() {
           <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8 fade-in" key={section}>{page}</main>
         </div>
       </div>
-      <Toaster position="bottom-right" theme={dark ? "dark" : "light"} closeButton />
+      <Toaster position="top-center" offset={{ top: 60 }} theme={dark ? "dark" : "light"} closeButton />
     </TooltipProvider>
   );
 }

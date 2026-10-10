@@ -134,6 +134,31 @@ def _cleanup_hints() -> dict:
         return {}
 
 
+def _reindex(*paths: str) -> None:
+    """Tell the search index a file moved, so suggestions stop counting the place it left. Without this
+    a file you filed and then took back keeps voting for that folder (and shows as its own duplicate)
+    until the next sweep."""
+    try:
+        import search_index
+        idx = search_index.get()
+        for p in paths:
+            if idx and p:
+                idx.enqueue(p)
+    except Exception:
+        pass
+
+
+def _inbox_file(path: str):
+    """A file directly inside a watched folder, or None. Lets Show work for any Inbox file."""
+    try:
+        p = Path(path)
+        if any(p.parent.resolve() == Path(r).resolve() for r in Ctx.cfg["inbox_folders"]) and p.is_file():
+            return {"path": str(p)}
+    except OSError:
+        pass
+    return None
+
+
 def _inbox_post(self, path: str, body: dict):
     import mover
     cfg = Ctx.cfg
@@ -157,6 +182,7 @@ def _inbox_post(self, path: str, body: dict):
                 if hit:
                     meta.update(source=hit["source"], rank=hit["rank"])
             res = mover.move(cfg, p, folder, meta, Ctx.log)
+            _reindex(res["src"], res["dest"])
             return self._send(200, res)
         if path == "/api/inbox/mkdir":
             res = mover.make_folder(cfg, str(body.get("parent", "")), str(body.get("name", "")), Ctx.log)
@@ -175,6 +201,7 @@ def _inbox_post(self, path: str, body: dict):
                 Ctx.db.clear_actual(res["restored"])
             except Exception:
                 pass
+            _reindex(res["removed"], res["restored"])
             return self._send(200, res)
     except mover.MoveError as e:
         return self._send(200, {"ok": False, "message": str(e)})
@@ -461,7 +488,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def _report_item(path: str):
     """Only paths from the last scan report are accepted, so the UI can't be used to point at
-    arbitrary files."""
+    arbitrary files. (Show also accepts files directly in a watched folder: see _inbox_file.)"""
     import cleanup
     rep = cleanup.load_report()
     return next((it for it in (rep or {}).get("items", []) if it["path"] == path), None)
@@ -504,7 +531,7 @@ def _cleanup_post(self, path: str, body: dict):
         subprocess.Popen(["explorer.exe", "shell:RecycleBinFolder"])
         return self._send(200, {"ok": True})
     if path == "/api/cleanup/reveal":
-        item = _report_item(str(body.get("path", "")))
+        item = _report_item(str(body.get("path", ""))) or _inbox_file(str(body.get("path", "")))
         if item is None:
             return self._send(400, {"ok": False, "message": "Unknown file."})
         if os.name != "nt":
