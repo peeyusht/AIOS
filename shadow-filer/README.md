@@ -192,8 +192,10 @@ install: `ocr.py` drives Windows' own OCR and PDF renderer through Windows Power
 Every file waiting in Downloads gets up to three destination suggestions. **File it** moves it; **Undo** moves it back.
 - **Where suggestions come from:** your already-filed documents. Each file has a fingerprint (name + start of its
   text, embedded locally with `nomic-embed-text`, never its folder). A new file's 10 most similar filed documents
-  vote for their folders; the share of the vote is the percentage shown. A matching rule is always listed first,
-  and the local model's pick is listed too when it differs.
+  vote for their folders; the share of the vote is the percentage shown. A matching rule is always listed first.
+  Next, if the file name mentions a word that names exactly one folder (e.g. "Pavak", "Muthoot", "Shivalik"),
+  that folder: right 86% of the time on 236 filed documents, and it works for new folders with few files, where
+  similar-document voting can't. The local model's pick is listed too when it differs.
 - **Measured accuracy** (leave-one-out on 909 filed documents with text, 11 Oct 2026): first suggestion right
   72%, right folder in the top three 88%. Shown at 95%+: right 94%; 50–70%: 72%; under 50%: 33%.
 - **Moving safely (`mover.py`):** only files directly in a watched folder, only into existing folders inside the

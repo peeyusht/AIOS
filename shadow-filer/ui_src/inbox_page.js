@@ -1,7 +1,7 @@
 /* Inbox page (Phase 2, suggest mode): files waiting in Downloads with filing suggestions, "File it", Undo.
    Uses the bundle's helpers: f, Z, uc, al, Ba, Yn, Gf, He, cc, Wl, cm, Qt, Ya, d1 (refresh icon), SFx. */
 const SFinboxIcon=Qt("inbox",[["polyline",{points:"22 12 16 12 14 15 10 15 8 12 2 12",key:"i1"}],["path",{d:"M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z",key:"i2"}]]);
-const SFsrcText={rule:"rule",similar:"like your filed docs",model:"model's guess"};
+const SFsrcText={rule:"rule",name:"name matches folder",similar:"like your filed docs",model:"model's guess"};
 function SFconf(score){if(score==null)return null;const pct=Math.round(score*100);const tone=score>=.95?"success":score>=.7?"info":"warning";return f.jsx(Ba,{tone,children:`${pct}%`})}
 function SFinboxItem({it,dests,onDone,setMsg}){
   const first=it.candidates?.[0];

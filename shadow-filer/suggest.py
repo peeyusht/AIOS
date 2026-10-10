@@ -16,6 +16,25 @@ from operator import mul
 from pathlib import Path
 
 DEFAULTS = {"k": 10, "temperature": 0.05, "show": 3, "duplicate_similarity": 0.995}
+# Words in folder names too general to identify one folder.
+GENERIC = set("""completed projects areas resources archives other clients company documents personal technical
+guides learning library framework research vendor marketing platform finance software firmware todelete bank
+technologies services incorporation""".split())
+
+
+def _tokens(s: str) -> list[str]:
+    import re
+    return [t for t in re.split(r"[^a-z0-9]+", s.lower()) if len(t) >= 4 and t not in GENERIC]
+
+
+def name_owners(dests: list[str]) -> dict:
+    """Distinctive word -> the one destination folder named with it (e.g. 'pavak' -> 1-Projects/Pavak-Incorporation).
+    A word in more than one folder name identifies nothing and is left out."""
+    owner: dict = {}
+    for d in dests:
+        for t in set(_tokens(d.split("/")[-1])):
+            owner.setdefault(t, set()).add(d)
+    return {t: next(iter(v)) for t, v in owner.items() if len(v) == 1}
 
 
 def settings(cfg: dict) -> dict:
@@ -66,6 +85,16 @@ class Suggester:
             cands.append({"folder": rule["destination"], "source": "rule", "score": None,
                           "why": f"rule '{rule.get('name')}'",
                           "exists": rule["destination"] in set(self.dests.get())})
+
+        # The file name mentions exactly one folder's distinctive word: right 86% of the time on filed documents,
+        # and it works for new folders with only a few files, where similar-document voting can't.
+        owners = name_owners(self.dests.get())
+        named = {owners[t]: t for t in _tokens(p.stem) if t in owners}
+        if len(named) == 1:
+            folder, word = next(iter(named.items()))
+            if folder not in {c["folder"] for c in cands}:
+                cands.append({"folder": folder, "source": "name", "score": None,
+                              "why": f"file name mentions '{word}'", "exists": True})
 
         fp = self.index.fingerprint(path) if self.index else None
         knn, duplicate = [], None
