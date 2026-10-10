@@ -1,7 +1,7 @@
 /* Search page, injected into the built bundle (same scope as the other pages).
    Uses the bundle's helpers: f, Z, uc, al, Ba, Yn, Gf, He, cc, Wl, cm, Qt, Ya, Cf, g1 (search icon), d1 (refresh icon). */
 const SFsearchIcon=Qt("file-search",[["path",{d:"M14 2v4a2 2 0 0 0 2 2h4",key:"s1"}],["path",{d:"M4.268 21a2 2 0 0 0 1.727 1H18a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v3",key:"s2"}],["path",{d:"m9 18-1.5-1.5",key:"s3"}],["circle",{cx:"5",cy:"14",r:"3",key:"s4"}]]);
-const SFstatusText={ok:"Text indexed",name_only:"Name only",no_text:"No text (scanned?)",cloud:"Cloud-only, name only",error:"Error"};
+const SFstatusText={ok:"Text indexed",ocr:"Text from OCR",ocr_empty:"OCR found no text",locked:"Password-protected",name_only:"Name only",no_text:"No text (scanned?)",cloud:"Cloud-only, name only",error:"Error"};
 function SFhl(text,q){
   const words=(q.toLowerCase().match(/[\w\-./]+/g)||[]).filter(w=>w.length>1);
   if(!words.length||!text)return text;
@@ -57,6 +57,7 @@ function SFsearch(){
       ["Folders",SFx("div",{className:"space-y-0.5"},(st.roots??[]).map(r=>SFx("div",{key:r.path,className:"font-mono text-xs"},r.path,r.exists?"":" (not found)")))],
       ["Files",Object.entries(st.by_status??{}).map(([k,v])=>`${SFstatusText[k]??k}: ${v.toLocaleString()}`).join(" · ")||"–"],
       ["Model",SFx("span",null,f.jsx("span",{className:"font-mono text-xs",children:st.model}),st.model_ok===!1?" (not installed)":"")],
+      ["OCR",!st.ocr?"–":!st.ocr.windows?"Needs Windows":!st.ocr.enabled?"Off (Settings › OCR)":st.ocr.available===!1?SFx("span",{className:"text-warning"},"Unavailable: ",st.ocr.error):st.ocr.engine?`Windows OCR (${st.ocr.engine}) · ${st.ocr.files} file${st.ocr.files===1?"":"s"} read · ${Math.round(st.ocr.seconds)} s`:"Windows OCR · waiting for the first scanned file"],
       ["Keyword index",st.fts?"SQLite FTS5":"basic (FTS5 not available)"],
       ["Index size",He(st.db_bytes)],
       ["Privacy","Runs only on this PC. search.db holds text from your documents; delete it any time and it is rebuilt."],

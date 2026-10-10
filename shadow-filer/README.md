@@ -177,3 +177,13 @@ The console is the original Vite build in `ui_src/base/` plus three pages writte
 ## Your data (never committed)
 `shadow.db` (predictions, cleanup choices), `search.db` (text extracted from your documents), `cleanup_report.json`,
 logs and `config.yaml` are listed in `.gitignore`. Keep it that way: they contain file names and document contents.
+
+## OCR (scanned files)
+Scanned PDFs, images (screenshots, photos of documents) and Word files that contain only screenshots are read with
+the OCR engine built into Windows 10/11, so they become searchable and get better filing predictions. Nothing to
+install: `ocr.py` drives Windows' own OCR and PDF renderer through Windows PowerShell (no console window).
+- Password-protected PDFs are never opened; Search shows them as "Password-protected".
+- Settings › OCR: turn it on/off, pages read per scanned PDF (default 10), minimum image size (default 15 KB,
+  to skip icons and logos), and a **Test OCR** button.
+- OCR uses the Windows display language's OCR pack (English is installed by default on English Windows).
+- OCR text lands in `search.db` like any other document text: same sensitivity, same "never leaves this PC".

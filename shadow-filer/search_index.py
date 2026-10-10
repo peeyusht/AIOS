@@ -185,10 +185,14 @@ class Embedder:
 class Index:
     """Background indexer + in-memory vectors for fast search. One per process."""
 
-    def __init__(self, cfg: dict, log=None, embedder=None, extract=None):
+    def __init__(self, cfg: dict, log=None, embedder=None, extract=None, ocr_fn="default"):
         self.cfg, self.log = cfg, log
         self.embed = embedder or Embedder(cfg)
         self._extract = extract
+        if ocr_fn == "default":
+            import ocr
+            ocr_fn = ocr.ocr_files if os.name == "nt" else None
+        self._ocr = ocr_fn  # None = no OCR (not Windows)
         self.conn = connect()
         self.lock = threading.RLock()        # guards self.conn and the in-memory vectors
         self.queue: dict[str, float] = {}
@@ -254,7 +258,7 @@ class Index:
                 "chunks": n_chunks, "vectors": len(self.vecs), "db_bytes": size, "errors": errs,
                 "model": s["model"], "roots": [{"source": src, "path": str(p), "exists": p.is_dir()}
                                                for src, p in roots(self.cfg)],
-                "fts": has_fts(self.conn), "queued": len(self.queue)}
+                "fts": has_fts(self.conn), "queued": len(self.queue), "ocr": _ocr_status(self.cfg)}
 
     # ---------- loop
     def _loop(self):
@@ -264,7 +268,9 @@ class Index:
         while not self.stop.is_set():
             try:
                 s = settings(self.cfg)  # re-read: settings can change from the UI
-                sig = (s["model"], tuple(str(p) for _, p in roots(self.cfg)), s["enabled"])
+                import ocr
+                sig = (s["model"], tuple(str(p) for _, p in roots(self.cfg)), s["enabled"],
+                       ocr.settings(self.cfg)["enabled"])
                 due = (time.time() - last > s["sweep_minutes"] * 60 or self.state["last_sweep"] is None
                        or sig != getattr(self, "_sig", sig))
                 self._sig = sig
@@ -360,11 +366,16 @@ class Index:
         with self.lock:
             known = {r["path"]: (r["size"], r["mtime_ns"], r["status"])
                      for r in self.conn.execute("SELECT path, size, mtime_ns, status FROM files")}
+        import ocr
+        ocr_on = self._ocr is not None and ocr.settings(self.cfg)["enabled"] and self._ocr_available()
         seen, todo = set(), []
         for src, root, path, st in self._walk():
             seen.add(path)
             k = known.get(path)
-            if k is None or k[0] != st.st_size or k[1] != st.st_mtime_ns or k[2] in ("error", "pending"):
+            redo_ocr = (ocr_on and k is not None and (k[2] == "no_text" or k[2] == "name_only")
+                        and ocr.wanted(path, st.st_size, self.cfg))
+            if (k is None or k[0] != st.st_size or k[1] != st.st_mtime_ns or k[2] in ("error", "pending")
+                    or redo_ocr):
                 todo.append((src, root, path, st))
         gone = [p for p in known if p not in seen]
         for p in gone:
@@ -439,11 +450,18 @@ class Index:
         ext = os.path.splitext(path)[1].lower()
         if is_cloud_only(st):
             return "", "cloud", None
+        import ocr
+        ocr_ok = self._ocr is not None and ocr.wanted(path, st.st_size, self.cfg) and self._ocr_available()
         if ext not in DOC_TEXT_EXT:
+            if ocr_ok and ext in ocr.IMAGE_EXT:
+                return self._ocr_text(path)
             return "", "name_only", None
         if st.st_size > s["max_file_mb"] * 1024 * 1024:
             return "", "name_only", "too big to read"
-        ecfg = {**self.cfg, "extraction": {"max_chars": s["max_chars_per_file"], "max_pdf_pages": s["max_pdf_pages"]}}
+        if ext == ".pdf" and self._is_encrypted(path):
+            return "", "locked", None
+        ecfg = {**self.cfg, "_no_ocr": True,
+                "extraction": {"max_chars": s["max_chars_per_file"], "max_pdf_pages": s["max_pdf_pages"]}}
         try:
             if self._extract:
                 text = self._extract(Path(path), ecfg)
@@ -453,9 +471,36 @@ class Index:
         except Exception as e:
             return "", "error", str(e)[:200]
         if not text.strip():
-            # scanned PDF or empty doc: still findable by name
+            if ocr_ok:  # scanned PDF, or a Word file that is only screenshots
+                return self._ocr_text(path)
             return "", "no_text", None
         return text, "ok", None
+
+    def _is_encrypted(self, path: str) -> bool:
+        try:
+            import shadow_agent
+            return shadow_agent.is_encrypted_pdf(Path(path))
+        except Exception:
+            return False
+
+    def _ocr_available(self) -> bool:
+        import ocr
+        return ocr.available() if self._ocr is ocr.ocr_files else True
+
+    def _ocr_text(self, path: str) -> tuple[str, str, str | None]:
+        import ocr
+        self.state["phase"] = "reading scanned file (OCR)"
+        try:
+            r = self._ocr([path], self.cfg).get(path) or {}
+        except ocr.Unavailable as e:
+            self.state["last_error"] = f"OCR unavailable: {e}"
+            return "", "no_text", None
+        finally:
+            self.state["phase"] = "indexing"
+        if r.get("locked"):
+            return "", "locked", None
+        text = (r.get("text") or "")[: settings(self.cfg)["max_chars_per_file"]]
+        return (text, "ocr", None) if text.strip() else ("", "ocr_empty", r.get("error"))
 
     def _index_file(self, src: str, root: Path, path: str, st) -> int:
         s = settings(self.cfg)
@@ -634,6 +679,11 @@ class Index:
         with self.lock:
             r = self.conn.execute("SELECT path, ext FROM files WHERE path=?", (path,)).fetchone()
         return dict(r) if r else None
+
+
+def _ocr_status(cfg) -> dict:
+    import ocr
+    return {**ocr.status(), "enabled": ocr.settings(cfg)["enabled"], "windows": os.name == "nt"}
 
 
 def _snippet(text: str, words: list[str], width: int = 320) -> str:

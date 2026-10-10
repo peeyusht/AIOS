@@ -220,6 +220,39 @@ class Destinations:
 
 # --------------------------------------------------------------------------- extraction
 def extract_text(p: Path, cfg: dict) -> str:
+    """Text of a document. Scanned PDFs, images and screenshot-only Word files fall back to Windows OCR
+    (ocr.py) unless cfg['_no_ocr'] is set (the search index runs OCR itself)."""
+    text = _extract_text(p, cfg)
+    if not text.strip() and not cfg.get("_no_ocr"):
+        try:
+            import ocr
+            if ocr.available() and ocr.wanted(str(p), p.stat().st_size, cfg) and not is_encrypted_pdf(p):
+                text = ocr.ocr_text(str(p), cfg)[: cfg["extraction"]["max_chars"]]
+                if text:
+                    log.info("OCR read %d characters from %s", len(text), p.name)
+        except Exception as e:
+            log.warning("OCR failed for %s: %s", p.name, e)
+    return text
+
+
+def is_encrypted_pdf(p: Path) -> bool:
+    """Password-protected PDF that can't be opened without the password (never guessed)."""
+    if p.suffix.lower() != ".pdf":
+        return False
+    try:
+        from pypdf import PdfReader
+        r = PdfReader(str(p))
+        if not r.is_encrypted:
+            return False
+        try:
+            return not r.decrypt("")  # owner-password-only PDFs open with an empty user password
+        except Exception:
+            return True
+    except Exception:
+        return False
+
+
+def _extract_text(p: Path, cfg: dict) -> str:
     ext = p.suffix.lower()
     mx = cfg["extraction"]["max_chars"]
     try:
@@ -256,7 +289,10 @@ def extract_text(p: Path, cfg: dict) -> str:
                         lines.append(shape.text_frame.text)
             return "\n".join(lines)[:mx]
     except Exception as e:  # encrypted, corrupt, locked...
-        log.warning("extract failed for %s: %s", p.name, e)
+        if "decrypt" in str(e).lower():
+            log.info("password-protected, can't read: %s", p.name)
+        else:
+            log.warning("extract failed for %s: %s", p.name, e)
     return ""
 
 

@@ -91,6 +91,13 @@ function SFrules({rules,onChange,dests}){
             missing&&SFx("span",{className:"text-warning"},"⚠ This folder doesn't exist in your PARA tree, so these predictions can never match."))));}),
     SFx(uc,{onClick:()=>onChange([...list,{name:`rule-${list.length+1}`,extensions:[],name_regex:"",destination:""}])},"+ Add rule"));
 }
+function SFocrTest(){
+  const[r,setR]=Z.useState(null),[busy,setBusy]=Z.useState(!1);
+  const run=async()=>{setBusy(!0);setR(null);try{setR(await cm("/api/ocr/selftest",{}))}catch(e){setR({ok:!1,message:String(e?.message??e)})}setBusy(!1)};
+  return SFx("div",{className:"space-y-1.5"},SFx(uc,{onClick:run,disabled:busy},busy?"Testing…":"Test OCR"),
+    r&&SFx("div",{className:`text-sm ${r.ok?"text-success":"text-danger"}`},r.message),
+    r&&!r.ok&&(r.image||r.pdf)&&SFx("div",{className:"font-mono text-xs text-muted-foreground"},"image: ",r.image?.text||r.image?.error||"(nothing)"," · pdf: ",r.pdf?.text||r.pdf?.error||"(nothing)"));
+}
 function SFsettings(){
   const[mode,setMode]=Z.useState("form");
   const[meta,setMeta]=Z.useState(null),[orig,setOrig]=Z.useState(null),[form,setForm]=Z.useState(null),[err,setErr]=Z.useState(null);
@@ -102,7 +109,7 @@ function SFsettings(){
   Z.useEffect(()=>()=>{Hn.dirty=!1},[]);
   const set=(path,v)=>setForm(old=>{const n=SFclone(old);const ks=path.split(".");let o=n;for(const k of ks.slice(0,-1)){if(typeof o[k]!=="object"||o[k]===null)o[k]={};o=o[k]}o[ks[ks.length-1]]=v;return n});
   const get=(path,dflt)=>{let o=form;for(const k of path.split(".")){if(o==null)return dflt;o=o[k]}return o??dflt};
-  const dc=k=>meta?.defaults?.cleanup?.[k], ds=k=>meta?.defaults?.search?.[k];
+  const dc=k=>meta?.defaults?.cleanup?.[k], ds=k=>meta?.defaults?.search?.[k], dO=k=>meta?.defaults?.ocr?.[k];
   const save=async()=>{setSaving(!0);setRes(null);try{const r=await cm("/api/settings",{raw:form});setRes(r);if(r.ok){await load()}}catch(e){setRes({ok:!1,message:e instanceof Error?e.message:String(e)})}setSaving(!1)};
   const restart=async()=>{setRestarting("Restarting…");try{const r=await Ee.restart();if(!r.ok){setRestarting(r.message);return}Hn.dirty=!1;await new Promise(s=>setTimeout(s,1500));for(;;){try{await Ee.status();window.location.reload();return}catch{await new Promise(s=>setTimeout(s,1500))}}}catch(e){setRestarting(String(e?.message??e))}};
   const switchMode=m=>{if(m!=="form"&&dirty&&!window.confirm("You have unsaved changes in the form. Discard them?"))return;if(m!=="form")setForm(SFclone(orig));else load();setMode(m)};
@@ -162,6 +169,12 @@ function SFsettings(){
       !searchOff&&f.jsx(SFrow,{label:"Skip paths matching",help:"One pattern per line, e.g. *\\node_modules\\*",children:f.jsx(SFlines,{value:get("search.exclude_globs",[]),onChange:v=>set("search.exclude_globs",v),rows:3})}),
       !searchOff&&f.jsx(SFrow,{label:"Minimum meaning match",help:"Meaning-only results below this are hidden. Raise if you see weak matches; lower if good ones are missing.",children:f.jsx(SFnum,{value:get("search.min_similarity",ds("min_similarity")),onChange:v=>set("search.min_similarity",v),min:0,max:1,step:.01})}),
       !searchOff&&f.jsx(SFrow,{label:"Re-check folders every",help:"New and changed files are also picked up within seconds.",children:f.jsx(SFnum,{value:get("search.sweep_minutes",ds("sweep_minutes")),onChange:v=>set("search.sweep_minutes",v),min:1,max:1440,suffix:"minutes"})}))}),
+    f.jsx(al,{title:"OCR (scanned files)",children:SFx("div",{style:{marginTop:"-12px"}},
+      f.jsx(SFrow,{label:"Read scanned files",help:"Uses the OCR built into Windows. Scanned PDFs, images and Word files that are only screenshots become searchable and get better filing predictions. Password-protected PDFs are never opened.",
+        children:f.jsx(SFtoggle,{value:get("ocr.enabled",dO("enabled")),onChange:v=>set("ocr.enabled",v),label:"Use OCR"})}),
+      get("ocr.enabled",dO("enabled"))!==!1&&f.jsx(SFrow,{label:"Pages per scanned PDF",help:"Later pages are skipped. More pages = slower indexing.",children:f.jsx(SFnum,{value:get("ocr.max_pdf_pages",dO("max_pdf_pages")),onChange:v=>set("ocr.max_pdf_pages",v),min:1,max:200,suffix:"pages"})}),
+      get("ocr.enabled",dO("enabled"))!==!1&&f.jsx(SFrow,{label:"Skip images smaller than",help:"Small images are mostly icons and logos.",children:f.jsx(SFnum,{value:get("ocr.min_image_kb",dO("min_image_kb")),onChange:v=>set("ocr.min_image_kb",v),min:0,max:10000,suffix:"KB"})}),
+      f.jsx(SFrow,{label:"Test",help:"Reads a generated test image and a test scanned PDF. Takes a few seconds.",children:f.jsx(SFocrTest,{})}))}),
     f.jsx(al,{title:"Interface",children:SFx("div",{style:{marginTop:"-12px"}},
       f.jsx(SFrow,{label:"Port",help:"http://127.0.0.1:<port>. Only this PC can reach it. Needs a restart.",children:f.jsx(SFnum,{value:get("ui.port",8765),onChange:v=>set("ui.port",v),min:1024,max:65535})}),
       f.jsx(SFrow,{label:"Config file",children:SFx("span",{className:"font-mono text-xs"},meta.config_path," · previous version kept as config.yaml.bak")}))}),

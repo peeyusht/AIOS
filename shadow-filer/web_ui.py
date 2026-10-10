@@ -110,6 +110,10 @@ def apply_config(text: str) -> dict:
     return {"ok": True, "message": msg, "restart_needed": Ctx.status["restart_needed"]}
 
 
+def cfg_now():
+    return Ctx.cfg
+
+
 def restart_agent():
     """Exit with the restart code; the supervisor starts a fresh agent immediately."""
     Ctx.log.info("restart requested from UI")
@@ -243,7 +247,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {
                     "raw": raw, "models": Ctx.status.get("installed_models") or [],
                     "destinations": Ctx.dests.get() if cfg["para_root"].is_dir() else [],
-                    "defaults": {"cleanup": cleanup.DEFAULTS, "search": search_index.DEFAULTS},
+                    "defaults": {"cleanup": cleanup.DEFAULTS, "search": search_index.DEFAULTS,
+                                 "ocr": __import__("ocr").DEFAULTS},
                     "restart_needed": Ctx.status.get("restart_needed", False),
                     "restart_keys": list(RESTART_KEYS), "config_path": str(Ctx.config_path),
                     "os": os.name})
@@ -333,6 +338,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._search_post(u.path, body)
         if u.path.startswith("/api/cleanup/"):
             return self._cleanup_post(u.path, body)
+        if u.path == "/api/ocr/selftest":
+            import ocr
+            if os.name != "nt":
+                return self._send(200, {"ok": False, "message": "OCR needs Windows."})
+            r = ocr.selftest(cfg_now())
+            Ctx.log.info("OCR self-test: %s", r["message"])
+            return self._send(200, r)
         if u.path == "/api/restart":
             if Ctx.status.get("mode") != "agent":
                 return self._send(400, {"ok": False, "message": "Only the running agent can restart itself."})
