@@ -42,8 +42,8 @@ FIELDS = [
     ("ocr.max_pdf_pages", "int", 1, 200),
     ("ocr.min_image_kb", "int", 0, 10000),
     ("autofile.enabled", "bool", None, None),
-    ("autofile.min_decisions", "int", 5, 500),
-    ("autofile.min_rate", "float", 0.5, 1.0),
+    ("autofile.min_decisions", "int", 20, 500),   # floors: autofile.FLOORS
+    ("autofile.min_rate", "float", 0.9, 1.0),
     ("autofile.min_score", "float", 0.5, 1.0),
     ("autofile.delay_minutes", "int", 1, 1440),
     ("search.enabled", "bool", None, None),

@@ -6,6 +6,7 @@ accurate rules and the model are, per category and per confidence level.
 
 **Nothing happens to your files on its own.** It moves a file only when you click **File it** on the Inbox page
 (never overwriting, journaled, undoable), and sends files to the Recycle Bin only when you confirm on Cleanup.
+The one exception is auto-filing (Phase 3, below), which is off until you switch it on.
 
 Pages in the console (http://127.0.0.1:8765): Overview, **Inbox** (suggest mode: File it / Undo), **Search** (meaning + keyword search over your folders),
 Predictions, **Cleanup** (duplicates, extracted archives, old installers), Log, System, **Settings** (a form; YAML under Advanced).
@@ -211,10 +212,21 @@ Every file waiting in Downloads gets up to three destination suggestions. **File
 Off until you switch it on (Inbox page › Auto-filing › Turn on, or Settings). Even then, a file is moved
 automatically only when **all** of these hold:
 - its first suggestion's folder is **proven**: at least 20 of your Inbox decisions about that folder, agreeing with
-  its suggestion at least 90% of the time over the last 30 (filing elsewhere, or undoing a move, counts against);
+  its suggestion at least 90% of the time over the last 30 (filing elsewhere, or undoing a move, counts against).
+  This is counted separately for each kind of suggestion (rule, file name, similar documents): a folder proven
+  by similar-document suggestions is not thereby trusted for file-name matches. Settings can make the bar
+  stricter; 20 decisions and 90% are floors that the program enforces whatever `config.yaml` says;
 - the suggestion is a rule, a file-name match, or similar-documents at 95%+ (never the model's guess alone);
-- the file has been in Downloads for 15 minutes, Cleanup doesn't flag it, and it isn't password-protected;
+- the file has been in Downloads for 15 minutes (counted from when it arrived, not from a modified date it kept
+  from elsewhere), Cleanup doesn't flag it, and it isn't password-protected;
 - the same `mover.py` guarantees as File it: never overwrite, verified cross-drive copies, journal, **Undo**.
-Undoing an auto-move counts against that folder at once; below the bar it goes back to suggestions only.
+Undoing an auto-move wipes everything that folder had earned, for every kind of suggestion: it goes back to
+suggestions only until it is proven again from zero. Below the bar, likewise.
+What "the first suggestion" was is worked out by the agent when you file, not reported by the page.
+
+## Tests
+`.venv\Scripts\python -m unittest discover -s tests` (from this folder). They run on throwaway folders and
+cover the mover (no overwrite, verified cross-drive copy, rollback, journal, undo), the auto-filing rules,
+the last check before a delete, and the cloud-only rule. Nothing in Downloads or your PARA tree is touched.
 The Inbox page shows each folder's progress and marks files that would be auto-filed, so you can see what it
 would do before turning it on. Thresholds are in Settings › Auto-filing (Phase 3).

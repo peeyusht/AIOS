@@ -9,7 +9,8 @@ can measure accuracy.
 
 SAFETY: this program moves a file only when you click "File it" on the Inbox page (mover.py: never
 overwrites, journaled, undoable), and deletes only files you mark "Agree" on the Cleanup page and then
-confirm there (Recycle Bin by default). Nothing happens to your files on its own.
+confirm there (Recycle Bin by default). Nothing else happens to your files on its own, with one exception
+that is off until you switch it on: auto-filing into folders your own decisions have proven (autofile.py).
 
 Commands:
   python shadow_agent.py check               sanity-check config, folders and Ollama
@@ -56,6 +57,7 @@ log = logging.getLogger("shadow")
 TEXT_EXT = {".txt", ".md", ".csv", ".json", ".xml", ".html", ".htm", ".log",
             ".yaml", ".yml", ".ini", ".cfg", ".conf", ".py", ".ps1", ".sql", ".eml"}
 UNSURE = "UNSURE"
+FA_OFFLINE, FA_RECALL_ON_OPEN, FA_RECALL_ON_DATA = 0x1000, 0x40000, 0x400000
 
 
 # --------------------------------------------------------------------------- config
@@ -188,6 +190,16 @@ def sha256_of(p: Path, max_mb: int) -> str | None:
     return h.hexdigest()
 
 
+def is_cloud_only(p) -> bool:
+    """A placeholder whose content lives in the cloud (OneDrive Files-On-Demand, Google Drive streaming).
+    Opening one downloads it, so these are never opened."""
+    try:
+        a = getattr(os.stat(p, follow_symlinks=False), "st_file_attributes", 0) or 0
+    except OSError:
+        return False
+    return bool(a & (FA_OFFLINE | FA_RECALL_ON_OPEN | FA_RECALL_ON_DATA))
+
+
 def is_ignored(p: Path, cfg: dict) -> bool:
     name = p.name.lower()
     return any(fnmatch.fnmatch(name, pat.lower()) for pat in cfg["ignore_patterns"])
@@ -235,6 +247,8 @@ class Destinations:
 def extract_text(p: Path, cfg: dict) -> str:
     """Text of a document. Scanned PDFs, images and screenshot-only Word files fall back to Windows OCR
     (ocr.py) unless cfg['_no_ocr'] is set (the search index runs OCR itself)."""
+    if is_cloud_only(p):
+        return ""
     text = _extract_text(p, cfg)
     if not text.strip() and not cfg.get("_no_ocr"):
         try:
@@ -250,7 +264,7 @@ def extract_text(p: Path, cfg: dict) -> str:
 
 def is_encrypted_pdf(p: Path) -> bool:
     """Password-protected PDF that can't be opened without the password (never guessed)."""
-    if p.suffix.lower() != ".pdf":
+    if p.suffix.lower() != ".pdf" or is_cloud_only(p):  # a placeholder is not opened even to check
         return False
     try:
         from pypdf import PdfReader
@@ -415,6 +429,8 @@ def _process_inbox_file(p: Path, cfg: dict, dests: Destinations, db: DB) -> None
         return
     if not any(p.parent == inbox for inbox in cfg["inbox_folders"]):
         return  # e.g. a file just filed from the Inbox page: it now lives in PARA, it isn't a new download
+    if is_cloud_only(p):
+        return  # hashing or reading it would download it
     size = p.stat().st_size
     prev = db.latest_by_path().get(str(p))
     if prev and prev["size"] == size and prev["method"] != "error":
@@ -445,7 +461,7 @@ def record_actual(p: Path, cfg: dict, db: DB, allow_hash: bool = True) -> None:
     if not candidates:
         return
     match = next((c for c in candidates if c["filename"].lower() == p.name.lower()), None)
-    if match is None and allow_hash and any(c["sha256"] for c in candidates):
+    if match is None and allow_hash and any(c["sha256"] for c in candidates) and not is_cloud_only(p):
         try:
             h = sha256_of(p, cfg["hash_max_mb"])
         except OSError:
@@ -578,21 +594,41 @@ class InboxHandler(FileSystemEventHandler):
 
 
 class ParaHandler(FileSystemEventHandler):
+    """Files appearing under the PARA root. One worker looks at each after settle_seconds, so copying
+    thousands of files into the tree doesn't start thousands of threads."""
+
     def __init__(self, cfg: dict, db: DB):
         self.cfg, self.db = cfg, db
+        self.pending: dict[str, float] = {}
+        self.lock = threading.Lock()
+        threading.Thread(target=self._worker, daemon=True, name="para-events").start()
+
+    def _touch(self, path: str):
+        with self.lock:
+            self.pending[path] = time.time()
 
     def on_created(self, e):
         if not e.is_directory:
-            threading.Thread(target=self._later, args=(e.src_path,), daemon=True).start()
+            self._touch(e.src_path)
 
     def on_moved(self, e):
         if not e.is_directory:
-            threading.Thread(target=self._later, args=(e.dest_path,), daemon=True).start()
+            self._touch(e.dest_path)
 
-    def _later(self, path: str):
-        time.sleep(self.cfg["settle_seconds"])  # let copies finish
-        record_actual(Path(path), self.cfg, self.db)
-        _search_enqueue(path)
+    def _worker(self):
+        while True:
+            time.sleep(1)
+            cutoff = time.time() - self.cfg["settle_seconds"]  # let copies finish
+            with self.lock:
+                ready = [p for p, t in self.pending.items() if t <= cutoff]
+                for p in ready:
+                    del self.pending[p]
+            for path in ready:
+                try:
+                    record_actual(Path(path), self.cfg, self.db)
+                except Exception as ex:
+                    log.error("recording %s failed: %s", os.path.basename(path), ex)
+                _search_enqueue(path)
 
 
 def settle_worker(queue: dict, lock: threading.Lock, cfg: dict, dests: Destinations, db: DB, stop: threading.Event):
@@ -658,6 +694,11 @@ def run(cfg: dict, db: DB, config_path: Path) -> None:
         except KeyboardInterrupt:
             return
 
+    try:
+        import mover
+        mover.recover(cfg, log)  # journal entries a crash left unfinished
+    except Exception as e:
+        log.warning("move journal check failed: %s", e)
     wait_for_ollama(cfg)
     start_search(cfg)
     try:
@@ -677,7 +718,8 @@ def run(cfg: dict, db: DB, config_path: Path) -> None:
         log.info("watching inbox %s", inbox)
     obs.schedule(ParaHandler(cfg, db), str(cfg["para_root"]), recursive=True)
     log.info("watching PARA root %s (%d destinations)", cfg["para_root"], len(dests.get()))
-    log.info("SUGGEST MODE: files move only when you click File it on the Inbox page; deletes only when you confirm them on Cleanup")
+    log.info("files move only when you click File it on the Inbox page%s; deletes only when you confirm them on Cleanup",
+             " or by auto-filing into proven folders" if _autofile_on(cfg) else "")
     obs.start()
     STATUS["watching"] = True
     threading.Thread(target=settle_worker, args=(queue, lock, cfg, dests, db, stop), daemon=True).start()
@@ -716,6 +758,14 @@ def run(cfg: dict, db: DB, config_path: Path) -> None:
         stop.set()
         obs.stop()
         obs.join()
+
+
+def _autofile_on(cfg: dict) -> bool:
+    try:
+        import autofile
+        return autofile.settings(cfg)["enabled"]
+    except Exception:
+        return False
 
 
 def _search_enqueue(path: str) -> None:
@@ -937,7 +987,7 @@ def check(cfg: dict) -> bool:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Shadow Filer - predicts, never moves.")
+    ap = argparse.ArgumentParser(description="Shadow Filer - suggests where files belong; moves only what you file or have proven.")
     ap.add_argument("--config", default=str(BASE / "config.yaml"))
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check")

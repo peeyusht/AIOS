@@ -8,8 +8,12 @@ __pycache__/
 *.db-wal
 *.db-journal
 *.log
+*.log.*
 cleanup_report.json
 *.tmp
+*.shadowfiler-partial
+*.before-migrate
+shadow-filer-recycle-test-*.txt
 # Your settings (config.example.yaml is the template)
 config.yaml
 config.yaml.bak

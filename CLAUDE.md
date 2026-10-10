@@ -26,17 +26,24 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 
 ## Rules that must hold (don't relax without asking)
 - Nothing happens to files on its own except Phase 3 auto-filing, which is **off by default** and only for
-  folders proven by the user's own decisions (20+ decisions, ≥90% agreement over the last 30).
+  folders proven by the user's own decisions (20+ decisions, ≥90% agreement over the last 30). Those two
+  numbers are floors enforced in `autofile.settings()` (`FLOORS`), whatever `config.yaml` says. Trust is per
+  (folder, kind of suggestion); undoing an auto-move discards all of that folder's evidence; the evidence
+  (first suggestion, rank) is computed server-side in `web_ui._inbox_post`, never taken from the page; the
+  waiting time counts from arrival (`cleanup.added_time`), not mtime.
 - `mover.py`: only files directly in a watched folder → only existing folders inside PARA root; **never
   overwrite** (identical = refuse, different = "name (2)"); cross-drive = copy → SHA-256 verify → rename into
-  place → remove original, roll back if the original is in use; journal every move; undo refuses if the filed
-  copy changed.
+  place → remove original, roll back if the original is in use; journal every move (`pending` row before the
+  file is touched, `moved` after; `mover.recover()` settles leftovers at start and never removes a user file);
+  undo refuses if the filed copy changed.
 - Deletion only via Cleanup → **Recycle Bin**, only files the user marked Agree, each re-checked first. Files
   too big for the bin need a separate explicit confirmation. Keep/archive items (firmware, VM images) are never
   deletable from the UI.
-- Password-protected PDFs are never opened or guessed. Cloud-only placeholders are never opened.
+- Password-protected PDFs are never opened or guessed. Cloud-only placeholders are never opened: any new code
+  that reads a file must check `is_cloud_only` first (`shadow_agent`, `search_index`, `cleanup` each have one).
 - File contents are untrusted data in model prompts.
-- Never commit personal data: `*.db`, logs, `cleanup_report.json`, `config.yaml` (see `.gitignore`).
+- Never commit personal data: `*.db`, logs (including rotated `shadow.log.1`…), `cleanup_report.json`,
+  `config.yaml` (see `.gitignore`).
   `search.db` holds extracted text from personal documents (PAN, insurance, contracts).
 
 ## Working on it
@@ -51,6 +58,8 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - Useful CLI: `shadow_agent.py check | report | cleanup | search "<q>" | sysinfo`.
 - Self-tests worth running after related changes: Settings › OCR › Test OCR (`/api/ocr/selftest`); Recycle Bin
   self-test `/api/cleanup/selftest` (creates and recycles a tiny file in the agent folder).
+- Tests: `.venv\Scripts\python -m unittest discover -s tests` (stdlib unittest, temp folders only). Run them
+  after touching `mover.py`, `autofile.py`, `cleanup.py` or the cloud-only checks; add a test with any new rule.
 - Test file moves on throwaway folders first; never experiment on `Downloads` or `D:\Organized`.
 
 ## Measured numbers (11 Oct 2026, leave-one-out on the user's filed documents)
@@ -65,6 +74,8 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - Finance-type spreadsheets lean to `4-Archives/Frux-Technologies` (413 similar old docs); improves as the
   user files into Finance. Consider down-weighting archive folders for new files.
 - C: has <10% free space; Ollama runs qwen3:4b ~94% on GPU (`LLAMA_ARG_FIT_TARGET` was tuned to 512 MB).
-- Untracked leftovers in `shadow-filer/ui_dist/assets/index-sfc<hash>.js` (old builds): the user may delete.
+- Speed (11 Oct 2026, 1,365 filed examples, 17,710 chunks): comparisons use `math.sumprod` (~1.8x faster than
+  `sum(map(mul))`); kNN votes are cached per file in `Suggester._knn` until a fingerprint or the examples
+  change. A search is still seconds, mostly the Ollama embedding call.
 - Ideas not started: download-origin tracking (Zone.Identifier), expiry/deadline tracker, sensitive-data watch,
   work journal, firmware/VM library, version chains, near-duplicate images, Authenticode checks.

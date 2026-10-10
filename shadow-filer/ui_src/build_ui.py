@@ -23,7 +23,7 @@ reps = [
      's==="inbox"&&f.jsx(SFinbox,{}),s==="search"&&f.jsx(SFsearch,{}),s==="predictions"&&f.jsx(ay,{}),s==="cleanup"&&f.jsx(SFcleanup,{}),'),
     ('s==="settings"&&f.jsx(fy,{})', 's==="settings"&&f.jsx(SFsettings,{})'),
     ('Shadow mode — never moves, renames or deletes anything',
-     'Suggest mode — files move only when you click File it; deletes only what you confirm'),
+     'Files move only when you file them (or into proven folders, if auto-filing is on); deletes only what you confirm'),
 ]
 for a, b in reps:
     assert src.count(a) == 1, a

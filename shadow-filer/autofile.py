@@ -1,15 +1,21 @@
 """
 Phase 3: auto-filing, earned folder by folder.
 
-A folder becomes "proven" only from YOUR decisions on the Inbox page:
+A folder becomes "proven" only from YOUR decisions on the Inbox page, separately for each kind of
+suggestion (rule, file-name match, similar documents): being right about a folder one way says nothing
+about another way.
   - a decision counts as agreement when the folder was the first suggestion and you filed the file there;
-  - it counts against when you filed somewhere else, or undid a move into that folder (including an
-    auto-move: undoing what auto-filing did is the strongest "no");
-  - a folder needs at least `min_decisions` decisions, and `min_rate` agreement over its last `window`.
+  - it counts against when you filed somewhere else, or undid a move into that folder;
+  - a folder needs at least `min_decisions` decisions (never fewer than 20), and `min_rate` agreement
+    (never under 90%) over its last `window`, for that kind of suggestion;
+  - undoing an AUTO-move is the strongest "no": everything that folder had earned is discarded, for every
+    kind of suggestion, and it has to be proven again from zero.
+What the first suggestion was is worked out on the server when you file (web_ui.py), not taken from the page.
 When the switch is on, a file is auto-filed only if ALL hold:
-  - its first suggestion's folder is proven,
+  - its first suggestion's folder is proven for that kind of suggestion,
   - that suggestion is a rule, a file-name match, or similar-documents at >= `min_score`,
-  - the file has sat in Downloads for `delay_minutes` (time to open it, rename it or file it yourself),
+  - the file has been in Downloads for `delay_minutes` (time to open it, rename it or file it yourself),
+    counted from when it arrived, not from a modified date it kept from somewhere else,
   - Cleanup doesn't flag it (duplicate already filed, partial download, ...), it isn't password-protected,
   - the usual mover.py guarantees: never overwrite, verify cross-drive copies, journal, Undo.
 Undo an auto-move and that folder loses trust immediately; drop below the rate and it's back to suggestions.
@@ -31,12 +37,30 @@ DEFAULTS = {
     "every_minutes": 5,
 }
 ALLOWED_SOURCES = ("rule", "name", "similar")
+# The bar a folder must clear can be raised in Settings, never lowered below this.
+FLOORS = {"min_decisions": 20, "min_rate": 0.9}
 _lock = threading.Lock()
 STATE = {"last_run": None, "last_moved": 0, "last_error": None}
 
 
 def settings(cfg: dict) -> dict:
-    return {**DEFAULTS, **(cfg.get("autofile") or {})}
+    raw = cfg.get("autofile")
+    s = {**DEFAULTS, **(raw if isinstance(raw, dict) else {})}
+    for k, d in DEFAULTS.items():      # a hand-edited config.yaml can hold anything
+        if isinstance(d, bool):
+            s[k] = s[k] is True
+        else:
+            try:
+                s[k] = type(d)(s[k])
+            except (TypeError, ValueError):
+                s[k] = d
+    s["min_decisions"] = max(FLOORS["min_decisions"], s["min_decisions"])
+    s["min_rate"] = min(1.0, max(FLOORS["min_rate"], s["min_rate"]))
+    s["window"] = max(s["window"], s["min_decisions"])
+    s["min_score"] = min(1.0, max(0.5, s["min_score"]))
+    for k in ("delay_minutes", "max_per_run", "every_minutes"):
+        s[k] = max(1, s[k])
+    return s
 
 
 def _rows(cfg: dict):
@@ -44,44 +68,47 @@ def _rows(cfg: dict):
     c = mover._conn(cfg["database"])
     try:
         return [dict(r) for r in c.execute(
-            "SELECT id, ts, folder, top_folder, rank, source, status FROM moves ORDER BY id")]
+            "SELECT id, ts, undone_ts, folder, top_folder, top_source, rank, source, status "
+            "FROM moves ORDER BY id")]
     finally:
         c.close()
 
 
 def trust(cfg: dict) -> dict:
-    """Per-folder evidence from your decisions. Returns {folder: {...}}."""
+    """Evidence from your decisions. Returns {(folder, kind of suggestion): {...}}."""
     s = settings(cfg)
-    per: dict = {}
-
-    def add(folder, ok, ts):
-        d = per.setdefault(folder, {"folder": folder, "events": []})
-        d["events"].append((ts, ok))
+    events: dict = {}    # (folder, kind) -> [(ts, agreed, is the undo of an auto-move)]
+    revoked: dict = {}   # folder -> when you last undid an auto-move into it
 
     for r in _rows(cfg):
-        auto = (r["source"] or "").startswith("auto")
-        if auto:
-            if r["status"] == "undone":       # you reversed an auto-move: a clear "no" for that folder
-                add(r["folder"], False, r["ts"])
+        if r["status"] not in ("moved", "undone"):
+            continue                           # interrupted move: not a decision
+        src = r["source"] or ""
+        if src.startswith("auto"):
+            if r["status"] == "undone":        # you reversed an auto-move: that folder starts again
+                ts = r["undone_ts"] or r["ts"]
+                revoked[r["folder"]] = max(revoked.get(r["folder"], ""), ts)
+                events.setdefault((r["folder"], src[5:] or "unknown"), []).append((ts, False, True))
             continue
         top = r["top_folder"]
         if not top:
             continue                           # filed with no suggestion: says nothing about any folder
-        if r["status"] == "undone":
-            add(top, False, r["ts"])           # moved then undone: the suggestion wasn't right
-        elif r["folder"] == top and r["rank"] == 1:
-            add(top, True, r["ts"])
-        else:
-            add(top, False, r["ts"])           # you chose another folder
+        agreed = r["status"] == "moved" and r["folder"] == top and r["rank"] == 1
+        kind = r["top_source"] or (src if agreed else None) or "unknown"
+        events.setdefault((top, kind), []).append((r["ts"], agreed, False))
     out = {}
-    for folder, d in per.items():
-        ev = d["events"][-s["window"]:]
+    for (folder, kind), ev in events.items():
+        since = revoked.get(folder)
+        if since:
+            ev = [e for e in ev if e[0] > since or (e[2] and e[0] == since)]
+        ev = sorted(ev, key=lambda e: e[0])[-s["window"]:]
         n = len(ev)
-        agree = sum(1 for _, ok in ev if ok)
+        agree = sum(1 for e in ev if e[1])
         rate = agree / n if n else 0.0
         proven = n >= s["min_decisions"] and rate >= s["min_rate"]
-        out[folder] = {"folder": folder, "decisions": n, "agreed": agree, "rate": round(rate, 3),
-                       "proven": proven, "needed": max(0, s["min_decisions"] - n)}
+        out[(folder, kind)] = {"folder": folder, "source": kind, "decisions": n, "agreed": agree,
+                               "rate": round(rate, 3), "proven": proven,
+                               "needed": max(0, s["min_decisions"] - n), "revoked": since}
     return out
 
 
@@ -99,17 +126,22 @@ def decide(cfg: dict, item: dict, sug: dict, proven: dict, hints: dict, now: flo
         return {"auto": False, "folder": folder, "why": "folder missing"}
     if top["source"] == "similar" and (top.get("score") or 0) < s["min_score"]:
         return {"auto": False, "folder": folder, "why": f"suggestion only {round((top.get('score') or 0) * 100)}%"}
-    t = proven.get(folder)
+    t = proven.get((folder, top["source"]))
     if not t or not t["proven"]:
         need = t["needed"] if t else s["min_decisions"]
-        return {"auto": False, "folder": folder,
-                "why": f"folder not proven yet ({need} more decision{'' if need == 1 else 's'})" if need
-                else f"you agreed only {round((t or {}).get('rate', 0) * 100)}% of the time"}
+        more = f"{need} more decision{'' if need == 1 else 's'}"
+        if need and t and t.get("revoked"):
+            why = f"you undid an auto-move into this folder ({more} to prove it again)"
+        elif need:
+            why = f"folder not proven yet for this kind of suggestion ({more})"
+        else:
+            why = f"you agreed only {round(t['rate'] * 100)}% of the time"
+        return {"auto": False, "folder": folder, "why": why}
     if item["path"] in hints:
         return {"auto": False, "folder": folder, "why": "flagged by Cleanup"}
     if sug.get("duplicate"):
         return {"auto": False, "folder": folder, "why": "identical file already filed"}
-    if now - item["mtime"] < s["delay_minutes"] * 60:
+    if now - (item.get("added") or item["mtime"]) < s["delay_minutes"] * 60:
         return {"auto": False, "folder": folder, "why": f"waiting {s['delay_minutes']} min after download",
                 "soon": True}
     return {"auto": True, "folder": folder, "why": f"{top['source']} · folder proven ({t['agreed']}/{t['decisions']})"}
@@ -134,7 +166,7 @@ def run_once(cfg: dict, sg, db, log=None) -> int:
         return 0
     with _lock:
         proven = trust(cfg)
-        if not any(t["proven"] for t in proven.values()):
+        if not any(t["proven"] and t["source"] in ALLOWED_SOURCES for t in proven.values()):
             STATE.update(last_run=datetime.now().isoformat(timespec="seconds"), last_moved=0)
             return 0
         hints = _cleanup_paths()
@@ -143,7 +175,7 @@ def run_once(cfg: dict, sg, db, log=None) -> int:
         for it in files:
             if moved >= s["max_per_run"]:
                 break
-            if now - it["mtime"] < s["delay_minutes"] * 60:
+            if now - (it.get("added") or it["mtime"]) < s["delay_minutes"] * 60:
                 continue
             sug = sg.suggest(it["path"])
             d = decide(cfg, it, sug, proven, hints, now)
@@ -155,7 +187,8 @@ def run_once(cfg: dict, sg, db, log=None) -> int:
             try:
                 mover.move(cfg, it["path"], d["folder"],
                            {"size": it["size"], "source": "auto:" + top["source"], "rank": 1,
-                            "top_folder": d["folder"], "top_score": top.get("score")}, None)
+                            "top_folder": d["folder"], "top_score": top.get("score"),
+                            "top_source": top["source"]}, None)
                 moved += 1
                 if log:
                     log.info("AUTO-FILED %s -> %s (%s)", it["name"], d["folder"], d["why"])

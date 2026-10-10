@@ -12,7 +12,6 @@ Also shown: a matching rule (always first), and the local model's pick if it dif
 import math
 import os
 import time
-from operator import mul
 from pathlib import Path
 
 DEFAULTS = {"k": 10, "temperature": 0.05, "show": 3, "duplicate_similarity": 0.995}
@@ -51,6 +50,7 @@ class Suggester:
         self._cache = None
         self._cache_at = 0.0
         self._cache_n = -1
+        self._knn: dict = {}   # path -> (fingerprint, settings, votes, duplicate); valid for self._cache
 
     def _examples(self):
         """(path, folder at destination depth, fingerprint) for filed documents in valid destinations."""
@@ -64,8 +64,43 @@ class Suggester:
             label = _truncate(rel, depth)
             if label in valid:
                 out.append((path, label, vec))
-        self._cache, self._cache_at, self._cache_n = out, time.time(), n
+        old = self._cache
+        self._cache_at, self._cache_n = time.time(), n
+        if old is not None and len(old) == len(out) and all(
+                a[0] == b[0] and a[1] == b[1] and a[2] is b[2] for a, b in zip(old, out)):
+            return old  # nothing was filed, moved or re-read: the comparisons already made still stand
+        self._cache, self._knn = out, {}
         return out
+
+    def _votes(self, path: str, fp, s: dict):
+        """Folders of the most similar filed documents, and an identical one if there is one. Comparing a
+        file with every filed document is the slow part, so the answer is kept until either side changes."""
+        ex = self._examples()
+        key = (s["k"], s["temperature"], s["duplicate_similarity"])
+        hit = self._knn.get(path)
+        if hit and hit[0] is fp and hit[1] == key:
+            return [dict(c) for c in hit[2]], hit[3]
+        knn, duplicate = [], None
+        sims = [(math.sumprod(fp, v), label, ep) for ep, label, v in ex]
+        sims.sort(key=lambda t: -t[0])
+        if sims and sims[0][0] >= s["duplicate_similarity"]:
+            duplicate = {"folder": sims[0][1], "path": sims[0][2], "similarity": round(sims[0][0], 4)}
+        top = [t for t in sims if t[0] < s["duplicate_similarity"]][: s["k"]]
+        if top:
+            mx = top[0][0]
+            votes, who = {}, {}
+            for sim, label, ep in top:
+                w = math.exp((sim - mx) / s["temperature"])
+                votes[label] = votes.get(label, 0.0) + w
+                who.setdefault(label, []).append(os.path.basename(ep))
+            tot = sum(votes.values())
+            for label, w in sorted(votes.items(), key=lambda kv: -kv[1]):
+                knn.append({"folder": label, "source": "similar", "score": round(w / tot, 3),
+                            "why": "like " + ", ".join(who[label][:2]), "exists": True})
+        if len(self._knn) > 5000:
+            self._knn.clear()
+        self._knn[path] = (fp, key, knn, duplicate)
+        return [dict(c) for c in knn], duplicate
 
     def stats(self) -> dict:
         ex = self._examples()
@@ -99,23 +134,7 @@ class Suggester:
         fp = self.index.fingerprint(path) if self.index else None
         knn, duplicate = [], None
         if fp is not None:
-            ex = self._examples()
-            sims = [(sum(map(mul, fp, v)), label, ep) for ep, label, v in ex]
-            sims.sort(key=lambda t: -t[0])
-            if sims and sims[0][0] >= s["duplicate_similarity"]:
-                duplicate = {"folder": sims[0][1], "path": sims[0][2], "similarity": round(sims[0][0], 4)}
-            top = [t for t in sims if t[0] < s["duplicate_similarity"]][: s["k"]]
-            if top:
-                mx = top[0][0]
-                votes, who = {}, {}
-                for sim, label, ep in top:
-                    w = math.exp((sim - mx) / s["temperature"])
-                    votes[label] = votes.get(label, 0.0) + w
-                    who.setdefault(label, []).append(os.path.basename(ep))
-                tot = sum(votes.values())
-                for label, w in sorted(votes.items(), key=lambda kv: -kv[1]):
-                    knn.append({"folder": label, "source": "similar", "score": round(w / tot, 3),
-                                "why": "like " + ", ".join(who[label][:2]), "exists": True})
+            knn, duplicate = self._votes(path, fp, s)
 
         model = None
         row = self.db.latest_prediction(path) if self.db else None
@@ -147,6 +166,7 @@ class Suggester:
 
 def list_inbox(cfg: dict, dismissed: dict, ignore) -> list[dict]:
     """Files waiting in the watched folders (top level), newest first."""
+    from cleanup import added_time
     out = []
     for inbox in cfg["inbox_folders"]:
         try:
@@ -163,6 +183,7 @@ def list_inbox(cfg: dict, dismissed: dict, ignore) -> list[dict]:
             if dismissed.get(e.path) == st.st_size:
                 continue
             out.append({"path": e.path, "name": e.name, "size": st.st_size, "mtime": st.st_mtime,
+                        "added": added_time(st),  # when it arrived here; mtime can be years older
                         "ext": os.path.splitext(e.name)[1].lower()})
     out.sort(key=lambda f: -f["mtime"])
     return out

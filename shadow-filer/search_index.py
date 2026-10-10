@@ -25,7 +25,6 @@ import threading
 import time
 from array import array
 from datetime import datetime
-from operator import mul
 from pathlib import Path
 
 import requests
@@ -675,9 +674,9 @@ class Index:
         sem_rank, sem_best, sem_score, semantic, sem_error = {}, {}, {}, False, None
         try:
             qv = self.embed([s["query_prefix"] + q])[0]
-            with self.lock:
-                vecs, ids, paths = self.vecs, self.ids, self.paths
-                scores = [sum(map(mul, qv, v)) for v in vecs]
+            with self.lock:  # copy the lists, then compare outside the lock so indexing isn't held up
+                vecs, ids, paths = list(self.vecs), list(self.ids), list(self.paths)
+            scores = [math.sumprod(qv, v) for v in vecs]
             order = sorted(range(len(scores)), key=scores.__getitem__, reverse=True)
             for k in order:
                 p = paths[k]

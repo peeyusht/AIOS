@@ -10,8 +10,9 @@ Looks at your inbox folders (Downloads) and recommends what could be deleted:
   - firmware / VM images are listed as KEEP (hard to download again)
 
 SAFETY: scanning is read-only. Files are deleted only when you mark them Agree on the Cleanup
-page and then confirm (Recycle Bin by default; see "deleting" below). Files are opened only to hash them,
-and only when another file has exactly the same size. Cloud-only files (Google Drive streamed,
+page and then confirm (Recycle Bin by default; see "deleting" below). Files are opened only to compare
+them (when another file has exactly the same size), to read a zip's file list, or to look for an installer
+signature in an .exe. Cloud-only files (Google Drive streamed,
 OneDrive Files-On-Demand) are never opened, so a scan never triggers downloads.
 Documents (PDF, Office, text, keys/certificates) are never recommended because of age alone,
 only when an identical copy exists.
@@ -557,7 +558,7 @@ def scan(cfg: dict, progress=None, log=None) -> dict:
                 dpath = str(Path(f["path"]).parent / match)
                 info = _dir_summary(dpath, 6)
                 if info["files"]:
-                    chk = verify_extracted(Path(f["path"]), Path(dpath)) if ext == ".zip" else None
+                    chk = verify_extracted(Path(f["path"]), Path(dpath)) if ext == ".zip" and not f["cloud"] else None
                     if chk and chk["complete"]:
                         add(f, "archive_extracted", "safe" if age >= 7 else "likely",
                             f"Already extracted: all {chk['members']} file(s) in this zip are in the folder "
@@ -587,9 +588,10 @@ def scan(cfg: dict, progress=None, log=None) -> dict:
                         f"Driver installer, {int(age)} days old. The vendor site has current versions.",
                         caution="Keep it if this is the only copy for old or discontinued hardware.")
                 continue
-            installer = ext in INSTALLER_EXT or bool(INSTALLER_RX.search(stem)) or looks_like_installer_exe(Path(f["path"]))
             if age < s["installer_days"]:
                 continue
+            installer = ext in INSTALLER_EXT or bool(INSTALLER_RX.search(stem)) or (
+                not f["cloud"] and looks_like_installer_exe(Path(f["path"])))
             if installer:
                 add(f, "installer", "likely",
                     f"Installer, {int(age)} days old. Once installed it isn't needed, and it can be downloaded again.")

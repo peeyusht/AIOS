@@ -8,7 +8,9 @@ Guarantees:
   a temporary name, verify the copy byte-for-byte (SHA-256), rename it into place, and only then remove the
   original. If the original can't be removed (open in another program), the copy is removed and nothing
   has changed.
-- Every move is journaled (from, to, size, hash) and can be undone the same safe way.
+- Every move is journaled (from, to, size, hash) and can be undone the same safe way. The journal entry is
+  written BEFORE the file is touched ("pending") and completed afterwards, so a crash or a locked database
+  can't leave a filed file with no record; recover() settles interrupted entries when the agent starts.
 """
 import hashlib
 import os
@@ -33,6 +35,8 @@ def _conn(db_path: Path):
         id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, src TEXT, dest TEXT, size INTEGER, sha256 TEXT,
         folder TEXT, source TEXT, rank INTEGER, top_folder TEXT, top_score REAL,
         status TEXT, undone_ts TEXT, note TEXT)""")
+    if "top_source" not in {r[1] for r in c.execute("PRAGMA table_info(moves)")}:
+        c.execute("ALTER TABLE moves ADD COLUMN top_source TEXT")  # which kind of suggestion came first
     c.execute("""CREATE TABLE IF NOT EXISTS inbox_dismissed (path TEXT PRIMARY KEY, size INTEGER, ts TEXT)""")
     return c
 
@@ -138,7 +142,8 @@ def _transfer(src: str, dest: Path, digest: str) -> None:
         try:
             os.remove(dest)  # roll back: the original is still where it was
         except OSError:
-            pass
+            raise MoveError(f"Couldn't remove the original ({e.strerror or e}) or the new copy: the file is now "
+                            f"in both places. Nothing was lost; delete {dest} by hand.")
         if getattr(e, "winerror", None) in (32, 33):
             raise MoveError("The file is open in another program. Close it and try again.")
         raise MoveError(f"Couldn't remove the original ({e.strerror or e}); nothing was moved.")
@@ -157,16 +162,28 @@ def move(cfg: dict, path: str, folder: str, meta: dict | None = None, log=None) 
             raise MoveError(f"An identical copy is already in {folder}. Nothing was moved; "
                             "the Cleanup page can send this one to the Recycle Bin.")
         target = _free_name(dest_dir, os.path.basename(path))
-        _transfer(path, target, digest)
         c = _conn(cfg["database"])
         try:
+            _recover(c, log)
             cur = c.execute("INSERT INTO moves (ts, src, dest, size, sha256, folder, source, rank, top_folder, "
-                            "top_score, status) VALUES (?,?,?,?,?,?,?,?,?,?, 'moved')",
+                            "top_score, top_source, status) VALUES (?,?,?,?,?,?,?,?,?,?,?, 'pending')",
                             (datetime.now().isoformat(timespec="seconds"), path, str(target), st.st_size, digest,
                              folder, meta.get("source") or "manual", int(meta.get("rank") or 0),
-                             meta.get("top_folder"), meta.get("top_score")))
-            c.commit()
+                             meta.get("top_folder"), meta.get("top_score"), meta.get("top_source")))
+            c.commit()   # journal first: if this fails, the file hasn't been touched
             mid = cur.lastrowid
+            try:
+                _transfer(path, target, digest)
+            except MoveError:
+                c.execute("DELETE FROM moves WHERE id=?", (mid,))  # refused: nothing changed, nothing to record
+                c.commit()
+                raise
+            try:
+                c.execute("UPDATE moves SET status='moved' WHERE id=?", (mid,))
+                c.commit()
+            except sqlite3.Error as e:  # the file is filed; recover() completes the entry
+                if log:
+                    log.warning("journal entry %s left pending (%s); it is completed on the next start or Undo", mid, e)
         finally:
             c.close()
         if log:
@@ -178,6 +195,7 @@ def undo(cfg: dict, move_id: int, log=None) -> dict:
     with _lock:
         c = _conn(cfg["database"])
         try:
+            _recover(c, log)
             r = c.execute("SELECT * FROM moves WHERE id=?", (move_id,)).fetchone()
             if not r or r["status"] != "moved":
                 raise MoveError("Nothing to undo for that entry.")
@@ -202,6 +220,47 @@ def undo(cfg: dict, move_id: int, log=None) -> dict:
         if log:
             log.info("UNDO %s -> %s", dest, back)
         return {"ok": True, "restored": str(back)}
+
+
+def _recover(c, log=None) -> int:
+    """Settle journal entries left 'pending' by a crash or a failed write. Never removes one of your files:
+    the only thing deleted is our own unfinished temporary copy, and only while the original is still there."""
+    n = 0
+    for r in c.execute("SELECT * FROM moves WHERE status='pending'").fetchall():
+        src_ok, dest_ok = os.path.isfile(r["src"]), os.path.isfile(r["dest"])
+        if dest_ok and not src_ok and os.path.getsize(r["dest"]) == r["size"]:
+            c.execute("UPDATE moves SET status='moved', note=? WHERE id=?",
+                      ("journal completed after an interruption", r["id"]))
+            what = "the file had been moved; entry completed"
+        elif src_ok and not dest_ok:
+            partial = r["dest"] + ".shadowfiler-partial"
+            try:
+                if os.path.isfile(partial):
+                    os.remove(partial)
+            except OSError:
+                pass
+            c.execute("DELETE FROM moves WHERE id=?", (r["id"],))
+            what = "the file had not been moved; entry dropped"
+        else:
+            note = ("the original and the filed copy both exist; nothing was removed" if src_ok
+                    else "neither the original nor the filed copy was found")
+            c.execute("UPDATE moves SET status='interrupted', note=? WHERE id=?", (note, r["id"]))
+            what = note
+        n += 1
+        if log:
+            log.warning("interrupted move %s -> %s: %s", r["src"], r["dest"], what)
+    if n:
+        c.commit()
+    return n
+
+
+def recover(cfg: dict, log=None) -> int:
+    with _lock:
+        c = _conn(cfg["database"])
+        try:
+            return _recover(c, log)
+        finally:
+            c.close()
 
 
 def journal(cfg: dict, n: int = 100) -> list[dict]:

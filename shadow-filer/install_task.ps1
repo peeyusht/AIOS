@@ -97,7 +97,7 @@ $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -Ru
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
     -Principal $principal -Force `
-    -Description "Shadow Filer: predicts where new files belong; deletes only files you confirm on the Cleanup page (Recycle Bin)." | Out-Null
+    -Description "Shadow Filer: suggests where new files belong; moves only what you file (or folders you have proven, if auto-filing is on); deletes only files you confirm on the Cleanup page (Recycle Bin)." | Out-Null
 
 Start-ScheduledTask -TaskName $TaskName
 Write-Host "Installed and started '$TaskName' from $dir."

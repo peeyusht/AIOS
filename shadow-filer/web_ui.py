@@ -139,9 +139,24 @@ def _inbox_post(self, path: str, body: dict):
     cfg = Ctx.cfg
     try:
         if path == "/api/inbox/file":
-            res = mover.move(cfg, str(body.get("path", "")), str(body.get("folder", "")),
-                             {"size": body.get("size"), "source": body.get("source"), "rank": body.get("rank"),
-                              "top_folder": body.get("top_folder"), "top_score": body.get("top_score")}, Ctx.log)
+            p, folder = str(body.get("path", "")), str(body.get("folder", ""))
+            # What was suggested, and where your choice ranked, is worked out here rather than taken from the
+            # page: this record is the evidence auto-filing trusts.
+            meta = {"size": body.get("size"), "source": "manual", "rank": 0}
+            sg = _suggester()
+            try:
+                cands = (sg.suggest(p).get("candidates") or []) if sg else []
+            except Exception as e:
+                Ctx.log.warning("suggestion unavailable while filing %s: %s", os.path.basename(p), e)
+                cands = []
+            if cands:
+                want = folder.strip().strip("/\\").replace("\\", "/")
+                meta.update(top_folder=cands[0]["folder"], top_score=cands[0].get("score"),
+                            top_source=cands[0].get("source"))
+                hit = next((c for c in cands if c["folder"] == want), None)
+                if hit:
+                    meta.update(source=hit["source"], rank=hit["rank"])
+            res = mover.move(cfg, p, folder, meta, Ctx.log)
             return self._send(200, res)
         if path == "/api/inbox/dismiss":
             p = str(body.get("path", ""))
@@ -347,7 +362,8 @@ class Handler(BaseHTTPRequestHandler):
                 import autofile
                 return self._send(200, {"settings": autofile.settings(cfg), "summary": autofile.summary(cfg),
                                         "folders": sorted(autofile.trust(cfg).values(),
-                                                          key=lambda t: (-t["proven"], -t["decisions"]))})
+                                                          key=lambda t: (-t["proven"], -t["decisions"],
+                                                                         t["folder"], t["source"]))})
             if u.path == "/api/moves":
                 import mover
                 return self._send(200, {"journal": mover.journal(cfg, 100), "feedback": mover.feedback(cfg)})
