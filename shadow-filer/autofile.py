@@ -2,7 +2,7 @@
 Phase 3: auto-filing, earned folder by folder.
 
 A folder becomes "proven" only from YOUR decisions on the Inbox page, separately for each kind of
-suggestion (rule, file-name match, similar documents): being right about a folder one way says nothing
+suggestion (rule, same website, file-name match, similar documents): being right one way says nothing
 about another way.
   - a decision counts as agreement when the folder was the first suggestion and you filed the file there;
   - it counts against when you filed somewhere else, or undid a move into that folder;
@@ -13,7 +13,7 @@ about another way.
 What the first suggestion was is worked out on the server when you file (web_ui.py), not taken from the page.
 When the switch is on, a file is auto-filed only if ALL hold:
   - its first suggestion's folder is proven for that kind of suggestion,
-  - that suggestion is a rule, a file-name match, or similar-documents at >= `min_score`,
+  - that suggestion is a rule, a same-website match, a file-name match, or similar-documents at >= `min_score`,
   - the file has been in Downloads for `delay_minutes` (time to open it, rename it or file it yourself),
     counted from when it arrived, not from a modified date it kept from somewhere else,
   - Cleanup doesn't flag it (duplicate already filed, partial download, ...), it isn't password-protected,
@@ -36,7 +36,7 @@ DEFAULTS = {
     "max_per_run": 20,
     "every_minutes": 5,
 }
-ALLOWED_SOURCES = ("rule", "name", "similar")
+ALLOWED_SOURCES = ("rule", "origin", "name", "similar")  # "origin" (same website) added 11 Oct 2026 at the user's request
 # The bar a folder must clear can be raised in Settings, never lowered below this.
 FLOORS = {"min_decisions": 20, "min_rate": 0.9}
 _lock = threading.Lock()
@@ -121,8 +121,7 @@ def decide(cfg: dict, item: dict, sug: dict, proven: dict, hints: dict, now: flo
     top = cands[0]
     folder = top["folder"]
     if top.get("source") not in ALLOWED_SOURCES:
-        why = "website matches are suggestions only" if top.get("source") == "origin" else "only the model's guess"
-        return {"auto": False, "folder": folder, "why": why}
+        return {"auto": False, "folder": folder, "why": "only the model's guess"}
     if top.get("exists") is False:
         return {"auto": False, "folder": folder, "why": "folder missing"}
     if top["source"] == "similar" and (top.get("score") or 0) < s["min_score"]:
