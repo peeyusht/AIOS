@@ -288,6 +288,16 @@ def _extract_text(p: Path, cfg: dict) -> str:
         if ext == ".pdf":
             from pypdf import PdfReader
             reader = PdfReader(str(p))
+            if reader.is_encrypted:
+                # Many statements and forms are only protected against editing: they open with an empty
+                # password, as any PDF viewer does. One that needs a real password is left alone.
+                try:
+                    opened = bool(reader.decrypt(""))
+                except Exception:  # e.g. an encryption scheme this install can't handle
+                    opened = False
+                if not opened:
+                    log.info("password-protected, can't read: %s", p.name)
+                    return ""
             pages = reader.pages[: cfg["extraction"]["max_pdf_pages"]]
             return "\n".join((pg.extract_text() or "") for pg in pages)[:mx]
         if ext == ".docx":
@@ -316,7 +326,7 @@ def _extract_text(p: Path, cfg: dict) -> str:
                         lines.append(shape.text_frame.text)
             return "\n".join(lines)[:mx]
     except Exception as e:  # encrypted, corrupt, locked...
-        if "decrypt" in str(e).lower():
+        if "decrypt" in str(e).lower() or "cryptography" in str(e).lower():
             log.info("password-protected, can't read: %s", p.name)
         else:
             log.warning("extract failed for %s: %s", p.name, e)

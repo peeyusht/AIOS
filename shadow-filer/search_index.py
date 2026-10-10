@@ -376,6 +376,11 @@ class Index:
         if not settings(self.cfg)["enabled"]:
             return
         self._check_model()
+        with self.lock:  # once: PDFs protected only against editing can be read now, so look at "locked" ones again
+            if not self.conn.execute("SELECT 1 FROM meta WHERE k='retry_locked_1'").fetchone():
+                self.conn.execute("UPDATE files SET status='pending' WHERE status='locked'")
+                self.conn.execute("INSERT OR REPLACE INTO meta VALUES ('retry_locked_1', '1')")
+                self.conn.commit()
         self.state.update(running=True, phase="checking folders", current=None)
         with self.lock:
             known = {r["path"]: (r["size"], r["mtime_ns"], r["status"])
