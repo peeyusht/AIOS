@@ -1,0 +1,17 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+# Your data: never commit (file names, extracted document text, logs)
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.log
+cleanup_report.json
+*.tmp
+# Your settings (config.example.yaml is the template)
+config.yaml
+config.yaml.bak
+# Local backups made during updates
+backup-*/

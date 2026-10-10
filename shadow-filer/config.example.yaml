@@ -1,0 +1,70 @@
+# Shadow Filer configuration (Windows).
+# Environment variables like %USERPROFILE% are expanded.
+# Use single backslashes inside single quotes, or forward slashes.
+
+inbox_folders:
+  - '%USERPROFILE%\Downloads'
+
+# Root of your PARA tree. Example for Google Drive for desktop:
+#   'G:\My Drive\PARA'
+# para_root: 'G:\My Drive\PARA'
+para_root: 'D:\Organized'
+
+# Depth of folders offered to the model. 2 = e.g. "1 Projects/Client X".
+# Keep the list under ~80 folders; check with:  python shadow_agent.py destinations
+destination_depth: 2
+
+# Folders (relative to para_root) never offered to the model.
+exclude_destinations: []
+#  - '4 Archives/Old'
+
+ollama:
+  url: http://localhost:11434
+  model: qwen3:4b          # alternatives: phi4-mini, gemma3:4b (whatever 'ollama list' shows)
+  timeout_seconds: 120
+  think: false             # disables Qwen3 'thinking' for speed; ignored if unsupported
+  startup_wait_seconds: 300  # after a reboot, wait this long for Ollama before giving up
+
+extraction:
+  max_chars: 4000
+  max_pdf_pages: 3
+
+settle_seconds: 5          # file must stop growing for this long before it's read
+hash_max_mb: 200           # larger files are matched by name + size only
+reconcile_minutes: 30      # periodic sweep of PARA tree to catch missed events
+history_examples: 15       # your recent filing decisions shown to the model as examples
+catch_up_days: 7           # on start and every sweep, predict inbox files from the last N days
+                           # that were missed (agent off, PC asleep). Older files are left alone.
+
+ui:
+  enabled: true            # local web UI; also prevents two copies running at once
+  port: 8765               # http://127.0.0.1:8765 - only reachable from this PC
+
+database: shadow.db
+log_file: shadow.log
+
+# Temporary / partial / system files to ignore.
+ignore_patterns:
+  - '*.crdownload'
+  - '*.part'
+  - '*.partial'
+  - '*.tmp'
+  - '*.download'
+  - '~$*'
+  - 'desktop.ini'
+  - 'thumbs.db'
+  - '.~lock*'
+
+# Deterministic rules, evaluated top-down before the model.
+# A rule needs 'extensions' and/or 'name_regex'. 'destination' is relative to para_root.
+# These are EXAMPLES - edit to match your real PARA folders, then run: python shadow_agent.py check
+rules:
+  - name: installers
+    extensions: ['.exe', '.msi', '.msix']
+    destination: '3 Resources/Software'
+  - name: firmware-images
+    extensions: ['.iso', '.img', '.out', '.bin']
+    destination: '3 Resources/Firmware'
+  - name: invoices
+    name_regex: '(invoice|inv[-_ ]?\d+|tax[-_ ]?invoice)'
+    destination: '2 Areas/Finance'

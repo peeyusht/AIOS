@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shadow Filer</title>
+<style>
+  :root {
+    --paper: #EDEFEA; --surface: #FAFBF8; --ink: #1D2430; --muted: #5E6673; --rule: #D4D8CF;
+    --match: #2E7656; --miss: #A9402C; --pending: #8F650E; --unsure: #5D569C; --focus: #2F5DA8;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #191C21; --surface: #20242A; --ink: #E4E7EC; --muted: #9AA2AE; --rule: #343A43;
+      --match: #5DB88E; --miss: #E07A63; --pending: #D6A84A; --unsure: #9C95E0; --focus: #7FA6EE;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 15px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 28px 64px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: baseline; justify-content: space-between; }
+  h1 { font: 600 22px/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; margin: 0; letter-spacing: -0.01em; }
+  .where { color: var(--muted); margin: 4px 0 0; font-size: 14px; }
+  .lights { display: flex; gap: 18px; font-size: 14px; }
+  .light { display: inline-flex; align-items: center; gap: 7px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--match); } .dot.bad { background: var(--miss); } .dot.wait { background: var(--pending); }
+  .shadow-note {
+    margin: 18px 0 0; padding: 10px 14px; border-left: 3px solid var(--match);
+    background: var(--surface); font-size: 14px;
+  }
+  .restart-note { border-left-color: var(--pending); display: none; }
+  nav { display: flex; gap: 4px; margin: 22px 0 18px; border-bottom: 1px solid var(--rule); overflow-x: auto; }
+  nav button {
+    background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted);
+    font: inherit; padding: 8px 14px; cursor: pointer; margin-bottom: -1px; white-space: nowrap;
+  }
+  nav button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); font-weight: 600; }
+  button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+    outline: 2px solid var(--focus); outline-offset: 2px;
+  }
+  section[hidden] { display: none; }
+
+  /* Overview */
+  .lead { font: 400 26px/1.3 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; max-width: 30ch; margin: 6px 0 4px; }
+  .lead-sub { color: var(--muted); margin: 0 0 28px; max-width: 70ch; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 28px 40px; }
+  h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  .hint { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 7px 10px 7px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-weight: 600; font-size: 13px; color: var(--muted); }
+  td.num, th.num { text-align: right; padding-right: 0; padding-left: 10px; white-space: nowrap; }
+  .bar { height: 6px; background: var(--rule); margin-top: 5px; }
+  .bar i { display: block; height: 100%; background: var(--match); }
+
+  /* Predictions ledger */
+  .tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+  .seg { display: inline-flex; border: 1px solid var(--rule); background: var(--surface); }
+  .seg button { background: none; border: 0; padding: 6px 12px; font: inherit; font-size: 14px; color: var(--muted); cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--rule); }
+  .seg button[aria-pressed="true"] { color: var(--ink); background: var(--paper); font-weight: 600; }
+  input[type=search] {
+    font: inherit; padding: 6px 10px; border: 1px solid var(--rule); background: var(--surface);
+    color: var(--ink); min-width: 240px;
+  }
+  .count { color: var(--muted); font-size: 14px; margin-left: auto; }
+  .ledger { background: var(--surface); border: 1px solid var(--rule); }
+  .row {
+    display: grid; grid-template-columns: 4px 1.3fr 1.6fr 92px; gap: 0 16px;
+    padding: 10px 16px 10px 0; border-bottom: 1px solid var(--rule);
+  }
+  .row:last-child { border-bottom: 0; }
+  .row .edge { background: var(--muted); grid-row: 1 / span 2; }
+  .row.match .edge { background: var(--match); } .row.miss .edge { background: var(--miss); }
+  .row.pending .edge { background: var(--pending); } .row.unsure .edge { background: var(--unsure); }
+  .row.error .edge { background: var(--miss); opacity: .5; }
+  .fname { font-weight: 600; overflow-wrap: anywhere; }
+  .meta { color: var(--muted); font-size: 13px; }
+  .paths { margin: 0; font-size: 14px; display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; }
+  .paths dt { color: var(--muted); }
+  .paths dd { margin: 0; overflow-wrap: anywhere; }
+  .paths dd.miss { color: var(--miss); } .paths dd.match { color: var(--match); }
+  .why { color: var(--muted); font-size: 13px; grid-column: 2 / -1; margin-top: 4px; }
+  .badge { font-size: 13px; font-weight: 600; text-align: right; }
+  .badge.match { color: var(--match); } .badge.miss { color: var(--miss); } .badge.pending { color: var(--pending); }
+  .badge.unsure { color: var(--unsure); } .badge.error { color: var(--miss); }
+  .empty { padding: 28px 18px; color: var(--muted); }
+
+  /* Log */
+  .logbox {
+    background: var(--surface); border: 1px solid var(--rule); padding: 12px 14px; margin: 0;
+    font: 13px/1.55 "Cascadia Mono", Consolas, ui-monospace, monospace; white-space: pre-wrap;
+    overflow-wrap: anywhere; max-height: 68vh; overflow: auto;
+  }
+  .lv-ERROR { color: var(--miss); } .lv-WARNING { color: var(--pending); }
+  .lv-FILED-MATCH { color: var(--match); } .lv-FILED-MISS { color: var(--miss); }
+
+  /* Settings */
+  .settings { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px; }
+  @media (max-width: 900px) { .settings { grid-template-columns: 1fr; } .row { grid-template-columns: 4px 1fr; } .row > :nth-child(3), .row > :nth-child(4) { grid-column: 2; } .badge { text-align: left; } }
+  textarea {
+    width: 100%; min-height: 560px; resize: vertical; padding: 12px 14px; tab-size: 2;
+    font: 13px/1.55 "Cascadia Mono", Consolas, ui-monospace, monospace;
+    background: var(--surface); color: var(--ink); border: 1px solid var(--rule);
+  }
+  .actions { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  .btn {
+    font: inherit; font-size: 14px; padding: 7px 16px; cursor: pointer; border: 1px solid var(--ink);
+    background: var(--ink); color: var(--paper);
+  }
+  .btn.quiet { background: transparent; color: var(--ink); border-color: var(--rule); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .msg { font-size: 14px; } .msg.ok { color: var(--match); } .msg.bad { color: var(--miss); }
+  .dests { list-style: none; margin: 0; padding: 0; font-size: 14px; max-height: 420px; overflow: auto;
+           border-top: 1px solid var(--rule); }
+  .dests li { padding: 5px 0; border-bottom: 1px solid var(--rule); overflow-wrap: anywhere; }
+  aside .block + .block { margin-top: 28px; }
+  @media (prefers-reduced-motion: no-preference) { .row.fresh { animation: fresh 1.6s ease-out; } }
+  /* System */
+  .sys-top { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: baseline; margin-bottom: 18px; }
+  .notes { list-style: none; margin: 0 0 26px; padding: 0; }
+  .notes li { padding: 9px 14px; background: var(--surface); border-left: 3px solid var(--unsure); margin-bottom: 6px; font-size: 14px; }
+  .notes li.warn { border-left-color: var(--miss); }
+  .kv { display: grid; grid-template-columns: 130px 1fr; gap: 6px 14px; margin: 0; font-size: 14px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .sys-block + .sys-block { margin-top: 30px; }
+  .mono { font: 12px/1.5 "Cascadia Mono", Consolas, ui-monospace, monospace; color: var(--muted); overflow-wrap: anywhere; }
+  .meter { height: 6px; background: var(--rule); margin-top: 5px; min-width: 80px; }
+  .meter i { display: block; height: 100%; background: var(--focus); }
+  .meter.low i { background: var(--miss); }
+  @keyframes fresh { from { background: color-mix(in srgb, var(--match) 14%, transparent); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Shadow Filer</h1>
+      <p class="where" id="where">Connecting…</p>
+    </div>
+    <div class="lights" aria-live="polite">
+      <span class="light"><span class="dot" id="dot-agent"></span><span id="txt-agent">Agent</span></span>
+      <span class="light"><span class="dot" id="dot-model"></span><span id="txt-model">Model</span></span>
+    </div>
+  </header>
+
+  <p class="shadow-note">Shadow mode. It predicts where files belong and watches where you put them. It never moves, renames or deletes anything.</p>
+  <p class="shadow-note restart-note" id="problem-note"></p>
+  <p class="shadow-note restart-note" id="restart-note">Settings changed that need a restart. Use <b>Restart agent</b> in Settings.</p>
+
+  <nav role="tablist">
+    <button role="tab" data-tab="overview" aria-selected="true">Overview</button>
+    <button role="tab" data-tab="predictions" aria-selected="false">Predictions</button>
+    <button role="tab" data-tab="log" aria-selected="false">Log</button>
+    <button role="tab" data-tab="system" aria-selected="false">System</button>
+    <button role="tab" data-tab="settings" aria-selected="false">Settings</button>
+  </nav>
+
+  <section id="tab-overview">
+    <p class="lead" id="lead">Loading…</p>
+    <p class="lead-sub" id="lead-sub"></p>
+    <div class="grid2">
+      <div>
+        <h2>Accuracy by method</h2>
+        <p class="hint" id="depth-hint">Exact means the same folder; category means the same PARA top level.</p>
+        <table id="t-method"></table>
+      </div>
+      <div>
+        <h2>Is the model's confidence meaningful?</h2>
+        <p class="hint">If higher confidence isn't clearly more accurate, it can't be used to decide what to move automatically later.</p>
+        <table id="t-conf"></table>
+      </div>
+      <div>
+        <h2>Most common misses</h2>
+        <p class="hint">Usually fixed with a rule or a clearer folder name.</p>
+        <table id="t-miss"></table>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-predictions" hidden>
+    <div class="tools">
+      <div class="seg" role="group" aria-label="Show">
+        <button data-view="all" aria-pressed="true">All</button>
+        <button data-view="pending" aria-pressed="false">Not filed yet</button>
+        <button data-view="match" aria-pressed="false">Matched</button>
+        <button data-view="miss" aria-pressed="false">Missed</button>
+        <button data-view="unsure" aria-pressed="false">Unsure</button>
+        <button data-view="error" aria-pressed="false">Errors</button>
+      </div>
+      <input type="search" id="q" placeholder="Search file or folder" aria-label="Search predictions">
+      <span class="count" id="count"></span>
+    </div>
+    <div class="ledger" id="ledger"></div>
+  </section>
+
+  <section id="tab-log" hidden>
+    <div class="tools">
+      <label><input type="checkbox" id="follow" checked> Follow new lines</label>
+      <span class="count" id="logpath"></span>
+    </div>
+    <pre class="logbox" id="logbox"></pre>
+  </section>
+
+  <section id="tab-system" hidden>
+    <div class="sys-top">
+      <button class="btn quiet" id="sys-refresh">Refresh</button>
+      <span class="count" id="sys-when">Collecting system information…</span>
+    </div>
+    <ul class="notes" id="sys-notes"></ul>
+    <div class="grid2">
+      <div>
+        <div class="sys-block"><h2>Machine</h2><dl class="kv" id="sys-machine"></dl></div>
+        <div class="sys-block"><h2>Ollama</h2>
+          <p class="hint">How much of a loaded model sits in GPU memory. Below 100%, the rest runs on the CPU.</p>
+          <dl class="kv" id="sys-ollama"></dl>
+          <table id="sys-loaded"></table>
+        </div>
+      </div>
+      <div>
+        <div class="sys-block"><h2>Graphics</h2>
+          <p class="hint">VRAM comes from nvidia-smi; Windows' own figure is wrong for cards above 4 GB.</p>
+          <table id="sys-gpus"></table>
+        </div>
+        <div class="sys-block"><h2>Storage</h2><table id="sys-disks"></table><table id="sys-vols" style="margin-top:14px"></table></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-settings" hidden>
+    <div class="settings">
+      <div>
+        <h2>config.yaml</h2>
+        <p class="hint">Rules, ignore patterns and model settings apply as soon as you save. Folder changes need a restart. The previous version is kept as config.yaml.bak.</p>
+        <textarea id="cfg" spellcheck="false" aria-label="Configuration file"></textarea>
+        <div class="actions">
+          <button class="btn" id="save">Save settings</button>
+          <button class="btn quiet" id="revert">Discard changes</button>
+          <span class="msg" id="msg" role="status"></span>
+        </div>
+      </div>
+      <aside>
+        <div class="block">
+          <h2>Folders the model can choose</h2>
+          <p class="hint" id="dest-hint"></p>
+          <ul class="dests" id="dests"></ul>
+        </div>
+        <div class="block">
+          <h2>Agent</h2>
+          <p class="hint">Restarting reloads every setting. It takes a few seconds; this page reconnects by itself.</p>
+          <button class="btn quiet" id="restart">Restart agent</button>
+          <p class="msg" id="rmsg" role="status"></p>
+        </div>
+      </aside>
+    </div>
+  </section>
+</div>
+
+<script>
+const TOKEN = "__TOKEN__";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const pct = (x) => x == null ? "–" : Math.round(x * 100) + "%";
+const when = (ts) => {
+  if (!ts) return "";
+  const d = new Date(ts), now = new Date();
+  const same = d.toDateString() === now.toDateString();
+  return same ? d.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"})
+              : d.toLocaleDateString([], {day: "numeric", month: "short"}) + ", " + d.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+};
+async function get(path) { const r = await fetch(path, {cache: "no-store"}); if (!r.ok) throw new Error(r.status); return r.json(); }
+async function post(path, body) {
+  const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json", "X-Shadow-Token": TOKEN}, body: JSON.stringify(body)});
+  return r.json();
+}
+
+/* tabs */
+let current = "overview";
+function show(tab) {
+  current = tab;
+  document.querySelectorAll("nav button").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === tab));
+  document.querySelectorAll("section[id^=tab-]").forEach(s => s.hidden = s.id !== "tab-" + tab);
+  history.replaceState(null, "", "#" + tab);
+  refreshTab(true);
+}
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => show(b.dataset.tab));
+
+/* status */
+let lastStatusOk = true;
+async function refreshStatus() {
+  try {
+    const s = await get("/api/status");
+    lastStatusOk = true;
+    const agent = s.mode === "agent" ? (s.watching ? ["ok", "Watching"] : ["wait", "Starting"]) : ["wait", "UI only, agent not running"];
+    $("dot-agent").className = "dot " + agent[0]; $("txt-agent").textContent = agent[1];
+    const model = s.ollama === true ? ["ok", s.model + " ready"]
+      : s.model_missing ? ["bad", s.model + " not installed"]
+      : s.ollama === false ? ["bad", "Ollama not reachable"] : ["wait", "Checking model"];
+    if (s.model_missing) {
+      s.problem = (s.problem ? s.problem + " " : "") + `Model ${s.model} is not installed in Ollama. Run: ollama pull ${s.model}` +
+        (s.installed_models.length ? `, or set ollama.model in Settings to one you have: ${s.installed_models.join(", ")}.` : ".");
+    }
+    $("dot-model").className = "dot " + model[0]; $("txt-model").textContent = model[1];
+    const n = s.inbox.length;
+    $("where").textContent = `Watching ${n === 1 ? s.inbox[0] : n + " folders"} and filing into ${s.para_root}` +
+      (s.last_prediction ? `. Last prediction ${when(s.last_prediction)}.` : ".");
+    $("restart-note").style.display = s.restart_needed ? "block" : "none";
+    $("problem-note").style.display = s.problem ? "block" : "none";
+    $("problem-note").textContent = s.problem || "";
+    $("problem-note").style.borderLeftColor = "var(--miss)";
+    if (s.problem && s.mode === "agent") { $("dot-agent").className = "dot bad"; $("txt-agent").textContent = "Not watching"; }
+    $("logpath").textContent = s.log_file;
+  } catch {
+    lastStatusOk = false;
+    $("dot-agent").className = "dot bad"; $("txt-agent").textContent = "Not responding";
+  }
+}
+
+/* overview */
+function rowsTable(el, head, rows, empty) {
+  if (!rows.length) { el.innerHTML = `<tr><td class="hint">${empty}</td></tr>`; return; }
+  el.innerHTML = `<thead><tr>${head.map((h, i) => `<th class="${i ? "num" : ""}">${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody>`;
+}
+async function refreshOverview() {
+  const s = await get("/api/stats");
+  if (!s.total) {
+    $("lead").textContent = "No predictions yet.";
+    $("lead-sub").textContent = "Download a file, or wait for one to arrive. Each new file gets a prediction within a few seconds.";
+  } else if (!s.overall) {
+    $("lead").textContent = `${s.total} prediction${s.total === 1 ? "" : "s"} so far, none scored yet.`;
+    $("lead-sub").textContent = "File a few of these yourself, the way you normally would. Each one you file is compared with the prediction.";
+  } else {
+    const o = s.overall;
+    $("lead").textContent = `${pct(o.exact)} of the ${o.n} files you've filed went where it predicted.`;
+    $("lead-sub").textContent = `${s.total} predictions from ${s.period[0]} to ${s.period[1]}. ${s.unfiled} not filed yet, ${s.unsure} marked unsure, ${s.errors} errors. Same PARA category: ${pct(o.top)}.`;
+  }
+  $("depth-hint").textContent = `Exact means the same folder at depth ${s.depth}; category means the same PARA top level.`;
+  const scoreRow = (r) => `<tr><td>${esc(r.label)}<div class="bar"><i style="width:${Math.round((r.exact||0)*100)}%"></i></div></td><td class="num">${r.n}</td><td class="num">${pct(r.exact)}</td><td class="num">${pct(r.top)}</td></tr>`;
+  rowsTable($("t-method"), ["Method", "Filed", "Exact", "Category"], s.by_method.map(scoreRow), "Nothing scored yet.");
+  rowsTable($("t-conf"), ["Stated confidence", "Filed", "Exact", "Category"], s.by_conf.map(scoreRow), "Nothing scored from the model yet.");
+  rowsTable($("t-miss"), ["Predicted → you filed", "Times"],
+    s.misses.map(m => `<tr><td>${esc(m.predicted)}<br><span class="meta">→ ${esc(m.actual || "PARA root")}</span></td><td class="num">${m.n}</td></tr>`), "No misses yet.");
+}
+
+/* predictions */
+let view = "all", seen = new Set();
+const LABEL = {match: "Matched", miss: "Missed", pending: "Not filed yet", unsure: "Unsure", error: "Error"};
+document.querySelectorAll(".seg button").forEach(b => b.onclick = () => {
+  view = b.dataset.view;
+  document.querySelectorAll(".seg button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  refreshPredictions();
+});
+let qTimer; $("q").oninput = () => { clearTimeout(qTimer); qTimer = setTimeout(refreshPredictions, 250); };
+async function refreshPredictions() {
+  const rows = await get(`/api/predictions?view=${view}&q=${encodeURIComponent($("q").value)}&limit=500`);
+  $("count").textContent = rows.length === 500 ? "Showing latest 500" : `${rows.length} shown`;
+  if (!rows.length) {
+    $("ledger").innerHTML = `<div class="empty">${view === "all" && !$("q").value ? "No predictions yet. New files in your inbox folder will appear here." : "Nothing matches this filter."}</div>`;
+    return;
+  }
+  const first = seen.size === 0;
+  $("ledger").innerHTML = rows.map(r => {
+    const fresh = !first && !seen.has(r.id) ? " fresh" : "";
+    const method = r.method.startsWith("rule:") ? "Rule: " + r.method.slice(5) : r.method === "model" ? "Model" : "Error";
+    const conf = r.confidence != null && r.method === "model" ? `, ${pct(r.confidence)} confident` : "";
+    const filed = r.actual == null ? `<dd class="meta">not yet</dd>` : `<dd class="${r.outcome}">${esc(r.actual || "PARA root")}</dd>`;
+    return `<div class="row ${r.outcome}${fresh}">
+      <div class="edge"></div>
+      <div><div class="fname">${esc(r.filename)}</div><div class="meta">${when(r.ts)}, ${esc(method)}${conf}</div></div>
+      <dl class="paths"><dt>Predicted</dt><dd>${esc(r.predicted ?? "–")}</dd><dt>You filed</dt>${filed}</dl>
+      <div class="badge ${r.outcome}">${LABEL[r.outcome]}</div>
+      ${r.reason && r.method === "model" ? `<div class="why">${esc(r.reason)}</div>` : ""}
+      ${r.method === "error" ? `<div class="why">${esc(r.reason)}. It will be retried on the next sweep.</div>` : ""}
+    </div>`;
+  }).join("");
+  rows.forEach(r => seen.add(r.id));
+}
+
+/* log */
+async function refreshLog() {
+  const lines = await get("/api/log?lines=400");
+  const box = $("logbox");
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  box.innerHTML = lines.map(l => {
+    let cls = "";
+    if (/ ERROR /.test(l)) cls = "lv-ERROR"; else if (/ WARNING /.test(l)) cls = "lv-WARNING";
+    else if (/FILED .*MATCH\)/.test(l)) cls = "lv-FILED-MATCH"; else if (/FILED .*MISS\)/.test(l)) cls = "lv-FILED-MISS";
+    return `<span class="${cls}">${esc(l)}</span>`;
+  }).join("\n") || "Log is empty.";
+  if ($("follow").checked && (atBottom || !box.dataset.init)) box.scrollTop = box.scrollHeight;
+  box.dataset.init = 1;
+}
+
+/* settings */
+let savedText = "";
+async function loadSettings() {
+  const c = await get("/api/config");
+  savedText = c.text;
+  if (!$("cfg").dataset.dirty) $("cfg").value = c.text;
+  const d = await get("/api/destinations");
+  $("dests").innerHTML = d.map(x => `<li>${esc(x)}</li>`).join("") || `<li class="meta">PARA root not found. Check para_root.</li>`;
+  $("dest-hint").textContent = d.length > 80 ? `${d.length} folders. That's a lot for a small model; consider a lower destination_depth.` : `${d.length} folders, refreshed every 10 minutes.`;
+}
+$("cfg").oninput = () => { $("cfg").dataset.dirty = $("cfg").value !== savedText ? "1" : ""; if (!$("cfg").dataset.dirty) delete $("cfg").dataset.dirty; };
+$("revert").onclick = () => { $("cfg").value = savedText; delete $("cfg").dataset.dirty; $("msg").textContent = ""; };
+$("save").onclick = async () => {
+  $("save").disabled = true;
+  try {
+    const r = await post("/api/config", {text: $("cfg").value});
+    const msg = r.message || r.error || "Unknown response";
+    $("msg").textContent = msg; $("msg").className = "msg " + (r.ok ? "ok" : "bad");
+    if (r.ok) { savedText = $("cfg").value; delete $("cfg").dataset.dirty; loadSettings(); refreshStatus(); }
+  } catch (e) { $("msg").textContent = "Not saved: the agent didn't respond."; $("msg").className = "msg bad"; }
+  $("save").disabled = false;
+};
+$("restart").onclick = async () => {
+  if ($("cfg").dataset.dirty && !confirm("You have unsaved settings. Restart anyway?")) return;
+  $("restart").disabled = true;
+  const r = await post("/api/restart", {}).catch(() => ({ok: false, message: "No response."}));
+  $("rmsg").textContent = r.message; $("rmsg").className = "msg " + (r.ok ? "ok" : "bad");
+  if (!r.ok) { $("restart").disabled = false; return; }
+  setTimeout(function poll() {
+    fetch("/api/status", {cache: "no-store"}).then(x => x.ok ? location.reload() : setTimeout(poll, 1500)).catch(() => setTimeout(poll, 1500));
+  }, 2500);
+};
+
+/* system */
+const gb = (n) => !n ? "–" : n >= 1024 ** 4 ? (n / 1024 ** 4).toFixed(2) + " TB" : (n / 1024 ** 3).toFixed(1) + " GB";
+const kv = (pairs) => pairs.filter(p => p[1] != null && p[1] !== "").map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("");
+let sysLoaded = false;
+async function refreshSystem(force) {
+  if (sysLoaded && !force) return;  // hardware doesn't change every 5 seconds
+  $("sys-refresh").disabled = true;
+  if (force) $("sys-when").textContent = "Collecting… this takes a few seconds.";
+  try {
+    const i = await get("/api/system" + (force ? "?refresh=1" : ""));
+    sysLoaded = true;
+    $("sys-when").textContent = `Collected ${when(i.collected)} in ${i.seconds}s.`;
+    $("sys-notes").innerHTML = i.notes.map(n => `<li class="${n.level}">${esc(n.text)}</li>`).join("");
+    const c = i.computer, o = i.os, m = i.memory, cpu = i.cpu;
+    $("sys-machine").innerHTML = kv([
+      ["Computer", esc([c.name, c.manufacturer, c.model].filter(Boolean).join(" · "))],
+      ["Board", c.board ? esc(c.board) + (c.bios ? `<div class="meta">BIOS ${esc(c.bios)} ${esc((c.bios_date || "").slice(0, 10))}</div>` : "") : null],
+      ["OS", esc(`${o.name} ${o.version}`) + (o.build ? ` <span class="meta">build ${esc(o.build)}</span>` : "")],
+      ["Last boot", o.last_boot ? esc(when(o.last_boot)) : null],
+      ["Secure Boot", i.secure_boot == null ? null : i.secure_boot ? "On" : "Off"],
+      ["Processor", esc(cpu.name) + (cpu.cores ? `<div class="meta">${cpu.cores} cores, ${cpu.threads} threads</div>` : "")],
+      ["Memory", `${gb(m.installed_bytes)} installed, ${gb(m.free_bytes)} free` +
+        (m.modules.length ? `<div class="meta">${m.modules.map(x => `${gb(x.bytes)} ${esc(x.mhz || "")} MHz`).join(" · ")}</div>` : "")],
+      ["Agent", `<span class="mono">${esc(i.agent.folder)}</span><div class="meta">Python ${esc(i.agent.python)}</div>`],
+    ]);
+    const ol = i.ollama, cv = i.cuda_visible_devices;
+    $("sys-ollama").innerHTML = kv([
+      ["Server", ol.reachable ? `v${esc(ol.version)} at ${esc(ol.url)}` : `Not reachable at ${esc(ol.url)}`],
+      ["CUDA devices", `user: ${esc(cv.user || "not set")} · system: ${esc(cv.machine || "not set")}` +
+        `<div class="meta">Ollama reads this when Ollama starts.</div>`],
+    ]);
+    rowsTable($("sys-loaded"), ["Loaded model", "Size", "In GPU"], ol.loaded.map(x =>
+      `<tr><td>${esc(x.name)}<div class="meta">${esc([x.params, x.quant].filter(Boolean).join(", "))}</div></td><td class="num">${gb(x.bytes)}</td>` +
+      `<td class="num">${x.gpu_pct ?? "–"}%<div class="meter${x.gpu_pct < 100 ? " low" : ""}"><i style="width:${x.gpu_pct || 0}%"></i></div></td></tr>`),
+      ol.reachable ? "No model loaded right now. Ollama unloads a model after a few idle minutes." : "–");
+    const procs = i.gpu_processes || [];
+    rowsTable($("sys-gpus"), ["GPU", "VRAM", "Used"], i.gpus.map(g => {
+      const users = procs.filter(p => p.gpu_uuid === g.uuid).map(p => p.name);
+      const sub = [g.display, g.compute_cap && "compute " + g.compute_cap, g.driver && "driver " + g.driver,
+                   users.length && "in use by " + users.join(", ")].filter(Boolean).join(" · ");
+      return `<tr><td>${g.index != null ? `<span class="meta">[${g.index}]</span> ` : ""}${esc(g.name)}<div class="meta">${esc(sub)}</div>` +
+        (g.uuid ? `<div class="mono">${esc(g.uuid)}</div>` : "") + `</td><td class="num">${gb(g.vram_bytes)}</td>` +
+        `<td class="num">${g.uuid ? gb(g.vram_used_bytes) : "–"}</td></tr>`;
+    }), "No graphics adapters reported.");
+    rowsTable($("sys-disks"), ["Disk", "Size", "Type"], i.disks.map(d =>
+      `<tr><td>${esc(d.model)}<div class="meta">Disk ${esc(d.number)}${d.letters.length ? " · " + esc(d.letters.join(" ")) : ""}${d.health && d.health !== "Healthy" ? " · " + esc(d.health) : ""}</div></td>` +
+      `<td class="num">${gb(d.bytes)}</td><td class="num">${esc(d.media)}<div class="meta">${esc(d.bus)}</div></td></tr>`), "No disk details available.");
+    rowsTable($("sys-vols"), ["Drive", "Free", "Size"], i.volumes.map(v => {
+      const freePct = v.bytes ? Math.round(100 * v.free / v.bytes) : null;
+      return `<tr><td>${esc(v.letter)} ${esc(v.label || "")}<div class="meta">${esc(v.disk || "")}</div></td>` +
+        `<td class="num">${gb(v.free)}<div class="meter${freePct != null && freePct < 10 ? " low" : ""}"><i style="width:${freePct ?? 0}%"></i></div></td><td class="num">${gb(v.bytes)}</td></tr>`;
+    }), "–");
+  } catch (e) {
+    $("sys-when").textContent = "Couldn't collect system information.";
+  }
+  $("sys-refresh").disabled = false;
+}
+$("sys-refresh").onclick = () => refreshSystem(true);
+
+/* refresh loop */
+async function refreshTab(force) {
+  try {
+    if (current === "overview") await refreshOverview();
+    else if (current === "predictions") await refreshPredictions();
+    else if (current === "log") await refreshLog();
+    else if (current === "system") await refreshSystem(false);
+    else if (current === "settings" && force) await loadSettings();
+  } catch { /* status light shows the problem */ }
+}
+refreshStatus();
+const TABS = ["overview", "predictions", "log", "system", "settings"];
+const start = (location.hash || "").slice(1);
+show(TABS.includes(start) ? start : "overview");
+window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (TABS.includes(h) && h !== current) show(h); });
+setInterval(refreshStatus, 10000);
+setInterval(() => { if (!document.hidden && current !== "settings") refreshTab(false); }, 5000);
+</script>
+</body>
+</html>
