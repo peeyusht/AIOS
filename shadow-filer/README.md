@@ -8,8 +8,10 @@ accurate rules and the model are, per category and per confidence level.
 (never overwriting, journaled, undoable), and sends files to the Recycle Bin only when you confirm on Cleanup.
 The one exception is auto-filing (Phase 3, below), which is off until you switch it on.
 
-Pages in the console (http://127.0.0.1:8765): Overview, **Inbox** (suggest mode: File it / Undo), **Search** (meaning + keyword search over your folders),
-Predictions, **Cleanup** (duplicates, extracted archives, old installers), Log, System, **Settings** (a form; YAML under Advanced).
+The console (http://127.0.0.1:8765) has five places: **Inbox** (the home page: files waiting, File it / Undo,
+recent moves, auto-filing), **Search** (meaning + keyword search over your folders), **Cleanup** (duplicates,
+extracted archives, old installers), **Activity** (accuracy, predictions, log) and **Settings** (a form, system
+information, and the raw YAML under Advanced).
 
 ## 1. Install (one time)
 
@@ -171,9 +173,8 @@ Finds files in your inbox folders and PARA root by meaning and by exact words.
   ```
 
 ## Working on the UI
-The console is the original Vite build in `ui_src/base/` plus three pages written against its components
-(`ui_src/cleanup_page.js`, `search_page.js`, `settings_page.js`). After editing them, rebuild with
-`python ui_src/build_ui.py`, which writes `ui_dist/`.
+The console is designed in Lovable and built from `ui/` into `ui_dist/` (`cd ui`, `npm install`, `npm run build`).
+See `ui/README.md` for what comes from Lovable, what is ours, and how to bring a new design version in.
 
 ## Your data (never committed)
 `shadow.db` (predictions, cleanup choices), `search.db` (text extracted from your documents), `cleanup_report.json`,

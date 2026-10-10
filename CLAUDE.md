@@ -9,7 +9,8 @@ Ollama). Wants direct, skeptical engineering; push back when something is wrong.
 Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console). Console: http://127.0.0.1:8765.
 - Watches `%USERPROFILE%\Downloads`; PARA tree is `D:\Organized` (37 destinations at depth 2).
 - Ollama: `qwen3:4b` (filing guesses), `nomic-embed-text` (search + suggestions).
-- Pages: Overview, **Inbox** (Phase 2/3), **Search**, Predictions, **Cleanup**, Log, System, **Settings**.
+- Console: **Inbox** (home; Waiting / Recent moves / Auto-filing), **Search**, **Cleanup**, **Activity**
+  (Accuracy / Predictions / Log), **Settings** (form + System + Advanced YAML). Designed in Lovable.
 
 | File | Role |
 |---|---|
@@ -22,7 +23,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 | `cleanup.py` | Cleanup recommendations + Recycle Bin delete of agreed files |
 | `ocr.py` | Windows built-in OCR via Windows PowerShell 5.1 (WinRT), no install |
 | `config_io.py` | Settings form ⇄ `config.yaml` (validation, commented dump) |
-| `ui_src/` | console = original Vite build in `ui_src/base/` + `cleanup_page.js`, `search_page.js`, `settings_page.js`, `inbox_page.js` |
+| `ui/` | console source: React + TS + Tailwind, designed in Lovable (`src/shadow`, `src/components/ui`, `src/lib`), plus our static Vite build and `src/lib/adapt.ts`. Read `ui/README.md` first |
 
 ## Rules that must hold (don't relax without asking)
 - Nothing happens to files on its own except Phase 3 auto-filing, which is **off by default** and only for
@@ -51,9 +52,13 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 ## Working on it
 - Python 3.12 venv: `shadow-filer\.venv` (copied from an old location: use `.venv\Scripts\python -m pip`,
   not `pip.exe`). Dependencies: `requirements.txt`. No numpy in the runtime (pure-Python vectors are fast enough).
-- UI: edit `ui_src/*_page.js`, then `python ui_src/build_ui.py` → writes `ui_dist/index.html` and
-  `ui_dist/assets/index-sfc.js` (fixed name, `?v=<hash>` in the URL). Pages use the bundle's minified helpers
-  (`f`, `Z`, `uc`, `al`, `Ba`, `Wl`, `cm`, `Ya`, `SFx` …); `build_ui.py` asserts each injection point once.
+- UI: the user prefers to design in Lovable (project
+  https://lovable.dev/projects/24a52f89-2976-48ff-9630-4d56617c2f80; each Lovable message spends their
+  credits). Design changes go there, then the Lovable-owned files are copied into `ui/` unchanged (see
+  `ui/README.md`); small wiring fixes can be made locally but must be sent back to Lovable or they are lost on
+  the next copy. Build: `cd ui; npm run build` → `ui_dist/` (hashed asset names; no agent restart). Lovable only
+  ever sees fictional demo data (`src/lib/mock.ts`): never send it real file names or screenshots of real data.
+  When the agent's API changes shape, update `ui/src/lib/adapt.ts` and tell Lovable the new shape.
 - Restart the agent after Python changes: console Settings › Restart agent, or POST `/api/restart` with the
   `X-Shadow-Token` from the page's `<meta name="shadow-token">`. Static UI files need no restart.
 - Re-register the task (paths/flags changed): `powershell -ExecutionPolicy Bypass -File .\install_task.ps1`.
