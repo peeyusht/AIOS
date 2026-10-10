@@ -68,12 +68,15 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - Similar-documents suggestion: top-1 72%, top-3 88% (909 docs with text). Shown 95%+ → right 94%;
   50–70% → 72%; under 50% → 33%. Fingerprints exclude the folder name on purpose (including it leaked the
   answer and inflated accuracy to ~84%/99%).
-- File name naming exactly one folder (e.g. "pavak" → 1-Projects/Pavak-Incorporation): right 86% (236 docs).
+- File name naming exactly one folder (e.g. "pavak" → 1-Projects/Pavak-Incorporation): right 86.1% (259 of
+  1,365 filed files get one; same figure leave-one-out). Words of 4+ letters only was 85.6% (236). Plain
+  3-letter words dropped it to 75% ("nac" right 16%, "cbs" 33%), so a 3-letter word counts only while ≥80% of
+  filed names containing it are in its folder (`suggest.name_owners`, `short_word_share`), or, with nothing
+  filed yet, when it is the folder's whole name; never everyday words (`COMMON3`). 1–2 letter words count only
+  joined to a neighbour ("GR-One" → "grone"). Re-measure before loosening any of this.
 - The model's own confidence is useless (0.95 on almost everything); don't use it for decisions.
 
 ## Open items
-- File-name suggestions ignore words under 4 letters (`suggest._tokens`), so a new folder like "GR-One" gets
-  no name matches; its files are only suggested once a few are filed there.
 - Finance-type spreadsheets lean to `4-Archives/Frux-Technologies` (413 similar old docs); improves as the
   user files into Finance. Consider down-weighting archive folders for new files.
 - C: has <10% free space; Ollama runs qwen3:4b ~94% on GPU (`LLAMA_ARG_FIT_TARGET` was tuned to 512 MB).

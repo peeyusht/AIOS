@@ -14,26 +14,67 @@ import os
 import time
 from pathlib import Path
 
-DEFAULTS = {"k": 10, "temperature": 0.05, "show": 3, "duplicate_similarity": 0.995}
+DEFAULTS = {"k": 10, "temperature": 0.05, "show": 3, "duplicate_similarity": 0.995,
+            "short_word_share": 0.8}  # a 3-letter folder word counts only if this share of filed names agree
 # Words in folder names too general to identify one folder.
 GENERIC = set("""completed projects areas resources archives other clients company documents personal technical
 guides learning library framework research vendor marketing platform finance software firmware todelete bank
 technologies services incorporation""".split())
 
 
-def _tokens(s: str) -> list[str]:
+# Everyday 3-letter words: never enough to name a folder, whatever has been filed.
+COMMON3 = set("the and for new old one two all any our you not doc pdf img tmp jpg png zip csv".split())
+
+
+def _name_keys(s: str) -> set[str]:
+    """What a folder name or file name can be matched on:
+    - its words of 3+ letters that aren't too general ('pavak', 'hcl');
+    - shorter words joined to their neighbours ('GR-One', 'GR One', 'gr_one' -> 'grone'), because a
+      1-2 letter word says nothing by itself. Numbers alone never count."""
     import re
-    return [t for t in re.split(r"[^a-z0-9]+", s.lower()) if len(t) >= 4 and t not in GENERIC]
+    raw = [t for t in re.split(r"[^a-z0-9]+", s.lower()) if t]
+    out = {t for t in raw if len(t) >= 3 and t not in GENERIC and not (len(t) < 4 and t.isdigit())}
+    for n in (2, 3):
+        for i in range(len(raw) - n + 1):
+            part = raw[i:i + n]
+            if any(len(t) < 4 for t in part) and not all(t in GENERIC for t in part):
+                joined = "".join(part)
+                if len(joined) >= 4 and not joined.isdigit():
+                    out.add(joined)
+    return out
 
 
-def name_owners(dests: list[str]) -> dict:
+def name_owners(dests: list[str], filed=None, short_share: float = DEFAULTS["short_word_share"]) -> dict:
     """Distinctive word -> the one destination folder named with it (e.g. 'pavak' -> 1-Projects/Pavak-Incorporation).
-    A word in more than one folder name identifies nothing and is left out."""
+    A word in more than one folder name identifies nothing and is left out.
+
+    3-letter words ('hcl', 'nac') are ambiguous far more often than longer ones, so one counts only while the
+    files already filed back it up: `filed` is (file name without extension, folder) for every filed file,
+    and at least `short_share` of the names containing the word must be in that folder. A word no filed
+    name contains yet is accepted only when it is the folder's whole name ('HCL', 'HCL-Completed': a
+    brand-new folder), never when it is one part of a longer name (the 'one' in 'GR-One')."""
+    import re
     owner: dict = {}
     for d in dests:
-        for t in set(_tokens(d.split("/")[-1])):
+        for t in _name_keys(d.split("/")[-1]):
             owner.setdefault(t, set()).add(d)
-    return {t: next(iter(v)) for t, v in owner.items() if len(v) == 1}
+    own = {t: next(iter(v)) for t, v in owner.items() if len(v) == 1 and not (len(t) < 4 and t in COMMON3)}
+    short = {t for t in own if len(t) < 4}
+    if short:
+        total, inside = dict.fromkeys(short, 0), dict.fromkeys(short, 0)
+        for stem, label in filed or ():
+            for t in _name_keys(stem) & short:
+                total[t] += 1
+                inside[t] += label == own[t]
+        for t in short:
+            if total[t]:
+                ok = inside[t] / total[t] >= short_share
+            else:
+                words = [w for w in re.split(r"[^a-z0-9]+", own[t].split("/")[-1].lower()) if w and w not in GENERIC]
+                ok = words == [t]
+            if not ok:
+                del own[t]
+    return own
 
 
 def settings(cfg: dict) -> dict:
@@ -51,6 +92,16 @@ class Suggester:
         self._cache_at = 0.0
         self._cache_n = -1
         self._knn: dict = {}   # path -> (fingerprint, settings, votes, duplicate); valid for self._cache
+        self._owners = None    # (examples, destinations, share, {word: folder})
+
+    def owners(self) -> dict:
+        """name_owners for the current folders, checked against the names of the files already filed."""
+        dests, ex, share = self.dests.get(), self._examples(), settings(self.cfg)["short_word_share"]
+        c = self._owners
+        if c is None or c[0] is not ex or c[1] is not dests or c[2] != share:
+            filed = [(os.path.splitext(os.path.basename(path))[0], label) for path, label, _ in ex]
+            c = self._owners = (ex, dests, share, name_owners(dests, filed, share))
+        return c[3]
 
     def _examples(self):
         """(path, folder at destination depth, fingerprint) for filed documents in valid destinations."""
@@ -123,8 +174,11 @@ class Suggester:
 
         # The file name mentions exactly one folder's distinctive word: right 86% of the time on filed documents,
         # and it works for new folders with only a few files, where similar-document voting can't.
-        owners = name_owners(self.dests.get())
-        named = {owners[t]: t for t in _tokens(p.stem) if t in owners}
+        owners = self.owners() if self.index else name_owners(self.dests.get())
+        named = {}
+        for t in sorted(_name_keys(p.stem), key=len):  # for one folder, show the longest matching word
+            if t in owners:
+                named[owners[t]] = t
         if len(named) == 1:
             folder, word = next(iter(named.items()))
             if folder not in {c["folder"] for c in cands}:
