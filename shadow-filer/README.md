@@ -206,3 +206,15 @@ Every file waiting in Downloads gets up to three destination suggestions. **File
 - **Leave it** hides a file from the Inbox without touching it.
 - "Your filing so far" shows how often the first suggestion was what you chose, per folder: the evidence for
   Phase 3 (auto-filing proven folders).
+
+## Auto-filing (Phase 3)
+Off until you switch it on (Inbox page › Auto-filing › Turn on, or Settings). Even then, a file is moved
+automatically only when **all** of these hold:
+- its first suggestion's folder is **proven**: at least 20 of your Inbox decisions about that folder, agreeing with
+  its suggestion at least 90% of the time over the last 30 (filing elsewhere, or undoing a move, counts against);
+- the suggestion is a rule, a file-name match, or similar-documents at 95%+ (never the model's guess alone);
+- the file has been in Downloads for 15 minutes, Cleanup doesn't flag it, and it isn't password-protected;
+- the same `mover.py` guarantees as File it: never overwrite, verified cross-drive copies, journal, **Undo**.
+Undoing an auto-move counts against that folder at once; below the bar it goes back to suggestions only.
+The Inbox page shows each folder's progress and marks files that would be auto-filed, so you can see what it
+would do before turning it on. Thresholds are in Settings › Auto-filing (Phase 3).

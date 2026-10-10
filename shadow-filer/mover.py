@@ -216,7 +216,9 @@ def feedback(cfg: dict) -> dict:
     """How often the top suggestion was what you chose, per suggested folder (moves you didn't undo)."""
     c = _conn(cfg["database"])
     try:
-        rows = c.execute("SELECT top_folder, folder, rank, source FROM moves WHERE status='moved'").fetchall()
+        rows = c.execute("SELECT top_folder, folder, rank, source FROM moves WHERE status='moved' "
+                         "AND (source IS NULL OR source NOT LIKE 'auto%')").fetchall()
+        auto = c.execute("SELECT COUNT(*) FROM moves WHERE source LIKE 'auto%'").fetchone()[0]
     finally:
         c.close()
     per = {}
@@ -227,7 +229,7 @@ def feedback(cfg: dict) -> dict:
         d["accepted"] += 1 if (r["rank"] == 1 and r["folder"] == r["top_folder"]) else 0
     total = len(rows)
     acc = sum(d["accepted"] for d in per.values())
-    return {"moves": total, "top_accepted": acc, "rate": (acc / total) if total else None,
+    return {"moves": total, "top_accepted": acc, "rate": (acc / total) if total else None, "auto_moves": auto,
             "per_folder": sorted(per.values(), key=lambda d: -d["n"])}
 
 

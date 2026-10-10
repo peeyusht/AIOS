@@ -109,7 +109,7 @@ function SFsettings(){
   Z.useEffect(()=>()=>{Hn.dirty=!1},[]);
   const set=(path,v)=>setForm(old=>{const n=SFclone(old);const ks=path.split(".");let o=n;for(const k of ks.slice(0,-1)){if(typeof o[k]!=="object"||o[k]===null)o[k]={};o=o[k]}o[ks[ks.length-1]]=v;return n});
   const get=(path,dflt)=>{let o=form;for(const k of path.split(".")){if(o==null)return dflt;o=o[k]}return o??dflt};
-  const dc=k=>meta?.defaults?.cleanup?.[k], ds=k=>meta?.defaults?.search?.[k], dO=k=>meta?.defaults?.ocr?.[k];
+  const dc=k=>meta?.defaults?.cleanup?.[k], ds=k=>meta?.defaults?.search?.[k], dO=k=>meta?.defaults?.ocr?.[k], dA=k=>meta?.defaults?.autofile?.[k];
   const save=async()=>{setSaving(!0);setRes(null);try{const r=await cm("/api/settings",{raw:form});setRes(r);if(r.ok){await load()}}catch(e){setRes({ok:!1,message:e instanceof Error?e.message:String(e)})}setSaving(!1)};
   const restart=async()=>{setRestarting("Restarting…");try{const r=await Ee.restart();if(!r.ok){setRestarting(r.message);return}Hn.dirty=!1;await new Promise(s=>setTimeout(s,1500));for(;;){try{await Ee.status();window.location.reload();return}catch{await new Promise(s=>setTimeout(s,1500))}}}catch(e){setRestarting(String(e?.message??e))}};
   const switchMode=m=>{if(m!=="form"&&dirty&&!window.confirm("You have unsaved changes in the form. Discard them?"))return;if(m!=="form")setForm(SFclone(orig));else load();setMode(m)};
@@ -169,6 +169,13 @@ function SFsettings(){
       !searchOff&&f.jsx(SFrow,{label:"Skip paths matching",help:"One pattern per line, e.g. *\\node_modules\\*",children:f.jsx(SFlines,{value:get("search.exclude_globs",[]),onChange:v=>set("search.exclude_globs",v),rows:3})}),
       !searchOff&&f.jsx(SFrow,{label:"Minimum meaning match",help:"Meaning-only results below this are hidden. Raise if you see weak matches; lower if good ones are missing.",children:f.jsx(SFnum,{value:get("search.min_similarity",ds("min_similarity")),onChange:v=>set("search.min_similarity",v),min:0,max:1,step:.01})}),
       !searchOff&&f.jsx(SFrow,{label:"Re-check folders every",help:"New and changed files are also picked up within seconds.",children:f.jsx(SFnum,{value:get("search.sweep_minutes",ds("sweep_minutes")),onChange:v=>set("search.sweep_minutes",v),min:1,max:1440,suffix:"minutes"})}))}),
+    f.jsx(al,{title:"Auto-filing (Phase 3)",children:SFx("div",{style:{marginTop:"-12px"}},
+      f.jsx(SFrow,{label:"Auto-filing",help:"Files go automatically only into folders your own Inbox decisions have proven. Every auto-move can be undone.",children:f.jsx(SFtoggle,{value:get("autofile.enabled",dA("enabled")),onChange:v=>set("autofile.enabled",v),label:"File automatically into proven folders"})}),
+      f.jsx(SFrow,{label:"A folder is proven after",help:"Your decisions on the Inbox page where that folder was the first suggestion.",children:SFx("div",{className:"flex flex-wrap gap-4"},
+        SFx("span",{className:"text-sm"},f.jsx(SFnum,{value:get("autofile.min_decisions",dA("min_decisions")),onChange:v=>set("autofile.min_decisions",v),min:5,max:500,suffix:"decisions"})),
+        SFx("span",{className:"text-sm"},"with ",f.jsx(SFnum,{value:get("autofile.min_rate",dA("min_rate")),onChange:v=>set("autofile.min_rate",v),min:.5,max:1,step:.01,suffix:"agreement (0–1)"})))}),
+      f.jsx(SFrow,{label:"Similar-document suggestions",help:"Rule and file-name matches qualify regardless.",children:f.jsx(SFnum,{value:get("autofile.min_score",dA("min_score")),onChange:v=>set("autofile.min_score",v),min:.5,max:1,step:.01,suffix:"minimum strength (0–1)"})}),
+      f.jsx(SFrow,{label:"Leave new downloads alone for",children:f.jsx(SFnum,{value:get("autofile.delay_minutes",dA("delay_minutes")),onChange:v=>set("autofile.delay_minutes",v),min:1,max:1440,suffix:"minutes"})}))}),
     f.jsx(al,{title:"OCR (scanned files)",children:SFx("div",{style:{marginTop:"-12px"}},
       f.jsx(SFrow,{label:"Read scanned files",help:"Uses the OCR built into Windows. Scanned PDFs, images and Word files that are only screenshots become searchable and get better filing predictions. Password-protected PDFs are never opened.",
         children:f.jsx(SFtoggle,{value:get("ocr.enabled",dO("enabled")),onChange:v=>set("ocr.enabled",v),label:"Use OCR"})}),

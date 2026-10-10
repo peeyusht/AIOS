@@ -660,6 +660,14 @@ def run(cfg: dict, db: DB, config_path: Path) -> None:
 
     wait_for_ollama(cfg)
     start_search(cfg)
+    try:
+        import autofile
+        import web_ui
+        autofile.start(cfg, web_ui._suggester, db, log)
+        if autofile.settings(cfg)["enabled"]:
+            log.info("AUTO-FILING is on: proven folders only (see the Inbox page)")
+    except Exception as e:
+        log.warning("auto-filing unavailable: %s", e)
     queue: dict = {}
     lock = threading.Lock()
     stop = threading.Event()

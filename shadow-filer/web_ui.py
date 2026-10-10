@@ -300,7 +300,7 @@ class Handler(BaseHTTPRequestHandler):
                     "raw": raw, "models": Ctx.status.get("installed_models") or [],
                     "destinations": Ctx.dests.get() if cfg["para_root"].is_dir() else [],
                     "defaults": {"cleanup": cleanup.DEFAULTS, "search": search_index.DEFAULTS,
-                                 "ocr": __import__("ocr").DEFAULTS},
+                                 "ocr": __import__("ocr").DEFAULTS, "autofile": __import__("autofile").DEFAULTS},
                     "restart_needed": Ctx.status.get("restart_needed", False),
                     "restart_keys": list(RESTART_KEYS), "config_path": str(Ctx.config_path),
                     "os": os.name})
@@ -330,15 +330,24 @@ class Handler(BaseHTTPRequestHandler):
                 sg = _suggester()
                 files = suggest.list_inbox(cfg, mover.dismissed(cfg), lambda p: sa.is_ignored(p, cfg))
                 off, lim = max(0, int(q.get("offset", 0))), min(int(q.get("limit", 40)), 200)
+                import autofile
                 hints = _cleanup_hints()
+                proven = autofile.trust(cfg)
+                now = time.time()
                 page = []
                 for fi in files[off:off + lim]:
                     sug = sg.suggest(fi["path"]) if sg else {"candidates": [], "ready": False}
                     page.append({**fi, "modified": datetime.fromtimestamp(fi["mtime"]).isoformat(timespec="seconds"),
-                                 **sug, "cleanup": hints.get(fi["path"])})
+                                 **sug, "cleanup": hints.get(fi["path"]),
+                                 "auto": autofile.decide(cfg, fi, sug, proven, hints, now)})
                 return self._send(200, {"items": page, "total": len(files), "offset": off,
                                         "examples": sg.stats() if sg else None,
                                         "destinations": Ctx.dests.get() if cfg["para_root"].is_dir() else []})
+            if u.path == "/api/autofile":
+                import autofile
+                return self._send(200, {"settings": autofile.settings(cfg), "summary": autofile.summary(cfg),
+                                        "folders": sorted(autofile.trust(cfg).values(),
+                                                          key=lambda t: (-t["proven"], -t["decisions"]))})
             if u.path == "/api/moves":
                 import mover
                 return self._send(200, {"journal": mover.journal(cfg, 100), "feedback": mover.feedback(cfg)})
