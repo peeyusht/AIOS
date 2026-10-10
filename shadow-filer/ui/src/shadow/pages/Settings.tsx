@@ -14,8 +14,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { setNavigationGuard, useDebounced, usePoll } from "@/lib/hooks";
-import { bytes, pct } from "@/lib/format";
-import type { FsDirs, Raw, Rule, SettingsResponse, Status } from "@/lib/types";
+import { bytes, dateTime, pct, when } from "@/lib/format";
+import type { FsDirs, Raw, Rule, SettingsResponse, Status, SystemInfo } from "@/lib/types";
 import { Bar, Card, Confirm, ListSkeleton, LoadError, Mono, Notice, PageHeader, Spin, act } from "../ui";
 import { FolderPicker } from "./Inbox";
 
@@ -80,7 +80,8 @@ export function SettingsPage({ status }: { status: Status | null }) {
   };
   const restart = async () => {
     setRestarting(true);
-    await act(() => api.restart());
+    const ok = await act(() => api.restart());
+    if (!ok) { setRestarting(false); return; }
     const start = Date.now();
     await new Promise((r) => setTimeout(r, 1500));
     while (Date.now() - start < 120_000) {
@@ -145,6 +146,11 @@ export function SettingsPage({ status }: { status: Status | null }) {
           <Section title="Interface">
             <Num c={ctx} p="ui.port" label="Port" min={1024} max={65535} restart />
             <Field label="Config file"><Mono className="text-sm">{meta.config_path}</Mono></Field>
+            <Field label="Agent" hint="Watching and indexing pause for a few seconds. Nothing is moved or deleted.">
+              <Button variant="danger" size="sm" onClick={() => setRestartOpen(true)} disabled={restarting}>
+                {restarting ? <Spin /> : <RotateCcw />} {restarting ? "Restarting…" : "Restart agent…"}
+              </Button>
+            </Field>
             <Field label="Theme"><span className="text-sm text-muted-foreground">Use the sun / moon button in the top bar. Saved in this browser.</span></Field>
           </Section>
           <SystemSection />
@@ -428,6 +434,37 @@ function SearchSection({ c }: { c: Ctx }) {
   );
 }
 
+const dash = (v: unknown): ReactNode => (v === null || v === undefined || v === "" ? "—" : (v as ReactNode));
+const num = (v: number | null | undefined) => (v == null || !isFinite(v) ? null : v);
+const ratio = (a: number | null | undefined, b: number | null | undefined) => (num(a) != null && num(b) ? (a as number) / (b as number) : null);
+const joinT = (parts: unknown[], sep = " ") => parts.filter((p) => p !== null && p !== undefined && p !== "").join(sep) || "—";
+
+function Group({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="space-y-3">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>
+      {children}
+    </div>
+  );
+}
+function KV({ rows }: { rows: [string, ReactNode][] }) {
+  return (
+    <dl className="grid grid-cols-[150px_1fr] gap-x-4 gap-y-1.5 text-sm">
+      {rows.map(([k, v]) => <div key={k} className="contents"><dt className="text-muted-foreground">{k}</dt><dd className="min-w-0 break-words">{v}</dd></div>)}
+    </dl>
+  );
+}
+function MiniTable({ head, rows, label }: { head: string[]; rows: ReactNode[][]; label: string }) {
+  return (
+    <div className="overflow-x-auto rounded-lg border">
+      <table className="w-full text-sm" aria-label={label}>
+        <thead className="bg-muted/50 text-left text-xs text-muted-foreground"><tr>{head.map((h) => <th key={h} className="px-3 py-1.5 font-medium">{h}</th>)}</tr></thead>
+        <tbody>{rows.map((r, i) => <tr key={i} className="border-t">{r.map((c, j) => <td key={j} className="px-3 py-1.5 tabular">{c}</td>)}</tr>)}</tbody>
+      </table>
+    </div>
+  );
+}
+
 function SystemSection() {
   const [refresh, setRefresh] = useState(0);
   const q = usePoll(() => api.system(refresh > 0), null, [refresh]);
@@ -437,39 +474,143 @@ function SystemSection() {
       <div className="flex justify-end -mt-12"><Button variant="ghost" size="sm" onClick={() => setRefresh((n) => n + 1)} disabled={q.loading}><RefreshCw className={cn(q.loading && "animate-spin")} /> Refresh</Button></div>
       {q.error && !s && <LoadError error={q.error} onRetry={q.reload} />}
       {!s && !q.error && <ListSkeleton rows={2} h="h-16" />}
-      {s && (
-        <>
-          {s.notes.map((n, i) => <Notice key={i} tone={n.level === "warn" ? "warn" : "info"}>{n.text}</Notice>)}
-          <dl className="grid grid-cols-[140px_1fr] gap-x-4 gap-y-2 text-sm">
-            <dt className="text-muted-foreground">Windows</dt><dd>{s.os}</dd>
-            <dt className="text-muted-foreground">Computer</dt><dd>{s.computer}</dd>
-            <dt className="text-muted-foreground">CPU</dt><dd>{s.cpu}</dd>
-            <dt className="text-muted-foreground">Memory</dt><dd className="tabular">{bytes(s.memory.installed)} installed · {bytes(s.memory.free)} free</dd>
-            <dt className="text-muted-foreground">Ollama</dt>
-            <dd>{s.ollama.reachable ? <>Reachable · version {s.ollama.version} · loaded: <Mono className="text-xs">{s.ollama.loaded.join(", ") || "none"}</Mono></> : <span className="text-warning">Not reachable</span>}</dd>
-          </dl>
-          {s.gpus.map((g) => (
-            <div key={g.name} className="rounded-lg border p-3 text-sm">
-              <div className="font-medium">{g.name}</div>
-              <div className="mt-2 flex items-center gap-3"><Bar value={g.vram_used / g.vram_total} className="w-48" label="GPU memory used" /><span className="text-xs text-muted-foreground tabular">{bytes(g.vram_used)} of {bytes(g.vram_total)} · {g.temp ?? "—"}°C · {g.util ?? "—"}% busy</span></div>
-            </div>
-          ))}
+      {s && <SystemDetail s={s} />}
+    </Section>
+  );
+}
+
+function SystemDetail({ s }: { s: SystemInfo }) {
+  const os = s.os ?? ({} as SystemInfo["os"]), pc = s.computer ?? ({} as SystemInfo["computer"]), cpu = s.cpu ?? ({} as SystemInfo["cpu"]);
+  const mem = s.memory ?? ({ modules: [] } as unknown as SystemInfo["memory"]);
+  const ol = s.ollama ?? ({ loaded: [] } as unknown as SystemInfo["ollama"]);
+  const cvd = s.cuda_visible_devices ?? ({} as SystemInfo["cuda_visible_devices"]);
+  const ag = s.agent ?? ({} as SystemInfo["agent"]);
+  const memUsed = ratio(num(mem.usable_bytes) != null && num(mem.free_bytes) != null ? mem.usable_bytes - mem.free_bytes : null, mem.usable_bytes);
+  return (
+    <div className="space-y-8">
+      {(s.notes ?? []).length > 0 && <div className="space-y-2">{s.notes.map((n, i) => <Notice key={i} tone={n.level === "warn" ? "warn" : "info"}>{n.text}</Notice>)}</div>}
+
+      <Group title="Machine">
+        <KV rows={[
+          ["Computer", joinT([pc.manufacturer, pc.model, pc.name && `· ${pc.name}`])],
+          ["Motherboard", dash(pc.board)],
+          ["BIOS", joinT([pc.bios, pc.bios_date && `· ${dateTime(pc.bios_date).split(",")[0]}`])],
+          ["Windows", joinT([os.name, os.version, os.build && `· build ${os.build}`, os.arch && `· ${os.arch}`])],
+          ["Installed on", os.installed ? dateTime(os.installed) : "—"],
+          ["Last boot", os.last_boot ? <>{dateTime(os.last_boot)} <span className="text-muted-foreground">({when(os.last_boot)})</span></> : "—"],
+          ["Secure Boot", s.secure_boot == null ? "Unknown" : s.secure_boot ? "On" : "Off"],
+          ["CPU", joinT([cpu.name, cpu.cores != null && `· ${cpu.cores} cores`, cpu.threads != null && `/ ${cpu.threads} threads`, cpu.mhz != null && `· ${cpu.mhz} MHz`])],
+          ["Memory", <div key="m" className="space-y-1.5">
+            <span className="tabular">{bytes(mem.installed_bytes)} installed · {bytes(mem.usable_bytes)} usable · {bytes(mem.free_bytes)} free</span>
+            {memUsed != null && <Bar value={memUsed} className="w-64" label="Memory in use" />}
+          </div>],
+        ]} />
+        {(mem.modules ?? []).length > 0 && (
+          <MiniTable label="Memory modules" head={["Slot", "Size", "Speed", "Maker", "Part number"]} rows={mem.modules.map((m) => [
+            dash(m.slot), bytes(m.bytes),
+            m.mhz == null ? "—" : m.rated_mhz ? `${m.mhz} of ${m.rated_mhz} MHz` : `${m.mhz} MHz`,
+            dash(m.maker), m.part ? <Mono className="text-xs">{m.part}</Mono> : "—",
+          ])} />
+        )}
+      </Group>
+
+      <Group title="Graphics">
+        {(s.gpus ?? []).length === 0 && <p className="text-sm text-muted-foreground">No graphics card reported.</p>}
+        <div className="grid gap-3 min-[1100px]:grid-cols-2">
+          {(s.gpus ?? []).map((g) => {
+            const procs = (s.gpu_processes ?? []).filter((p) => p.gpu_uuid === g.uuid);
+            const used = ratio(g.vram_used_bytes, g.vram_bytes);
+            return (
+              <div key={g.uuid ?? g.index} className="rounded-lg border p-3 text-sm space-y-2">
+                <div className="font-medium">{dash(g.name)}</div>
+                <div className="flex items-center gap-3">
+                  {used != null && <Bar value={used} className="w-40" label={`${g.name} memory used`} />}
+                  <span className="text-xs text-muted-foreground tabular">{bytes(g.vram_used_bytes)} of {bytes(g.vram_bytes)}</span>
+                </div>
+                <KV rows={[
+                  ["Temperature", g.temp_c == null ? "—" : `${g.temp_c} °C`],
+                  ["Busy", g.util_pct == null ? "—" : `${g.util_pct}%`],
+                  ["Driver", dash(g.driver)],
+                  ["Compute capability", dash(g.compute_cap)],
+                  ["Display", dash(g.display)],
+                  ["Used by", procs.length ? procs.map((p) => <div key={p.pid}><Mono className="text-xs">{p.name}</Mono> <span className="text-muted-foreground">pid {p.pid}</span></div>) : <span className="text-muted-foreground">Nothing is using it</span>],
+                ]} />
+              </div>
+            );
+          })}
+        </div>
+      </Group>
+
+      <Group title="Storage">
+        {(s.disks ?? []).length > 0 && (
+          <MiniTable label="Physical disks" head={["Disk", "Model", "Size", "Type", "Health", "Drives"]} rows={s.disks.map((d) => {
+            const ok = /^(healthy|ok)$/i.test(d.health ?? "");
+            return [
+              dash(d.number), dash(d.model), bytes(d.bytes), joinT([d.media, d.bus && `· ${d.bus}`]),
+              d.health ? <Badge variant={ok ? "success" : "warning"}>{d.health}</Badge> : "—",
+              <Mono key="l" className="text-xs">{(d.letters ?? []).join(" ") || "—"}</Mono>,
+            ];
+          })} />
+        )}
+        <div className="space-y-2">
+          {(s.volumes ?? []).map((v) => {
+            const free = ratio(v.free, v.bytes);
+            const low = free != null && free < 0.1;
+            return (
+              <div key={v.letter} className="flex items-center gap-3 text-sm">
+                <span className="w-44 truncate"><Mono className="text-xs">{v.letter}</Mono> {v.label ?? <span className="text-muted-foreground">no label</span>} <span className="text-xs text-muted-foreground">{v.fs}</span></span>
+                <Bar value={free == null ? 0 : 1 - free} tone={low ? "warning" : "primary"} className="flex-1" label={`${v.letter} used space`} />
+                <span className={cn("w-44 text-right text-xs tabular", low ? "text-warning font-semibold" : "text-muted-foreground")}>{bytes(v.free)} free of {bytes(v.bytes)}</span>
+              </div>
+            );
+          })}
+        </div>
+      </Group>
+
+      <Group title="Ollama">
+        <KV rows={[
+          ["Address", ol.url ? <Mono className="text-xs">{ol.url}</Mono> : "—"],
+          ["Reachable", ol.reachable ? <span className="text-success">Yes</span> : <span className="text-warning">No</span>],
+          ["Version", dash(ol.version)],
+        ]} />
+        {(ol.loaded ?? []).length === 0 ? <p className="text-sm text-muted-foreground">No model is loaded right now.</p> : (
           <div className="space-y-2">
-            {s.disks.map((d) => {
-              const free = d.free / d.total;
+            {ol.loaded.map((m) => {
+              const partial = m.gpu_pct != null && m.gpu_pct < 100;
               return (
-                <div key={d.mount} className="flex items-center gap-3 text-sm">
-                  <span className="w-28 font-mono text-xs">{d.mount} {d.name}</span>
-                  <Bar value={1 - free} tone={free < 0.1 ? "warning" : "primary"} className="flex-1" label={`${d.mount} used space`} />
-                  <span className={cn("w-40 text-right text-xs tabular", free < 0.1 ? "text-warning font-medium" : "text-muted-foreground")}>{bytes(d.free)} free of {bytes(d.total)}</span>
+                <div key={m.name} className="rounded-lg border p-3 text-sm space-y-2">
+                  <div className="flex items-center gap-3"><Mono className="font-medium">{m.name}</Mono><span className="text-xs text-muted-foreground tabular">{bytes(m.bytes)}</span></div>
+                  <div className="flex items-center gap-3">
+                    {m.gpu_pct != null && <Bar value={m.gpu_pct / 100} tone={partial ? "warning" : "success"} className="w-40" label="Share in GPU memory" />}
+                    <span className={cn("text-xs tabular", partial ? "text-warning" : "text-muted-foreground")}>
+                      {m.gpu_pct == null ? "GPU share unknown" : `${m.gpu_pct}% in GPU memory`}{partial && " · the rest runs on the CPU"}
+                    </span>
+                  </div>
+                  <KV rows={[
+                    ["Parameters", dash(m.params)],
+                    ["Quantisation", dash(m.quant)],
+                    ["Context length", m.context == null ? "—" : m.context.toLocaleString()],
+                    ["Unloads", m.expires ? when(m.expires) : "—"],
+                  ]} />
                 </div>
               );
             })}
           </div>
-          <TestButton label="Test Recycle Bin" fn={api.recycleSelftest} />
-        </>
-      )}
-    </Section>
+        )}
+        <p className="text-xs text-muted-foreground">CUDA_VISIBLE_DEVICES — this process: <Mono>{cvd.this_process ?? "—"}</Mono> · user: <Mono>{cvd.user ?? "—"}</Mono> · machine: <Mono>{cvd.machine ?? "—"}</Mono></p>
+      </Group>
+
+      <Group title="Agent">
+        <KV rows={[
+          ["Folder", ag.folder ? <Mono className="text-xs">{ag.folder}</Mono> : "—"],
+          ["Runs from drive", ag.drive ? <Mono className="text-xs">{ag.drive}</Mono> : "—"],
+          ["Python", ag.python ? <Mono className="text-xs">{ag.python}</Mono> : "—"],
+        ]} />
+        <p className="text-xs text-muted-foreground">Collected {s.collected ? when(s.collected) : "—"}{s.seconds != null && ` in ${s.seconds} s`}</p>
+      </Group>
+
+      <TestButton label="Test Recycle Bin" fn={api.recycleSelftest} />
+    </div>
   );
 }
 

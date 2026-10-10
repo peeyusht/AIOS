@@ -1,9 +1,9 @@
 /* The single gateway to the Shadow Filer agent. Falls back to in-memory mock data when no token is present. */
-import type {
-  AutofileResponse, CleanupHistoryRow, CleanupResponse, Decision, FsCheck, FsDirs, InboxResponse, LogResponse,
-  MovesResponse, OkResponse, Prediction, Raw, SaveResponse, SearchResponse, SearchStatus, SettingsResponse, Stats, Status, SystemInfo,
-} from "./types";
 import { adaptCleanup, adaptHistory, adaptLog, adaptMoves, adaptPredictions, adaptSearchStatus, adaptSystem } from "./adapt";
+import type {
+  AutofileResponse, Decision, FsCheck, FsDirs, InboxResponse, OkResponse,
+  Raw, SaveResponse, SearchResponse, SettingsResponse, Stats, Status,
+} from "./types";
 
 function readToken(): string | null {
   if (typeof document === "undefined") return null;

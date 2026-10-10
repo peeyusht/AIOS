@@ -65,27 +65,18 @@ export function adaptSearchStatus(r: Raw): SearchStatus {
   };
 }
 
-const join = (parts: unknown[], sep = " ") => parts.filter((p) => p !== null && p !== undefined && p !== "").join(sep);
 
 export function adaptSystem(r: Raw): SystemInfo {
-  if (typeof r?.os === "string") return r as SystemInfo; // already in page shape
-  const os = r?.os ?? {}, pc = r?.computer ?? {}, cpu = r?.cpu ?? {}, mem = r?.memory ?? {}, ol = r?.ollama ?? {};
+  const o = (v: Raw) => (isObj(v) ? v : {});
+  const a = (v: Raw) => (Array.isArray(v) ? v : []);
+  const mem = o(r?.memory), ol = o(r?.ollama);
   return {
-    os: join([os.name, os.version, os.build && `(build ${os.build})`]),
-    computer: join([pc.manufacturer, pc.model, pc.name && `· ${pc.name}`]),
-    cpu: join([cpu.name, cpu.cores && `· ${cpu.cores} cores`, cpu.threads && `/ ${cpu.threads} threads`]),
-    memory: { installed: mem.installed_bytes ?? 0, free: mem.free_bytes ?? 0 },
-    gpus: (r?.gpus ?? []).map((g: Raw) => ({
-      name: g.name, vram_used: g.vram_used_bytes ?? 0, vram_total: g.vram_bytes ?? 0,
-      temp: g.temp_c ?? null, util: g.util_pct ?? null,
-    })),
-    disks: (r?.volumes ?? []).map((v: Raw) => ({
-      name: join([v.label, v.media && `(${v.media})`]) || v.letter, mount: v.letter, total: v.bytes ?? 0, free: v.free ?? 0,
-    })),
-    ollama: {
-      reachable: !!ol.reachable, version: ol.version ?? null,
-      loaded: (ol.loaded ?? []).map((m: Raw) => (typeof m === "string" ? m : join([m.name, m.gpu_pct != null && `(${m.gpu_pct}% on GPU)`]))),
-    },
-    notes: r?.notes ?? [],
-  };
+    ...(isObj(r) ? r : {}),
+    os: o(r?.os), computer: o(r?.computer), cpu: o(r?.cpu),
+    memory: { ...mem, modules: a(mem["modules"]) },
+    gpus: a(r?.gpus), gpu_processes: a(r?.gpu_processes), disks: a(r?.disks), volumes: a(r?.volumes),
+    ollama: { ...ol, loaded: a(ol["loaded"]) },
+    cuda_visible_devices: o(r?.cuda_visible_devices), agent: o(r?.agent),
+    notes: a(r?.notes),
+  } as SystemInfo;
 }
