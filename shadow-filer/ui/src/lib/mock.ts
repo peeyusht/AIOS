@@ -447,20 +447,50 @@ const get: Record<string, Handler> = {
     const parent = p.length <= 3 ? "" : p.replace(/\\[^\\]+\\?$/, "") || "";
     return { path: p, parent: parent.length === 2 ? parent + "\\" : parent, dirs: names.map((n) => ({ name: n, path: `${p.replace(/\\$/, "")}\\${n}` })) };
   },
-  "/api/system": (): SystemInfo => ({
-    os: "Windows 11 Pro 24H2", computer: "ALEX-WORKSTATION", cpu: "AMD Ryzen 7 7840HS (16 threads)",
-    memory: { installed: 32 * 1024 * MB, free: 11.4 * 1024 * MB },
-    gpus: [{ name: "NVIDIA GeForce RTX 4060 Laptop", vram_used: 5.1 * 1024 * MB, vram_total: 8 * 1024 * MB, temp: 61, util: 24 }],
-    disks: [
-      { name: "System", mount: "C:", total: 1000 * 1024 * MB, free: 72 * 1024 * MB },
-      { name: "Data", mount: "D:", total: 2000 * 1024 * MB, free: 940 * 1024 * MB },
-    ],
-    ollama: { reachable: !demo.modelMissing, version: "0.6.2", loaded: ["qwen3:8b"] },
-    notes: [
-      { level: "warn", text: "Drive C: has less than 10% free space. The Recycle Bin limit may be lower than usual." },
-      { level: "info", text: "The model fits in GPU memory; suggestions take about 2 seconds each." },
-    ],
-  }),
+  "/api/system": (): SystemInfo => {
+    const GB = 1024 * MB;
+    const g0 = "GPU-3f1a9c2e-0000-4a11-9b7e-acme00000001", g1 = "GPU-7b20d4f1-0000-4c22-8e1d-acme00000002";
+    return {
+      collected: iso(now()), seconds: 1.8,
+      os: { name: "Windows 11 Pro", version: "24H2", build: "26100.2314", arch: "64-bit", installed: ago(60 * 24 * 410), last_boot: ago(60 * 27) },
+      computer: { name: "ALEX-WORKSTATION", manufacturer: "Northwind Systems", model: "NW Studio 7", board: "Globex B650M Pro", bios: "1.14.2", bios_date: "2026-03-18" },
+      secure_boot: true,
+      cpu: { name: "AMD Ryzen 7 7840HS", cores: 8, threads: 16, mhz: 3801 },
+      memory: {
+        installed_bytes: 64 * GB, usable_bytes: 63.2 * GB, free_bytes: 27.4 * GB,
+        modules: [
+          { slot: "DIMM A1", bytes: 16 * GB, mhz: 5200, rated_mhz: 5600, maker: "Initech Memory", part: "IM5-16G56C40" },
+          { slot: "DIMM A2", bytes: 16 * GB, mhz: 5200, rated_mhz: 5600, maker: "Initech Memory", part: "IM5-16G56C40" },
+          { slot: "DIMM B1", bytes: 16 * GB, mhz: 5200, rated_mhz: 5600, maker: "Initech Memory", part: "IM5-16G56C40" },
+          { slot: "DIMM B2", bytes: 16 * GB, mhz: 5200, rated_mhz: null, maker: null, part: null },
+        ],
+      },
+      gpus: [
+        { index: 0, uuid: g0, name: "NVIDIA GeForce RTX 4070", vram_bytes: 12 * GB, vram_used_bytes: 6.3 * GB, driver: "566.14", temp_c: 58, util_pct: 21, pci: "00000000:01:00.0", compute_cap: "8.9", display: "Monitor 1 (2560×1440)" },
+        { index: 1, uuid: g1, name: "NVIDIA RTX A2000", vram_bytes: 6 * GB, vram_used_bytes: 0.2 * GB, driver: "566.14", temp_c: 41, util_pct: 0, pci: "00000000:05:00.0", compute_cap: "8.6", display: null },
+      ],
+      gpu_processes: [{ name: "ollama.exe", pid: 14820, gpu_uuid: g0 }],
+      disks: [
+        { number: "0", model: "Umbrella NVMe 990 1TB", media: "SSD", bus: "NVMe", bytes: 1000 * GB, health: "Healthy", letters: ["C:"] },
+        { number: "1", model: "Acme Barracuda 4TB", media: "HDD", bus: "SATA", bytes: 4000 * GB, health: "Warning", letters: ["D:", "E:"] },
+      ],
+      volumes: [
+        { letter: "C:", label: "System", fs: "NTFS", bytes: 930 * GB, free: 72 * GB, disk: "0", media: "SSD" },
+        { letter: "D:", label: "Data", fs: "NTFS", bytes: 2000 * GB, free: 940 * GB, disk: "1", media: "HDD" },
+        { letter: "E:", label: null, fs: "exFAT", bytes: 1700 * GB, free: 1210 * GB, disk: "1", media: "HDD" },
+      ],
+      ollama: {
+        url: "http://127.0.0.1:11434", reachable: !demo.modelMissing, version: "0.6.2",
+        loaded: demo.modelMissing ? [] : [{ name: "qwen3:8b", bytes: 6.1 * GB, vram_bytes: 5.6 * GB, gpu_pct: 92, params: "8.2B", quant: "Q4_K_M", context: 8192, expires: ago(-4) }],
+      },
+      cuda_visible_devices: { this_process: "0", user: null, machine: null },
+      agent: { folder: "C:\\Users\\alex\\ShadowFiler", drive: "C:", python: "3.12.7 · C:\\Users\\alex\\ShadowFiler\\.venv\\Scripts\\python.exe" },
+      notes: [
+        { level: "warn", text: "Drive C: has less than 10% free space. The Recycle Bin limit may be lower than usual." },
+        { level: "info", text: "8% of the model runs on the CPU; suggestions take about 3 seconds each." },
+      ],
+    };
+  },
 };
 
 const post: Record<string, Handler> = {

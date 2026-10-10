@@ -311,13 +311,29 @@ export interface FsDirs {
 }
 
 export interface SystemInfo {
-  os: string;
-  computer: string;
-  cpu: string;
-  memory: { installed: number; free: number };
-  gpus: { name: string; vram_used: number; vram_total: number; temp: number | null; util: number | null }[];
-  disks: { name: string; mount: string; total: number; free: number }[];
-  ollama: { reachable: boolean; version: string | null; loaded: string[] };
+  collected: string;
+  seconds: number;
+  os: { name: string; version: string; build: string; arch: string; installed: string | null; last_boot: string | null };
+  computer: { name: string; manufacturer: string; model: string; board: string | null; bios: string | null; bios_date: string | null };
+  secure_boot: boolean | null;
+  cpu: { name: string; cores: number; threads: number; mhz: number | null };
+  memory: {
+    installed_bytes: number; usable_bytes: number; free_bytes: number;
+    modules: { slot: string; bytes: number; mhz: number | null; rated_mhz: number | null; maker: string | null; part: string | null }[];
+  };
+  gpus: {
+    index: number; uuid: string; name: string; vram_bytes: number; vram_used_bytes: number; driver: string | null;
+    temp_c: number | null; util_pct: number | null; pci: string | null; compute_cap: string | null; display: string | null;
+  }[];
+  gpu_processes: { name: string; pid: number; gpu_uuid: string }[];
+  disks: { number: string; model: string; media: string; bus: string; bytes: number; health: string; letters: string[] }[];
+  volumes: { letter: string; label: string | null; fs: string; bytes: number; free: number; disk: string | null; media: string | null }[];
+  ollama: {
+    url: string; reachable: boolean; version: string | null;
+    loaded: { name: string; bytes: number; vram_bytes: number; gpu_pct: number | null; params: string | null; quant: string | null; context: number | null; expires: string | null }[];
+  };
+  cuda_visible_devices: { this_process: string | null; user: string | null; machine: string | null };
+  agent: { folder: string; drive: string; python: string };
   notes: { level: "info" | "warn"; text: string }[];
 }
 
