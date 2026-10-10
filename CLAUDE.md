@@ -68,6 +68,11 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - Tests: `.venv\Scripts\python -m unittest discover -s tests` (stdlib unittest, temp folders only). Run them
   after touching `mover.py`, `autofile.py`, `cleanup.py` or the cloud-only checks; add a test with any new rule.
 - Test file moves on throwaway folders first; never experiment on `Downloads` or `D:\Organized`.
+- To click through the console for real (File it, Undo, delete, save settings) use a throwaway agent, never the
+  live one: copy `*.py`, `ui.html` and `ui_dist/` into a temp folder (so `search.db`, `cleanup_report.json` and
+  logs are separate: they live next to the code), give it a `config.yaml` with temp inbox/PARA folders full of
+  made-up files and `ui.port: 8766`, and run `shadow_agent.py --config config.yaml run` from there. Files it
+  recycles do land in the real Recycle Bin. "Show"/"Open" launch Explorer or an app on the user's desktop.
 
 ## Measured numbers (11 Oct 2026, leave-one-out on the user's filed documents)
 - Similar-documents suggestion: top-1 72%, top-3 88% (909 docs with text). Shown 95%+ → right 94%;

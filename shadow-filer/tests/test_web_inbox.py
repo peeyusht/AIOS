@@ -61,6 +61,30 @@ class InboxFileTest(unittest.TestCase):
         r = self.file("c.txt", "3-Resources/C", source="name", rank=1)
         self.assertEqual((r["source"], r["rank"], r["top_folder"]), ("manual", 0, "1-Projects/A"))
 
+    def test_index_is_told_when_a_file_moves_and_when_it_comes_back(self):
+        idx = mock.Mock()
+        with mock.patch("search_index.get", return_value=idx):
+            r = self.file("d.txt", "1-Projects/A")
+            src, dest = str(self.inbox / "d.txt"), str(self.para / "1-Projects" / "A" / "d.txt")
+            self.assertEqual([c.args[0] for c in idx.enqueue.call_args_list], [src, dest])
+            idx.reset_mock()
+            h = FakeHandler()
+            web_ui._inbox_post(h, "/api/moves/undo", {"id": r["id"]})
+            self.assertTrue(h.body["ok"], h.body)
+            self.assertEqual([c.args[0] for c in idx.enqueue.call_args_list], [dest, src])
+
+    def test_show_accepts_only_files_directly_in_a_watched_folder(self):
+        p = self.inbox / "e.txt"
+        p.write_bytes(b"x")
+        (self.inbox / "sub").mkdir()
+        (self.inbox / "sub" / "deep.txt").write_bytes(b"x")
+        filed = self.para / "1-Projects" / "A" / "f.txt"
+        filed.write_bytes(b"x")
+        self.assertEqual(web_ui._inbox_file(str(p)), {"path": str(p)})
+        for bad in (self.inbox / "sub" / "deep.txt", self.inbox / "sub", self.inbox / "missing.txt", filed,
+                    self.inbox / ".." / "para" / "1-Projects" / "A" / "f.txt", ""):
+            self.assertIsNone(web_ui._inbox_file(str(bad)), str(bad))
+
 
 if __name__ == "__main__":
     unittest.main()

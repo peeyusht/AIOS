@@ -213,7 +213,7 @@ function DeletePanel({ d, reload }: { d: CleanupResponse; reload: () => void }) 
         <>
           {plan.recycle_count > 0 && (
             <div className="flex flex-wrap items-center gap-3">
-              <p className="text-sm"><span className="font-semibold tabular">{plan.recycle_count}</span> files · <span className="tabular">{bytes(plan.recycle_bytes)}</span> can go to the Recycle Bin (restorable)</p>
+              <p className="text-sm"><span className="font-semibold tabular">{plan.recycle_count}</span> {plan.recycle_count === 1 ? "file" : "files"} · <span className="tabular">{bytes(plan.recycle_bytes)}</span> can go to the Recycle Bin (restorable)</p>
               <div className="ml-auto flex items-center gap-2">
                 {step ? (
                   <>
@@ -240,7 +240,7 @@ function DeletePanel({ d, reload }: { d: CleanupResponse; reload: () => void }) 
       {d.deleter.result && <DeleteResult r={d.deleter.result} />}
 
       <Confirm open={permOpen} onOpenChange={(o) => { setPermOpen(o); if (!o) setAck(false); }} title="Delete permanently?" confirmLabel="Delete permanently" danger onConfirm={() => (ack ? permanent() : undefined)}>
-        <p>These {plan.too_big.length} files ({bytes(plan.too_big.reduce((a, b) => a + b.size, 0))}) will be erased and cannot be restored from the Recycle Bin.</p>
+        <p>{plan.too_big.length === 1 ? "This file" : `These ${plan.too_big.length} files`} ({bytes(plan.too_big.reduce((a, b) => a + b.size, 0))}) will be erased and cannot be restored from the Recycle Bin.</p>
         <label className="flex items-center gap-2 pt-2 text-foreground">
           <Checkbox checked={ack} onCheckedChange={(v) => setAck(!!v)} /> I understand these cannot be restored
         </label>

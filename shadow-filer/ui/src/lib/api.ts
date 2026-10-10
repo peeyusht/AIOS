@@ -71,7 +71,7 @@ async function request<T>(method: "GET" | "POST", url: string, body?: Raw): Prom
     let msg = `HTTP ${res.status}`;
     try {
       const j = await res.json();
-      if (j?.error) msg = j.error;
+      if (j?.error || j?.message) msg = j.error ?? j.message; // refusals arrive as {ok:false, message}
     } catch { /* ignore */ }
     throw new ApiError(msg, res.status, "http");
   }

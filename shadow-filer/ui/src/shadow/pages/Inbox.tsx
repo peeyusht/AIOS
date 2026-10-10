@@ -137,7 +137,12 @@ function cleanupLabel(c: NonNullable<InboxItem["cleanup"]>) {
 function InboxCard({ item, data, autoOn, onGone }: { item: InboxItem; data: InboxResponse; autoOn: boolean; onGone: () => void }) {
   const chips = item.candidates.slice(0, 4);
   const firstOk = chips.find((c) => c.exists)?.folder ?? null;
-  const [folder, setFolder] = useState<string | null>(firstOk);
+  const [folder, setFolderRaw] = useState<string | null>(firstOk);
+  // Until you pick a folder yourself, the selection follows the first suggestion (which can change when
+  // the list refreshes); once you pick, your choice stays.
+  const [picked, setPicked] = useState(false);
+  useEffect(() => { if (!picked) setFolderRaw(firstOk); }, [firstOk, picked]);
+  const setFolder = (f: string | null) => { setPicked(true); setFolderRaw(f); };
   const [extra, setExtra] = useState<string | null>(null); // chosen via Other/New
   const [mk, setMk] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);

@@ -191,7 +191,8 @@ def move(cfg: dict, path: str, folder: str, meta: dict | None = None, log=None) 
             c.close()
         if log:
             log.info("FILED BY YOU %s -> %s", path, target)
-        return {"ok": True, "id": mid, "dest": str(target), "renamed": target.name != os.path.basename(path)}
+        return {"ok": True, "id": mid, "src": path, "dest": str(target),
+                "renamed": target.name != os.path.basename(path)}
 
 
 def undo(cfg: dict, move_id: int, log=None) -> dict:
@@ -222,7 +223,7 @@ def undo(cfg: dict, move_id: int, log=None) -> dict:
             c.close()
         if log:
             log.info("UNDO %s -> %s", dest, back)
-        return {"ok": True, "restored": str(back)}
+        return {"ok": True, "restored": str(back), "removed": dest}
 
 
 def _recover(c, log=None) -> int:

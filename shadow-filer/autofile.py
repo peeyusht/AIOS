@@ -190,6 +190,11 @@ def run_once(cfg: dict, sg, db, log=None) -> int:
                             "top_folder": d["folder"], "top_score": top.get("score"),
                             "top_source": top["source"]}, None)
                 moved += 1
+                try:
+                    import web_ui
+                    web_ui._reindex(it["path"])  # the copy in PARA is picked up by the folder watcher
+                except Exception:
+                    pass
                 if log:
                     log.info("AUTO-FILED %s -> %s (%s)", it["name"], d["folder"], d["why"])
             except mover.MoveError as e:
