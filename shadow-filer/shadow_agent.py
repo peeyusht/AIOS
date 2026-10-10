@@ -7,8 +7,9 @@ your PARA tree (rules first, local model second), and records the prediction.
 When YOU later file the file yourself, it records where it actually went, so you
 can measure accuracy.
 
-SAFETY: this program never moves, renames or copies any file. It deletes only files you mark
-"Agree" on the Cleanup page and then confirm there (Recycle Bin by default).
+SAFETY: this program moves a file only when you click "File it" on the Inbox page (mover.py: never
+overwrites, journaled, undoable), and deletes only files you mark "Agree" on the Cleanup page and then
+confirm there (Recycle Bin by default). Nothing happens to your files on its own.
 
 Commands:
   python shadow_agent.py check               sanity-check config, folders and Ollama
@@ -152,6 +153,18 @@ class DB:
             rows = self.conn.execute(
                 "SELECT path, size, method FROM predictions ORDER BY id").fetchall()
         return {r["path"]: r for r in rows}
+
+    def latest_prediction(self, path: str):
+        with self.lock:
+            return self.conn.execute("SELECT * FROM predictions WHERE path = ? AND method != 'error' "
+                                     "ORDER BY id DESC LIMIT 1", (path,)).fetchone()
+
+    def clear_actual(self, path: str) -> None:
+        """After an Undo the file is back in the inbox: its prediction is no longer 'filed'."""
+        with self.lock:
+            self.conn.execute("UPDATE predictions SET actual = NULL, actual_ts = NULL "
+                              "WHERE id = (SELECT MAX(id) FROM predictions WHERE path = ?)", (path,))
+            self.conn.commit()
 
     def history(self, n: int) -> list:
         with self.lock:
@@ -400,6 +413,8 @@ def process_inbox_file(p: Path, cfg: dict, dests: Destinations, db: DB) -> None:
 def _process_inbox_file(p: Path, cfg: dict, dests: Destinations, db: DB) -> None:
     if not p.is_file() or is_ignored(p, cfg):
         return
+    if not any(p.parent == inbox for inbox in cfg["inbox_folders"]):
+        return  # e.g. a file just filed from the Inbox page: it now lives in PARA, it isn't a new download
     size = p.stat().st_size
     prev = db.latest_by_path().get(str(p))
     if prev and prev["size"] == size and prev["method"] != "error":
@@ -654,7 +669,7 @@ def run(cfg: dict, db: DB, config_path: Path) -> None:
         log.info("watching inbox %s", inbox)
     obs.schedule(ParaHandler(cfg, db), str(cfg["para_root"]), recursive=True)
     log.info("watching PARA root %s (%d destinations)", cfg["para_root"], len(dests.get()))
-    log.info("SHADOW MODE: no file will be moved or renamed; deletes happen only when you confirm them on the Cleanup page")
+    log.info("SUGGEST MODE: files move only when you click File it on the Inbox page; deletes only when you confirm them on Cleanup")
     obs.start()
     STATUS["watching"] = True
     threading.Thread(target=settle_worker, args=(queue, lock, cfg, dests, db, stop), daemon=True).start()

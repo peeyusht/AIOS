@@ -11,18 +11,19 @@ for f in glob.glob('ui_dist/assets/index-sfc*.js'):
     os.remove(f)
 src = open('ui_src/base/index-BoLOatoI.js', encoding='utf-8').read()
 strip = lambda p: re.sub(r'/\*.*?\*/', '', open(os.path.join('ui_src', p), encoding='utf-8').read(), flags=re.S)
-pages = strip('cleanup_page.js') + '\n' + strip('search_page.js') + '\n' + strip('settings_page.js')
+pages = '\n'.join(strip(p) for p in ('cleanup_page.js', 'search_page.js', 'settings_page.js', 'inbox_page.js'))
 reps = [
     ('const w1=["overview","predictions","log","system","settings"]',
-     'const w1=["overview","search","predictions","cleanup","log","system","settings"]'),
+     'const w1=["overview","inbox","search","predictions","cleanup","log","system","settings"]'),
     ('const K1=[{id:"overview",label:"Overview",icon:i1},{id:"predictions",label:"Predictions",icon:s1},',
-     pages + '\nconst K1=[{id:"overview",label:"Overview",icon:i1},{id:"search",label:"Search",icon:SFsearchIcon},'
+     pages + '\nconst K1=[{id:"overview",label:"Overview",icon:i1},{id:"inbox",label:"Inbox",icon:SFinboxIcon},'
+             '{id:"search",label:"Search",icon:SFsearchIcon},'
              '{id:"predictions",label:"Predictions",icon:s1},{id:"cleanup",label:"Cleanup",icon:SFtrash},'),
     ('s==="predictions"&&f.jsx(ay,{}),',
-     's==="search"&&f.jsx(SFsearch,{}),s==="predictions"&&f.jsx(ay,{}),s==="cleanup"&&f.jsx(SFcleanup,{}),'),
+     's==="inbox"&&f.jsx(SFinbox,{}),s==="search"&&f.jsx(SFsearch,{}),s==="predictions"&&f.jsx(ay,{}),s==="cleanup"&&f.jsx(SFcleanup,{}),'),
     ('s==="settings"&&f.jsx(fy,{})', 's==="settings"&&f.jsx(SFsettings,{})'),
     ('Shadow mode — never moves, renames or deletes anything',
-     'Shadow mode — never moves or renames; deletes only what you confirm on Cleanup'),
+     'Suggest mode — files move only when you click File it; deletes only what you confirm'),
 ]
 for a, b in reps:
     assert src.count(a) == 1, a

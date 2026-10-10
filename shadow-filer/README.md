@@ -4,10 +4,10 @@ Watches your Downloads folder, predicts where each new file belongs in your PARA
 When you file the file yourself, it records where it actually went. After 2–3 weeks the Overview page shows how
 accurate rules and the model are, per category and per confidence level.
 
-**It never moves, renames or copies anything.** It only reads files, except on the Cleanup page, where it sends
-files you marked Agree to the Recycle Bin after you confirm.
+**Nothing happens to your files on its own.** It moves a file only when you click **File it** on the Inbox page
+(never overwriting, journaled, undoable), and sends files to the Recycle Bin only when you confirm on Cleanup.
 
-Pages in the console (http://127.0.0.1:8765): Overview, **Search** (meaning + keyword search over your folders),
+Pages in the console (http://127.0.0.1:8765): Overview, **Inbox** (suggest mode: File it / Undo), **Search** (meaning + keyword search over your folders),
 Predictions, **Cleanup** (duplicates, extracted archives, old installers), Log, System, **Settings** (a form; YAML under Advanced).
 
 ## 1. Install (one time)
@@ -187,3 +187,20 @@ install: `ocr.py` drives Windows' own OCR and PDF renderer through Windows Power
   to skip icons and logos), and a **Test OCR** button.
 - OCR uses the Windows display language's OCR pack (English is installed by default on English Windows).
 - OCR text lands in `search.db` like any other document text: same sensitivity, same "never leaves this PC".
+
+## Inbox: suggest mode (Phase 2)
+Every file waiting in Downloads gets up to three destination suggestions. **File it** moves it; **Undo** moves it back.
+- **Where suggestions come from:** your already-filed documents. Each file has a fingerprint (name + start of its
+  text, embedded locally with `nomic-embed-text`, never its folder). A new file's 10 most similar filed documents
+  vote for their folders; the share of the vote is the percentage shown. A matching rule is always listed first,
+  and the local model's pick is listed too when it differs.
+- **Measured accuracy** (leave-one-out on 909 filed documents with text, 11 Oct 2026): first suggestion right
+  72%, right folder in the top three 88%. Shown at 95%+: right 94%; 50–70%: 72%; under 50%: 33%.
+- **Moving safely (`mover.py`):** only files directly in a watched folder, only into existing folders inside the
+  PARA root; never overwrites (identical copy already there = not moved; different file with the same name =
+  saved as "name (2)"); across drives it copies, verifies the SHA-256, then removes the original, and if the
+  original is open in another program nothing changes. Every move is journaled in `shadow.db` and undoable unless
+  the filed copy was edited afterwards.
+- **Leave it** hides a file from the Inbox without touching it.
+- "Your filing so far" shows how often the first suggestion was what you chose, per folder: the evidence for
+  Phase 3 (auto-filing proven folders).

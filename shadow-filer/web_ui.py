@@ -9,6 +9,7 @@ Security:
 - No CORS headers, so other sites cannot read the API from your browser.
 """
 import json
+from datetime import datetime
 import os
 import secrets
 import socket
@@ -108,6 +109,57 @@ def apply_config(text: str) -> dict:
     if warnings:
         msg += " Warning: " + "; ".join(warnings)
     return {"ok": True, "message": msg, "restart_needed": Ctx.status["restart_needed"]}
+
+
+_SUG = {}
+
+
+def _suggester():
+    import search_index, suggest
+    idx = search_index.get()
+    if idx is None:
+        return None
+    if _SUG.get("idx") is not idx:
+        _SUG.update(idx=idx, sg=suggest.Suggester(Ctx.cfg, idx, Ctx.dests, Ctx.db))
+    return _SUG["sg"]
+
+
+def _cleanup_hints() -> dict:
+    try:
+        import cleanup
+        rep = cleanup.load_report() or {}
+        return {it["path"]: {"level": it["level"], "category": it["category"], "reason": it["reason"]}
+                for it in rep.get("items", []) if not it.get("is_dir")}
+    except Exception:
+        return {}
+
+
+def _inbox_post(self, path: str, body: dict):
+    import mover
+    cfg = Ctx.cfg
+    try:
+        if path == "/api/inbox/file":
+            res = mover.move(cfg, str(body.get("path", "")), str(body.get("folder", "")),
+                             {"size": body.get("size"), "source": body.get("source"), "rank": body.get("rank"),
+                              "top_folder": body.get("top_folder"), "top_score": body.get("top_score")}, Ctx.log)
+            return self._send(200, res)
+        if path == "/api/inbox/dismiss":
+            p = str(body.get("path", ""))
+            if not any(Path(p).parent == Path(r) for r in cfg["inbox_folders"]):
+                return self._send(400, {"ok": False, "message": "Unknown file."})
+            size = os.path.getsize(p) if os.path.exists(p) else 0
+            mover.dismiss(cfg, p, size, undo_it=bool(body.get("undo")))
+            return self._send(200, {"ok": True})
+        if path == "/api/moves/undo":
+            res = mover.undo(cfg, int(body.get("id", 0)), Ctx.log)
+            try:
+                Ctx.db.clear_actual(res["restored"])
+            except Exception:
+                pass
+            return self._send(200, res)
+    except mover.MoveError as e:
+        return self._send(200, {"ok": False, "message": str(e)})
+    return self._send(404, {"error": "not found"})
 
 
 def cfg_now():
@@ -273,6 +325,23 @@ class Handler(BaseHTTPRequestHandler):
                 import search_index
                 idx = search_index.get()
                 return self._send(200, idx.stats() if idx else {"disabled": True})
+            if u.path == "/api/inbox":
+                import mover, suggest
+                sg = _suggester()
+                files = suggest.list_inbox(cfg, mover.dismissed(cfg), lambda p: sa.is_ignored(p, cfg))
+                off, lim = max(0, int(q.get("offset", 0))), min(int(q.get("limit", 40)), 200)
+                hints = _cleanup_hints()
+                page = []
+                for fi in files[off:off + lim]:
+                    sug = sg.suggest(fi["path"]) if sg else {"candidates": [], "ready": False}
+                    page.append({**fi, "modified": datetime.fromtimestamp(fi["mtime"]).isoformat(timespec="seconds"),
+                                 **sug, "cleanup": hints.get(fi["path"])})
+                return self._send(200, {"items": page, "total": len(files), "offset": off,
+                                        "examples": sg.stats() if sg else None,
+                                        "destinations": Ctx.dests.get() if cfg["para_root"].is_dir() else []})
+            if u.path == "/api/moves":
+                import mover
+                return self._send(200, {"journal": mover.journal(cfg, 100), "feedback": mover.feedback(cfg)})
             if u.path == "/api/destinations":
                 return self._send(200, Ctx.dests.get() if cfg["para_root"].is_dir() else [])
             return self._send(404, {"error": "not found"})
@@ -345,6 +414,8 @@ class Handler(BaseHTTPRequestHandler):
             r = ocr.selftest(cfg_now())
             Ctx.log.info("OCR self-test: %s", r["message"])
             return self._send(200, r)
+        if u.path in ("/api/inbox/file", "/api/inbox/dismiss", "/api/moves/undo"):
+            return self._inbox_post(u.path, body)
         if u.path == "/api/restart":
             if Ctx.status.get("mode") != "agent":
                 return self._send(400, {"ok": False, "message": "Only the running agent can restart itself."})
@@ -469,3 +540,6 @@ def start(cfg, db, dests, config_path: Path, status: dict, log) -> bool:
     threading.Thread(target=server.serve_forever, daemon=True).start()
     log.info("UI at http://127.0.0.1:%s", port)
     return True
+
+
+Handler._inbox_post = _inbox_post

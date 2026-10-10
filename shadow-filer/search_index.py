@@ -46,7 +46,8 @@ DEFAULTS = {
     "max_file_mb": 60,          # bigger files: name only
     "max_depth": 12,
     "sweep_minutes": 30,        # re-check folders for changes this often (events also trigger updates)
-    "batch": 8,                 # small batches so a search never waits long behind indexing
+    "batch": 8,
+    "doc_prefix": "classification: ",  # per-file fingerprint used for filing suggestions (no folder name in it)                 # small batches so a search never waits long behind indexing
     "min_similarity": 0.45,     # meaning-only matches below this are dropped (word matches always kept)
     "similarity_margin": 0.12,  # ...and so are ones far below the best match for the query
     "extra_folders": [],        # more folders to index, besides inbox_folders and para_root
@@ -102,6 +103,7 @@ def connect() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS chunks (
             id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT, idx INTEGER, text TEXT, vec BLOB);
         CREATE INDEX IF NOT EXISTS chunks_path ON chunks(path);
+        CREATE TABLE IF NOT EXISTS docvec (path TEXT PRIMARY KEY, vec BLOB);
     """)
     try:
         conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(name, text, tokenize='unicode61')")
@@ -149,6 +151,12 @@ def chunk_text(text: str, size: int, overlap: int, limit: int) -> list[str]:
             break
         i = max(end - overlap, i + 1)
     return out
+
+
+def doc_text(name: str, body: str) -> str:
+    """What a file's fingerprint is built from: its name and the start of its text, never its folder."""
+    stem = re.sub(r"[_\-.]+", " ", os.path.splitext(name)[0])
+    return f"File: {name} ({stem})\n{body[:1500]}".strip()
 
 
 def header(name: str, rel_folder: str) -> str:
@@ -210,6 +218,11 @@ class Index:
     # ---------- memory
     def _load_vectors(self):
         with self.lock:
+            self.docvecs = {}
+            for r in self.conn.execute("SELECT path, vec FROM docvec"):
+                a = array("f")
+                a.frombytes(r["vec"])
+                self.docvecs[r["path"]] = a
             rows = self.conn.execute("SELECT id, path, vec FROM chunks WHERE vec IS NOT NULL").fetchall()
             self.ids = [r["id"] for r in rows]
             self.paths = [r["path"] for r in rows]
@@ -236,8 +249,9 @@ class Index:
             if has_fts(self.conn):
                 self.conn.execute("DELETE FROM chunks_fts")
             self.conn.execute("DELETE FROM files")
+            self.conn.execute("DELETE FROM docvec")
             self.conn.commit()
-            self.ids, self.paths, self.vecs = [], [], []
+            self.ids, self.paths, self.vecs, self.docvecs = [], [], [], {}
         self.state["last_sweep"] = None
         self.wake.set()
 
@@ -354,7 +368,8 @@ class Index:
                 if has_fts(self.conn):
                     self.conn.execute("DELETE FROM chunks_fts")
                 self.conn.execute("DELETE FROM files")
-                self.ids, self.paths, self.vecs = [], [], []
+                self.conn.execute("DELETE FROM docvec")
+                self.ids, self.paths, self.vecs, self.docvecs = [], [], [], {}
             self.conn.execute("INSERT OR REPLACE INTO meta VALUES ('model', ?)", (model,))
             self.conn.commit()
 
@@ -383,6 +398,7 @@ class Index:
         if gone and self.log:
             self.log.info("search index: removed %d file(s) no longer present", len(gone))
         if not todo:
+            self._backfill_docvecs()
             return
         if not self._model_ok():
             return
@@ -400,6 +416,65 @@ class Index:
         if self.log:
             self.log.info("search index: indexed %d file(s), %d chunk(s) in %.0fs",
                           len(todo), n_chunks, time.time() - t0)
+        self._backfill_docvecs()
+
+    def _backfill_docvecs(self):
+        """Files indexed before fingerprints existed: build them from the stored first passage
+        (no re-reading, no OCR)."""
+        if not self._model_ok():
+            return
+        s = settings(self.cfg)
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT f.path, f.name, c.text FROM files f LEFT JOIN chunks c ON c.path = f.path AND c.idx = 0 "
+                "WHERE f.path NOT IN (SELECT path FROM docvec) AND f.status != 'error'").fetchall()
+        if not rows:
+            return
+        self.state.update(running=True, phase="fingerprinting files for suggestions", todo=len(rows), done=0)
+        t0, n = time.time(), 0
+        for i in range(0, len(rows), s["batch"]):
+            if self.stop.is_set():
+                return
+            batch = rows[i:i + s["batch"]]
+            texts = []
+            for r in batch:
+                body = (r["text"] or "").split("\n", 1)[1] if r["text"] and "\n" in r["text"] else ""
+                texts.append(s["doc_prefix"] + doc_text(r["name"], body))
+            self._yield_to_search()
+            try:
+                vs = self.embed(texts)
+            except Exception as e:
+                self.state["last_error"] = str(e)[:300]
+                return
+            with self.lock:
+                for r, v in zip(batch, vs):
+                    self.conn.execute("INSERT OR REPLACE INTO docvec VALUES (?, ?)", (r["path"], v.tobytes()))
+                    self.docvecs[r["path"]] = v
+                self.conn.commit()
+            n += len(batch)
+            self.state.update(done=n, current=batch[-1]["name"])
+        if self.log:
+            self.log.info("search index: fingerprinted %d file(s) for suggestions in %.0fs", n, time.time() - t0)
+
+    def labelled(self) -> list[tuple[str, str, array]]:
+        """(path, folder relative to PARA root, fingerprint) for every filed document."""
+        with self.lock:
+            rows = self.conn.execute("SELECT path, root FROM files WHERE source='para'").fetchall()
+            out = []
+            for r in rows:
+                v = self.docvecs.get(r["path"])
+                if v is None:
+                    continue
+                try:
+                    rel = Path(r["path"]).parent.relative_to(r["root"]).as_posix()
+                except ValueError:
+                    continue
+                out.append((r["path"], "" if rel == "." else rel, v))
+            return out
+
+    def fingerprint(self, path: str):
+        with self.lock:
+            return self.docvecs.get(path)
 
     def _drain_queue(self):
         while True:
@@ -436,6 +511,8 @@ class Index:
             if ids and has_fts(self.conn):
                 self.conn.executemany("DELETE FROM chunks_fts WHERE rowid=?", [(i,) for i in ids])
             self.conn.execute("DELETE FROM files WHERE path=?", (path,))
+            self.conn.execute("DELETE FROM docvec WHERE path=?", (path,))
+            self.docvecs.pop(path, None)
             self.conn.commit()
             if ids:
                 drop = set(ids)
@@ -528,8 +605,17 @@ class Index:
                                    datetime.now().isoformat(timespec="seconds"), str(e)[:300]))
                 self.conn.commit()
             return 0
+        dvec = None
+        try:
+            self._yield_to_search()
+            dvec = self.embed([s["doc_prefix"] + doc_text(name, pieces[0] if pieces else "")])[0]
+        except Exception:
+            pass  # backfilled on the next sweep
         self._remove(path)
         with self.lock:
+            if dvec is not None:
+                self.conn.execute("INSERT OR REPLACE INTO docvec VALUES (?, ?)", (path, dvec.tobytes()))
+                self.docvecs[path] = dvec
             fts = has_fts(self.conn)
             new_ids = []
             for i, (d, v) in enumerate(zip(docs, vecs)):
