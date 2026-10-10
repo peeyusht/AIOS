@@ -346,7 +346,8 @@ class Handler(BaseHTTPRequestHandler):
                     "raw": raw, "models": Ctx.status.get("installed_models") or [],
                     "destinations": Ctx.dests.get() if cfg["para_root"].is_dir() else [],
                     "defaults": {"cleanup": cleanup.DEFAULTS, "search": search_index.DEFAULTS,
-                                 "ocr": __import__("ocr").DEFAULTS, "autofile": __import__("autofile").DEFAULTS},
+                                 "ocr": __import__("ocr").DEFAULTS, "autofile": __import__("autofile").DEFAULTS,
+                                 "watch": __import__("watch").DEFAULTS},
                     "restart_needed": Ctx.status.get("restart_needed", False),
                     "restart_keys": list(RESTART_KEYS), "config_path": str(Ctx.config_path),
                     "os": os.name})
@@ -399,6 +400,9 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/moves":
                 import mover
                 return self._send(200, {"journal": mover.journal(cfg, 100), "feedback": mover.feedback(cfg)})
+            if u.path == "/api/watch":
+                import search_index, watch
+                return self._send(200, watch.report(cfg, search_index.DB_FILE, force=q.get("refresh") == "1"))
             if u.path == "/api/destinations":
                 return self._send(200, Ctx.dests.get() if cfg["para_root"].is_dir() else [])
             return self._send(404, {"error": "not found"})
@@ -464,6 +468,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._search_post(u.path, body)
         if u.path.startswith("/api/cleanup/"):
             return self._cleanup_post(u.path, body)
+        if u.path == "/api/watch/dismiss":
+            import search_index, watch
+            p, kind, key = str(body.get("path", "")), body.get("kind"), str(body.get("key", ""))[:80]
+            idx = search_index.get()
+            if kind not in ("date", "sensitive") or not p or (idx is not None and idx.is_indexed(p) is None):
+                return self._send(400, {"ok": False, "message": "Unknown file."})
+            watch.dismiss(cfg_now()["database"], p, kind, key, undo=bool(body.get("undo")))
+            Ctx.log.info("WATCH %s %s: %s", "restored" if body.get("undo") else "dismissed", kind, os.path.basename(p))
+            return self._send(200, {"ok": True})
         if u.path == "/api/ocr/selftest":
             import ocr
             if os.name != "nt":
