@@ -28,8 +28,11 @@ reps = [
 for a, b in reps:
     assert src.count(a) == 1, a
     src = src.replace(a, b)
-name = f'index-sfc{hashlib.sha256(src.encode()).hexdigest()[:8]}.js'
+# Fixed file name, overwritten on every build (no stale copies pile up); the content hash goes in the URL
+# so browsers still pick up a new build despite long-lived caching.
+name = 'index-sfc.js'
+version = hashlib.sha256(src.encode()).hexdigest()[:8]
 open('ui_dist/assets/' + name, 'w', encoding='utf-8').write(src)
-idx = open('ui_src/base/index.html', encoding='utf-8').read().replace('index-BoLOatoI.js', name)
+idx = open('ui_src/base/index.html', encoding='utf-8').read().replace('index-BoLOatoI.js', f'{name}?v={version}')
 open('ui_dist/index.html', 'w', encoding='utf-8').write(idx)
-print(name)
+print(name, version)
