@@ -35,7 +35,9 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   overwrite** (identical = refuse, different = "name (2)"); cross-drive = copy → SHA-256 verify → rename into
   place → remove original, roll back if the original is in use; journal every move (`pending` row before the
   file is touched, `moved` after; `mover.recover()` settles leftovers at start and never removes a user file);
-  undo refuses if the filed copy changed.
+  undo refuses if the filed copy changed. `mover.make_folder` (Inbox › New folder…) creates one empty folder
+  directly under an existing PARA folder above destination depth (`os.mkdir`, never `makedirs`, refuses any
+  existing name); creating a folder never moves a file.
 - Deletion only via Cleanup → **Recycle Bin**, only files the user marked Agree, each re-checked first. Files
   too big for the bin need a separate explicit confirmation. Keep/archive items (firmware, VM images) are never
   deletable from the UI.
@@ -70,7 +72,8 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - The model's own confidence is useless (0.95 on almost everything); don't use it for decisions.
 
 ## Open items
-- Inbox has no **New folder** option (e.g. GR-One files have no folder; best guess is a weak 59%).
+- File-name suggestions ignore words under 4 letters (`suggest._tokens`), so a new folder like "GR-One" gets
+  no name matches; its files are only suggested once a few are filed there.
 - Finance-type spreadsheets lean to `4-Archives/Frux-Technologies` (413 similar old docs); improves as the
   user files into Finance. Consider down-weighting archive folders for new files.
 - C: has <10% free space; Ollama runs qwen3:4b ~94% on GPU (`LLAMA_ARG_FIT_TARGET` was tuned to 512 MB).

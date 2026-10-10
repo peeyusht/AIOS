@@ -11,6 +11,9 @@ Guarantees:
 - Every move is journaled (from, to, size, hash) and can be undone the same safe way. The journal entry is
   written BEFORE the file is touched ("pending") and completed afterwards, so a crash or a locked database
   can't leave a filed file with no record; recover() settles interrupted entries when the agent starts.
+- New folder (Inbox page): creates one empty folder, one level below a folder that already exists in the
+  PARA tree, at the depth destinations live at. Nothing is moved by creating it; filing into it is a
+  separate click and goes through the same checks as any other move.
 """
 import hashlib
 import os
@@ -261,6 +264,82 @@ def recover(cfg: dict, log=None) -> int:
             return _recover(c, log)
         finally:
             c.close()
+
+
+# --------------------------------------------------------------------------- new folder
+_BAD_CHARS = '<>:"/\\|?*'
+_RESERVED = {"con", "prn", "aux", "nul"} | {f"{p}{i}" for p in ("com", "lpt") for i in range(1, 10)}
+
+
+def folder_parents(cfg: dict) -> list[str]:
+    """Existing PARA folders a new destination folder can be created in: every level above the one
+    destinations live at (with the usual depth of 2, that's the top-level folders such as 1-Projects)."""
+    root, depth = cfg["para_root"], cfg.get("destination_depth", 2)
+    excluded = {e.strip("/\\").replace("\\", "/").lower() for e in cfg.get("exclude_destinations") or []}
+    out = []
+
+    def walk(folder: Path, rel: str, level: int):
+        try:
+            entries = sorted(os.scandir(folder), key=lambda e: e.name.lower())
+        except OSError:
+            return
+        for e in entries:
+            try:
+                if e.name.startswith((".", "$")) or e.is_symlink() or not e.is_dir(follow_symlinks=False):
+                    continue
+                if (getattr(e.stat(follow_symlinks=False), "st_file_attributes", 0) or 0) & FA_REPARSE:
+                    continue
+            except OSError:
+                continue
+            r = f"{rel}/{e.name}" if rel else e.name
+            if r.lower() in excluded:
+                continue
+            out.append(r)
+            if level + 1 < depth - 1:
+                walk(Path(e.path), r, level + 1)
+
+    if depth >= 2 and root.is_dir():
+        walk(root, "", 0)
+    return out
+
+
+def make_folder(cfg: dict, parent: str, name: str, log=None) -> dict:
+    """Create PARA/<parent>/<name>. Returns {"ok", "folder"}. Never touches an existing folder or file."""
+    parent = (parent or "").strip().strip("/\\").replace("\\", "/")
+    if parent not in folder_parents(cfg):
+        raise MoveError("Choose which folder the new one goes in.")
+    name = " ".join((name or "").split())
+    if not name:
+        raise MoveError("Give the new folder a name.")
+    if len(name) > 80:
+        raise MoveError("That name is too long (80 characters at most).")
+    if any(ch in _BAD_CHARS or ord(ch) < 32 for ch in name):
+        raise MoveError('A folder name can\'t contain any of  < > : " / \\ | ? *')
+    if name.startswith(".") or name.endswith("."):
+        raise MoveError("A folder name can't start or end with a dot.")
+    if name.split(".")[0].lower() in _RESERVED:
+        raise MoveError(f"Windows doesn't allow a folder called {name}.")
+    rel = f"{parent}/{name}"
+    excluded = {e.strip("/\\").replace("\\", "/").lower() for e in cfg.get("exclude_destinations") or []}
+    if rel.lower() in excluded:
+        raise MoveError(f"{rel} is on your list of folders never to file into (Settings).")
+    pdir = cfg["para_root"] / parent
+    d = pdir / name
+    if not _inside(d, cfg["para_root"]) or d.parent.resolve() != pdir.resolve():
+        raise MoveError("The new folder must be inside your PARA folder.")
+    with _lock:
+        try:
+            clash = next((n for n in os.listdir(pdir) if n.lower() == name.lower()), None)
+            if clash:
+                raise MoveError(f"{parent}/{clash} already exists.")
+            os.mkdir(d)  # one level only; fails rather than touching anything that is already there
+        except FileExistsError:
+            raise MoveError(f"{rel} already exists.")
+        except OSError as e:
+            raise MoveError(f"Couldn't create the folder: {e.strerror or e}")
+    if log:
+        log.info("NEW FOLDER %s", d)
+    return {"ok": True, "folder": rel}
 
 
 def journal(cfg: dict, n: int = 100) -> list[dict]:

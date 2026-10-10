@@ -204,6 +204,10 @@ Every file waiting in Downloads gets up to three destination suggestions. **File
   saved as "name (2)"); across drives it copies, verifies the SHA-256, then removes the original, and if the
   original is open in another program nothing changes. Every move is journaled in `shadow.db` and undoable unless
   the filed copy was edited afterwards.
+- **New folder…** creates an empty folder for files that fit none of the existing ones: pick the folder it
+  goes in (one that already exists in your PARA tree, e.g. `1-Projects`) and type a name. Creating it moves
+  nothing; the new folder is selected and the file goes there when you click **File it**. It never touches a
+  folder or file that already exists, and from then on the folder is suggested like any other.
 - **Leave it** hides a file from the Inbox without touching it.
 - "Your filing so far" shows how often the first suggestion was what you chose, per folder: the evidence for
   Phase 3 (auto-filing proven folders).
