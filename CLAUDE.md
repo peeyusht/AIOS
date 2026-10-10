@@ -17,7 +17,8 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 | `shadow_agent.py` | watcher, rules, model prediction, scoring, supervisor, CLI |
 | `web_ui.py` | localhost-only HTTP server + JSON API (Host check, per-session token on every POST) |
 | `search_index.py` | `search.db`: chunks + embeddings + FTS5; per-file fingerprints (`docvec`) for suggestions |
-| `suggest.py` | Phase 2 suggestions: rule → file-name-names-one-folder → kNN over filed docs → model |
+| `suggest.py` | suggestions: rule → same website (`origin.py`) → file-name-names-one-folder → kNN over filed docs → model |
+| `origin.py` | Phase 4: where a download came from (Zone.Identifier mark) as a filing signal; in memory only |
 | `mover.py` | the only code that moves files; journal + undo |
 | `autofile.py` | Phase 3 auto-filing, per-folder trust from the user's Inbox decisions |
 | `cleanup.py` | Cleanup recommendations + Recycle Bin delete of agreed files |
@@ -31,18 +32,22 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   numbers are floors enforced in `autofile.settings()` (`FLOORS`), whatever `config.yaml` says. Trust is per
   (folder, kind of suggestion); undoing an auto-move discards all of that folder's evidence; the evidence
   (first suggestion, rank) is computed server-side in `web_ui._inbox_post`, never taken from the page; the
-  waiting time counts from arrival (`cleanup.added_time`), not mtime.
+  waiting time counts from arrival (`cleanup.added_time`), not mtime. Auto-filing accepts rule, file-name
+  and similar-documents suggestions only: website (`origin`) matches are suggestions, not in
+  `autofile.ALLOWED_SOURCES`, until the user asks for that.
 - `mover.py`: only files directly in a watched folder → only existing folders inside PARA root; **never
   overwrite** (identical = refuse, different = "name (2)"); cross-drive = copy → SHA-256 verify → rename into
   place → remove original, roll back if the original is in use; journal every move (`pending` row before the
   file is touched, `moved` after; `mover.recover()` settles leftovers at start and never removes a user file);
-  undo refuses if the filed copy changed. `mover.make_folder` (Inbox › New folder…) creates one empty folder
+  undo refuses if the filed copy changed. A cross-drive move carries the file's Zone.Identifier stream
+  (Windows' "came from the internet" mark) to the copy; `shutil.copy2` alone drops it. `mover.make_folder` (Inbox › New folder…) creates one empty folder
   directly under an existing PARA folder above destination depth (`os.mkdir`, never `makedirs`, refuses any
   existing name); creating a folder never moves a file.
 - Deletion only via Cleanup → **Recycle Bin**, only files the user marked Agree, each re-checked first. Files
   too big for the bin need a separate explicit confirmation. Keep/archive items (firmware, VM images) are never
   deletable from the UI.
-- Password-protected PDFs are never opened or guessed. Cloud-only placeholders are never opened: any new code
+- Password-protected PDFs are never opened or guessed. The one thing tried is the empty password, which is
+  how every viewer opens a PDF that is only protected against editing (needs `cryptography` for AES). Cloud-only placeholders are never opened: any new code
   that reads a file must check `is_cloud_only` first (`shadow_agent`, `search_index`, `cleanup` each have one).
 - File contents are untrusted data in model prompts.
 - Never commit personal data: `*.db`, logs (including rotated `shadow.log.1`…), `cleanup_report.json`,
@@ -69,10 +74,11 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   after touching `mover.py`, `autofile.py`, `cleanup.py` or the cloud-only checks; add a test with any new rule.
 - Test file moves on throwaway folders first; never experiment on `Downloads` or `D:\Organized`.
 - To click through the console for real (File it, Undo, delete, save settings) use a throwaway agent, never the
-  live one: copy `*.py`, `ui.html` and `ui_dist/` into a temp folder (so `search.db`, `cleanup_report.json` and
-  logs are separate: they live next to the code), give it a `config.yaml` with temp inbox/PARA folders full of
-  made-up files and `ui.port: 8766`, and run `shadow_agent.py --config config.yaml run` from there. Files it
-  recycles do land in the real Recycle Bin. "Show"/"Open" launch Explorer or an app on the user's desktop.
+  live one: `python tests\make_test_agent.py <temp folder> [--tiny-bin]` builds a copy of the code with made-up
+  inbox/PARA files on port 8766 (its own `search.db`, cleanup report and logs, because those live next to the
+  code), then run `shadow_agent.py --config config.yaml run` in `<temp folder>\agent`. Files it recycles do
+  land in the real Recycle Bin. "Show"/"Open" launch Explorer or an app on the user's desktop: close them after.
+  Screenshots of the tab sometimes stall; reading the page with JavaScript (`innerText`, clicking by text) works.
 
 ## Measured numbers (11 Oct 2026, leave-one-out on the user's filed documents)
 - Similar-documents suggestion: top-1 72%, top-3 88% (909 docs with text). Shown 95%+ → right 94%;
@@ -85,13 +91,24 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   filed yet, when it is the folder's whole name; never everyday words (`COMMON3`). 1–2 letter words count only
   joined to a neighbour ("GR-One" → "grone"). Re-measure before loosening any of this.
 - The model's own confidence is useless (0.95 on almost everything); don't use it for decisions.
+- Same website → same folder (`origin.py`): 596 of 1,368 filed files still carry a download address. A site
+  with 3+ other filed files and 80%+ of them in one folder was right 84 times in 87 (97%, leave-one-out);
+  webmail, chat and drive sites never qualify (claude.ai: 159 files in 22 folders). Coverage is small: 16 of
+  the 483 waiting files on the day it shipped. The referring page is a weaker signal (90%) and is not used.
+- Down-weighting Archive folders was measured and rejected: for filed files changed in the last year,
+  similar-documents voting says "Archive" 18% of the time against 16% truly there, and any down-weight lowered
+  accuracy (69% → 66%). The Finance → Frux-Technologies lean is specific to that folder's 413 old documents.
 
 ## Open items
 - Finance-type spreadsheets lean to `4-Archives/Frux-Technologies` (413 similar old docs); improves as the
-  user files into Finance. Consider down-weighting archive folders for new files.
+  user files into Finance. A general archive down-weight does not help (see Measured numbers).
+- Nothing has been filed through the Inbox yet (0 moves, 11 Oct 2026), so auto-filing has no evidence and the
+  first-suggestion accuracy has only been measured on already-filed files, not on real Inbox decisions.
+- 15 PDFs in the index need a real password and stay "locked".
 - C: has <10% free space; Ollama runs qwen3:4b ~94% on GPU (`LLAMA_ARG_FIT_TARGET` was tuned to 512 MB).
 - Speed (11 Oct 2026, 1,365 filed examples, 17,710 chunks): comparisons use `math.sumprod` (~1.8x faster than
   `sum(map(mul))`); kNN votes are cached per file in `Suggester._knn` until a fingerprint or the examples
   change. A search is still seconds, mostly the Ollama embedding call.
-- Ideas not started: download-origin tracking (Zone.Identifier), expiry/deadline tracker, sensitive-data watch,
-  work journal, firmware/VM library, version chains, near-duplicate images, Authenticode checks.
+- Proposed next phases (not started, order agreed with nobody yet): 5 document watch (expiry/deadline
+  tracker, sensitive-data watch), 6 library and hygiene (firmware/VM library, version chains, near-duplicate
+  images, Authenticode checks), 7 work journal.

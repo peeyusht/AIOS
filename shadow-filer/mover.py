@@ -8,6 +8,8 @@ Guarantees:
   a temporary name, verify the copy byte-for-byte (SHA-256), rename it into place, and only then remove the
   original. If the original can't be removed (open in another program), the copy is removed and nothing
   has changed.
+- A cross-drive move keeps the file's "downloaded from the internet" mark (Zone.Identifier), which a plain
+  copy would drop: Windows' own warning for such files, and origin.py's filing signal, both rely on it.
 - Every move is journaled (from, to, size, hash) and can be undone the same safe way. The journal entry is
   written BEFORE the file is touched ("pending") and completed afterwards, so a crash or a locked database
   can't leave a filed file with no record; recover() settles interrupted entries when the agent starts.
@@ -111,6 +113,24 @@ def _no_replace_rename(a: str, b: str):
         os.unlink(a)
 
 
+def _copy_origin_mark(src: str, dest: str) -> None:
+    """Carry the Zone.Identifier stream from src to dest (best effort), then restore dest's timestamps,
+    which writing the stream changes."""
+    if os.name != "nt":
+        return
+    try:
+        with open(src + ":Zone.Identifier", "rb") as f:
+            mark = f.read(65536)
+    except OSError:
+        return  # no mark: nothing to carry
+    try:
+        with open(dest + ":Zone.Identifier", "wb") as f:
+            f.write(mark)
+        shutil.copystat(src, dest)
+    except OSError:
+        pass
+
+
 def _transfer(src: str, dest: Path, digest: str) -> None:
     """Move src to dest (dest must not exist) without ever losing or replacing data."""
     try:
@@ -130,6 +150,7 @@ def _transfer(src: str, dest: Path, digest: str) -> None:
         raise MoveError("A leftover temporary file is in the way; try again later.")
     try:
         shutil.copy2(src, tmp)
+        _copy_origin_mark(src, str(tmp))
         if sha256_of(str(tmp)) != digest:
             raise MoveError("The copy didn't match the original; nothing was moved.")
         _no_replace_rename(str(tmp), str(dest))

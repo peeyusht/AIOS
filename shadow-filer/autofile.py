@@ -121,7 +121,8 @@ def decide(cfg: dict, item: dict, sug: dict, proven: dict, hints: dict, now: flo
     top = cands[0]
     folder = top["folder"]
     if top.get("source") not in ALLOWED_SOURCES:
-        return {"auto": False, "folder": folder, "why": "only the model's guess"}
+        why = "website matches are suggestions only" if top.get("source") == "origin" else "only the model's guess"
+        return {"auto": False, "folder": folder, "why": why}
     if top.get("exists") is False:
         return {"auto": False, "folder": folder, "why": "folder missing"}
     if top["source"] == "similar" and (top.get("score") or 0) < s["min_score"]:

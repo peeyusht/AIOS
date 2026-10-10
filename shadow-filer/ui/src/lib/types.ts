@@ -1,4 +1,4 @@
-export type Source = "rule" | "name" | "similar" | "model";
+export type Source = "rule" | "origin" | "name" | "similar" | "model";
 
 export interface Candidate {
   folder: string;
@@ -24,6 +24,8 @@ export interface InboxItem {
   confidence: number | null;
   cleanup: { level: string; category: string; reason: string } | null;
   auto: { auto: boolean; folder?: string; why: string; soon?: boolean };
+  /** Website the file was downloaded from (and the page that linked to it), when Windows recorded one. */
+  origin?: { host: string | null; referrer: string | null } | null;
 }
 
 export interface InboxResponse {

@@ -7,7 +7,8 @@ find the most similar filed documents and let them vote for their folders (k nea
 softmax-weighted). The share of the vote is the confidence, and unlike the model's self-reported 0.95,
 it was measured: on your own filed documents, leave-one-out.
 
-Also shown: a matching rule (always first), and the local model's pick if it differs.
+Also shown: a matching rule (always first), the folder that files from the same website go to (origin.py),
+a folder the file name names, and the local model's pick if it differs.
 """
 import math
 import os
@@ -15,7 +16,9 @@ import time
 from pathlib import Path
 
 DEFAULTS = {"k": 10, "temperature": 0.05, "show": 3, "duplicate_similarity": 0.995,
-            "short_word_share": 0.8}  # a 3-letter folder word counts only if this share of filed names agree
+            "short_word_share": 0.8,  # a 3-letter folder word counts only if this share of filed names agree
+            "origin_min_files": 3,    # a website points to a folder only with this many filed files from it...
+            "origin_share": 0.8}      # ...and this share of them in that one folder
 # Words in folder names too general to identify one folder.
 GENERIC = set("""completed projects areas resources archives other clients company documents personal technical
 guides learning library framework research vendor marketing platform finance software firmware todelete bank
@@ -93,6 +96,27 @@ class Suggester:
         self._cache_n = -1
         self._knn: dict = {}   # path -> (fingerprint, settings, votes, duplicate); valid for self._cache
         self._owners = None    # (examples, destinations, share, {word: folder})
+        self._sites: dict = {}   # filed path -> website it was downloaded from (None = no note); read once
+        self._site_owners = None  # (examples, settings, {site: {folder, files, total, share}})
+
+    def site_owners(self) -> dict:
+        """Websites whose filed files nearly all sit in one folder (origin.owners)."""
+        import origin
+        ex, s = self._examples(), settings(self.cfg)
+        key = (s["origin_min_files"], s["origin_share"])
+        c = self._site_owners
+        if c is None or c[0] is not ex or c[1] != key:
+            filed = []
+            for path, label, _ in ex:
+                if path not in self._sites:
+                    o = origin.read(path)
+                    self._sites[path] = o["host"] if o else None
+                filed.append((self._sites[path], label))
+            if len(self._sites) > 4 * len(ex) + 1000:  # forget files that are gone
+                keep = {path for path, _, _ in ex}
+                self._sites = {p: v for p, v in self._sites.items() if p in keep}
+            c = self._site_owners = (ex, key, origin.owners(filed, *key))
+        return c[2]
 
     def owners(self) -> dict:
         """name_owners for the current folders, checked against the names of the files already filed."""
@@ -172,6 +196,17 @@ class Suggester:
                           "why": f"rule '{rule.get('name')}'",
                           "exists": rule["destination"] in set(self.dests.get())})
 
+        # Files from the same website already go to one folder: right 97% of the time on filed documents,
+        # but only a few websites are that consistent, so most files get nothing from this.
+        import origin
+        came_from = origin.read(path)
+        if came_from and came_from["host"] and self.index:
+            o = self.site_owners().get(came_from["host"])
+            if o and o["folder"] not in {c["folder"] for c in cands}:
+                cands.append({"folder": o["folder"], "source": "origin", "score": None,
+                              "why": f"{o['files']} of your {o['total']} files from {came_from['host']} are filed here",
+                              "exists": o["folder"] in set(self.dests.get())})
+
         # The file name mentions exactly one folder's distinctive word: right 86% of the time on filed documents,
         # and it works for new folders with only a few files, where similar-document voting can't.
         owners = self.owners() if self.index else name_owners(self.dests.get())
@@ -215,7 +250,7 @@ class Suggester:
         for i, c in enumerate(cands, 1):
             c["rank"] = i
         return {"candidates": cands, "ready": fp is not None, "duplicate": duplicate,
-                "confidence": knn[0]["score"] if knn else None}
+                "confidence": knn[0]["score"] if knn else None, "origin": came_from}
 
 
 def list_inbox(cfg: dict, dismissed: dict, ignore) -> list[dict]:

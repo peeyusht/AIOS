@@ -125,7 +125,7 @@ function Waiting() {
   );
 }
 
-const SOURCE_WORDS: Record<string, string> = { rule: "rule", name: "name matches folder", similar: "like your filed docs", model: "model's guess" };
+const SOURCE_WORDS: Record<string, string> = { rule: "rule", origin: "same website as files filed here", name: "name matches folder", similar: "like your filed docs", model: "model's guess" };
 const scoreTone = (s: number) => (s >= 0.95 ? "success" : s >= 0.7 ? "info" : "warning") as "success" | "info" | "warning";
 
 function cleanupLabel(c: NonNullable<InboxItem["cleanup"]>) {
@@ -176,7 +176,7 @@ function InboxCard({ item, data, autoOn, onGone }: { item: InboxItem; data: Inbo
       <Card className="p-4 transition-shadow hover:shadow-sm">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <Tip tip={item.path}><h3 className="min-w-0 truncate font-medium" tabIndex={0}>{item.name}</h3></Tip>
-          <span className="text-xs text-muted-foreground tabular">{bytes(item.size)} · modified {when(item.modified)}</span>
+          <span className="text-xs text-muted-foreground tabular">{bytes(item.size)} · modified {when(item.modified)}{item.origin?.host ? <> · from <span className="path">{item.origin.host}</span></> : null}</span>
         </div>
 
         {(item.cleanup || item.duplicate || item.auto.auto || !item.ready) && (
@@ -376,7 +376,7 @@ function RecentMoves() {
 }
 
 /* ---------------- Auto-filing ---------------- */
-const SRC_LABEL: Record<string, string> = { rule: "rule", name: "file name", similar: "similar documents" };
+const SRC_LABEL: Record<string, string> = { rule: "rule", origin: "website", name: "file name", similar: "similar documents" };
 
 function AutoFiling() {
   const q = usePoll(api.autofile, 30_000);
