@@ -96,14 +96,21 @@ class OriginTest(unittest.TestCase):
             self.assertEqual([c for c in res["candidates"] if c["source"] == "origin"], [], name)
         self.assertEqual(res["origin"], {"host": "unknown.example", "referrer": None})
 
-    def test_a_rule_still_comes_first_and_origin_is_never_auto_filed(self):
+    def test_a_rule_still_comes_first_and_origin_auto_files_only_once_proven(self):
         sg = self.suggester()
         sg.cfg["rules"] = [{"name": "pdfs", "extensions": [".pdf"], "destination": "2-Areas/Finance"}]
         res = sg.suggest(str(self.new(self.inbox, "slip-nov.pdf", host_url=PORTAL)))
         self.assertEqual([(c["folder"], c["source"]) for c in res["candidates"]],
                          [("2-Areas/Finance", "rule"), ("2-Areas/Payroll", "origin")])
-        self.assertNotIn("origin", autofile.ALLOWED_SOURCES)
+        self.assertIn("origin", autofile.ALLOWED_SOURCES)
+        self.assertNotIn("model", autofile.ALLOWED_SOURCES)
         cfg = {"database": self.tmp / "t.db"}
+        now = time.time()
+        item = {"path": "x", "mtime": now - 9999, "added": now - 9999}
+        sug = {"candidates": [{"folder": "2-Areas/Payroll", "source": "origin", "score": None, "exists": True}]}
+        d = autofile.decide(cfg, item, sug, autofile.trust(cfg), {}, now)       # no decisions yet
+        self.assertFalse(d["auto"])
+        self.assertIn("20 more decisions", d["why"])
         c = mover._conn(cfg["database"])
         c.executemany("INSERT INTO moves (ts, src, dest, size, sha256, folder, source, rank, top_folder, top_source, "
                       "status) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
@@ -111,11 +118,11 @@ class OriginTest(unittest.TestCase):
                         "2-Areas/Payroll", "origin", "moved") for i in range(30)])
         c.commit()
         c.close()
-        now = time.time()
-        d = autofile.decide(cfg, {"path": "x", "mtime": now - 9999, "added": now - 9999},
-                            {"candidates": [{"folder": "2-Areas/Payroll", "source": "origin", "score": None, "exists": True}]},
-                            autofile.trust(cfg), {}, now)
-        self.assertEqual((d["auto"], d["why"]), (False, "website matches are suggestions only"))
+        d = autofile.decide(cfg, item, sug, autofile.trust(cfg), {}, now)       # 30 agreed website decisions
+        self.assertTrue(d["auto"], d)
+        # proof for website matches says nothing about name matches into the same folder
+        sug["candidates"][0]["source"] = "name"
+        self.assertFalse(autofile.decide(cfg, item, sug, autofile.trust(cfg), {}, now)["auto"])
 
     def cross_drive(self, p):
         real = mover._no_replace_rename

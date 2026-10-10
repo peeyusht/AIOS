@@ -32,9 +32,9 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   numbers are floors enforced in `autofile.settings()` (`FLOORS`), whatever `config.yaml` says. Trust is per
   (folder, kind of suggestion); undoing an auto-move discards all of that folder's evidence; the evidence
   (first suggestion, rank) is computed server-side in `web_ui._inbox_post`, never taken from the page; the
-  waiting time counts from arrival (`cleanup.added_time`), not mtime. Auto-filing accepts rule, file-name
-  and similar-documents suggestions only: website (`origin`) matches are suggestions, not in
-  `autofile.ALLOWED_SOURCES`, until the user asks for that.
+  waiting time counts from arrival (`cleanup.added_time`), not mtime. Auto-filing accepts rule, same-website
+  (`origin`, allowed by the user on 11 Oct 2026), file-name and similar-documents suggestions; never the
+  model's guess. Adding a kind to `autofile.ALLOWED_SOURCES` widens what moves on its own: ask first.
 - `mover.py`: only files directly in a watched folder → only existing folders inside PARA root; **never
   overwrite** (identical = refuse, different = "name (2)"); cross-drive = copy → SHA-256 verify → rename into
   place → remove original, roll back if the original is in use; journal every move (`pending` row before the

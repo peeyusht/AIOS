@@ -198,7 +198,8 @@ Every file waiting in Downloads gets up to three destination suggestions. **File
   Next, the website the file was downloaded from: if at least three files you've already filed came from the
   same site and 80% or more of them are in one folder (a payroll portal, a vendor's support site), that folder
   is suggested. Sites whose files go everywhere (webmail, chat) suggest nothing. The Inbox shows "from
-  <site>" under each file that carries a download address. This is a suggestion only, never auto-filed.
+  <site>" under each file that carries a download address. Like the other kinds, it can auto-file only
+  after 20 of your own decisions have proven that folder for website matches.
   Next, if the file name mentions a word that names exactly one folder (e.g. "Pavak", "Muthoot", "Shivalik";
   short names work too: "GR-One" matches GR-One, GR_One or GROne in a file name, and a 3-letter word such as
   "HCL" counts as long as the files you've already filed with it in their names are in that folder),
@@ -227,7 +228,8 @@ automatically only when **all** of these hold:
   This is counted separately for each kind of suggestion (rule, file name, similar documents): a folder proven
   by similar-document suggestions is not thereby trusted for file-name matches. Settings can make the bar
   stricter; 20 decisions and 90% are floors that the program enforces whatever `config.yaml` says;
-- the suggestion is a rule, a file-name match, or similar-documents at 95%+ (never the model's guess alone);
+- the suggestion is a rule, a same-website match, a file-name match, or similar-documents at 95%+ (never the
+  model's guess alone);
 - the file has been in Downloads for 15 minutes (counted from when it arrived, not from a modified date it kept
   from elsewhere), Cleanup doesn't flag it, and it isn't password-protected;
 - the same `mover.py` guarantees as File it: never overwrite, verified cross-drive copies, journal, **Undo**.
