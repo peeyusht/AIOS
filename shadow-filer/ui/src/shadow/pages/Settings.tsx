@@ -154,7 +154,7 @@ export function SettingsPage({ status }: { status: Status | null }) {
             <Field label="Theme"><span className="text-sm text-muted-foreground">Use the sun / moon button in the top bar. Saved in this browser.</span></Field>
           </Section>
           <SystemSection />
-          <AdvancedSection onSaved={(rn) => { if (rn) setRestartNeeded(true); }} />
+          <AdvancedSection onSaved={(rn) => { if (rn) setRestartNeeded(true); q.reload().then(() => setRaw(null)); /* the form must show what the YAML now says */ }} />
         </div>
       </div>
 
