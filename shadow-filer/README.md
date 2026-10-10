@@ -195,6 +195,10 @@ Every file waiting in Downloads gets up to three destination suggestions. **File
 - **Where suggestions come from:** your already-filed documents. Each file has a fingerprint (name + start of its
   text, embedded locally with `nomic-embed-text`, never its folder). A new file's 10 most similar filed documents
   vote for their folders; the share of the vote is the percentage shown. A matching rule is always listed first.
+  Next, the website the file was downloaded from: if at least three files you've already filed came from the
+  same site and 80% or more of them are in one folder (a payroll portal, a vendor's support site), that folder
+  is suggested. Sites whose files go everywhere (webmail, chat) suggest nothing. The Inbox shows "from
+  <site>" under each file that carries a download address. This is a suggestion only, never auto-filed.
   Next, if the file name mentions a word that names exactly one folder (e.g. "Pavak", "Muthoot", "Shivalik";
   short names work too: "GR-One" matches GR-One, GR_One or GROne in a file name, and a 3-letter word such as
   "HCL" counts as long as the files you've already filed with it in their names are in that folder),
