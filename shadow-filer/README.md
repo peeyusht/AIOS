@@ -194,7 +194,9 @@ Every file waiting in Downloads gets up to three destination suggestions. **File
 - **Where suggestions come from:** your already-filed documents. Each file has a fingerprint (name + start of its
   text, embedded locally with `nomic-embed-text`, never its folder). A new file's 10 most similar filed documents
   vote for their folders; the share of the vote is the percentage shown. A matching rule is always listed first.
-  Next, if the file name mentions a word that names exactly one folder (e.g. "Pavak", "Muthoot", "Shivalik"),
+  Next, if the file name mentions a word that names exactly one folder (e.g. "Pavak", "Muthoot", "Shivalik";
+  short names work too: "GR-One" matches GR-One, GR_One or GROne in a file name, and a 3-letter word such as
+  "HCL" counts as long as the files you've already filed with it in their names are in that folder),
   that folder: right 86% of the time on 236 filed documents, and it works for new folders with few files, where
   similar-document voting can't. The local model's pick is listed too when it differs.
 - **Measured accuracy** (leave-one-out on 909 filed documents with text, 11 Oct 2026): first suggestion right
