@@ -3,9 +3,15 @@
 const SFinboxIcon=Qt("inbox",[["polyline",{points:"22 12 16 12 14 15 10 15 8 12 2 12",key:"i1"}],["path",{d:"M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z",key:"i2"}]]);
 const SFsrcText={rule:"rule",name:"name matches folder",similar:"like your filed docs",model:"model's guess"};
 function SFconf(score){if(score==null)return null;const pct=Math.round(score*100);const tone=score>=.95?"success":score>=.7?"info":"warning";return f.jsx(Ba,{tone,children:`${pct}%`})}
-function SFinboxItem({it,dests,onDone,setMsg,autoOn}){
+function SFinboxItem({it,dests,parents,onDone,onCreated,setMsg,autoOn}){
   const first=it.candidates?.[0];
   const[sel,setSel]=Z.useState(first?.folder??""),[other,setOther]=Z.useState(!1),[busy,setBusy]=Z.useState(!1);
+  const[mk,setMk]=Z.useState(!1),[mkParent,setMkParent]=Z.useState(""),[mkName,setMkName]=Z.useState("");
+  const isNew=!!sel&&!dests.includes(sel)&&!(it.candidates||[]).some(c=>c.folder===sel);
+  const mkDef=[...parents].reverse().find(p=>(sel||first?.folder||"").startsWith(p+"/"))||parents[0]||"";
+  const create=async()=>{const parent=mkParent||mkDef;if(!parent||!mkName.trim())return;setBusy(!0);setMsg(null);
+    try{const r=await cm("/api/inbox/mkdir",{parent,name:mkName});
+      if(r.ok){setSel(r.folder);setMk(!1);setOther(!1);setMkName("");onCreated(r.folder)}else setMsg(r.message)}catch(e){setMsg(String(e?.message??e))}setBusy(!1)};
   const choose=async()=>{if(!sel)return;setBusy(!0);setMsg(null);
     const c=(it.candidates||[]).find(x=>x.folder===sel);
     try{const r=await cm("/api/inbox/file",{path:it.path,folder:sel,size:it.size,source:c?.source??"manual",rank:c?.rank??0,top_folder:first?.folder??null,top_score:first?.score??null});
@@ -31,7 +37,17 @@ function SFinboxItem({it,dests,onDone,setMsg,autoOn}){
       (it.candidates??[]).length===0&&SFx("span",{className:"text-sm text-muted-foreground"},"No suggestion yet."),
       other?SFx("select",{autoFocus:!0,value:sel,onChange:e=>setSel(e.target.value),className:"rounded-md border bg-card px-2 py-1 text-sm",style:{maxWidth:"320px"}},
           f.jsx("option",{value:"",children:"Choose a folder…"}),dests.map(d=>f.jsx("option",{value:d,children:d},d))):
-        f.jsx("button",{onClick:()=>setOther(!0),className:"rounded-md border px-2 py-1 text-sm text-muted-foreground hover:bg-accent",children:"Other folder…"})),
+        f.jsx("button",{onClick:()=>{setOther(!0);setMk(!1)},className:"rounded-md border px-2 py-1 text-sm text-muted-foreground hover:bg-accent",children:"Other folder…"}),
+      !mk&&parents.length>0&&f.jsx("button",{onClick:()=>{setMk(!0);setOther(!1)},title:"Create a folder in your PARA tree for files that don't fit an existing one",className:"rounded-md border px-2 py-1 text-sm text-muted-foreground hover:bg-accent",children:"New folder…"}),
+      isNew&&SFx("span",{className:"inline-flex items-center gap-1.5 rounded-md border bg-accent px-2 py-1 text-sm font-medium"},SFx("span",{className:"font-mono text-xs"},sel),SFx("span",{className:"text-xs text-muted-foreground"},"new folder"))),
+    mk&&SFx("div",{className:"mt-2 flex flex-wrap items-center gap-2 rounded-md border px-2 py-2"},
+      SFx("span",{className:"text-sm text-muted-foreground"},"New folder in"),
+      SFx("select",{value:mkParent||mkDef,onChange:e=>setMkParent(e.target.value),"aria-label":"Create the new folder in",className:"rounded-md border bg-card px-2 py-1 text-sm"},parents.map(p=>f.jsx("option",{value:p,children:p},p))),
+      SFx("span",{className:"text-sm text-muted-foreground"},"/"),
+      f.jsx("input",{autoFocus:!0,value:mkName,maxLength:80,placeholder:"Folder name","aria-label":"New folder name",onChange:e=>setMkName(e.target.value),onKeyDown:e=>{if(e.key==="Enter")create();if(e.key==="Escape")setMk(!1)},className:"rounded-md border bg-card px-2 py-1 text-sm",style:{width:"240px"}}),
+      SFx(uc,{onClick:create,disabled:busy||!mkName.trim()},"Create folder"),
+      SFx(uc,{onClick:()=>setMk(!1),disabled:busy},"Cancel"),
+      SFx("span",{className:"w-full text-xs text-muted-foreground"},"Creates an empty folder only. The file moves when you click File it.")),
     SFx("div",{className:"mt-2 flex flex-wrap items-center gap-2"},
       SFx(uc,{variant:"primary",onClick:choose,disabled:busy||!sel||(it.candidates||[]).some(c=>c.folder===sel&&c.exists===!1)},busy?"Filing…":`File it${sel?` → ${sel}`:""}`),
       SFx(uc,{onClick:skip,disabled:busy,title:"Hide this file from the inbox (it stays in Downloads)"},"Leave it"),
@@ -59,7 +75,7 @@ function SFinbox(){
     msg&&SFx("div",{role:"alert",className:"rounded-md border border-warning bg-warning-soft px-3 py-2 text-sm text-warning"},msg),
     last&&SFx("div",{role:"status",className:"flex flex-wrap items-center gap-3 rounded-md border border-success bg-success-soft px-3 py-2 text-sm text-success"},last.text,last.id&&SFx(uc,{onClick:()=>undo(last.id)},"Undo")),
     d&&d.items.length===0&&f.jsx(Gf,{title:"Inbox is empty",children:"Nothing waiting in Downloads."}),
-    d&&d.items.length>0&&SFx("ol",{className:"space-y-2"},d.items.map(it=>f.jsx(SFinboxItem,{it,dests:d.destinations??[],onDone:done,setMsg,autoOn:!!af?.settings?.enabled},it.path+it.size))),
+    d&&d.items.length>0&&SFx("ol",{className:"space-y-2"},d.items.map(it=>f.jsx(SFinboxItem,{it,dests:d.destinations??[],parents:d.parents??[],onDone:done,onCreated:fo=>{setLast({text:`Created folder ${fo}. Nothing was moved; click File it to put the file there.`});setTick(t=>t+1)},setMsg,autoOn:!!af?.settings?.enabled},it.path+it.size))),
     d&&d.total>25&&SFx("div",{className:"flex items-center gap-2"},
       SFx(uc,{onClick:()=>setOff(Math.max(0,off-25)),disabled:off===0},"← Newer"),
       SFx("span",{className:"text-sm text-muted-foreground"},`${off+1}–${Math.min(off+25,d.total)} of ${d.total}`),
@@ -83,5 +99,5 @@ function SFinbox(){
         SFx("span",{className:"text-xs text-muted-foreground"},cc(m.ts)),
         (m.source||"").startsWith("auto")&&f.jsx(Ba,{tone:"info",children:"auto"}),
         SFx("span",{className:"min-w-0 flex-1 truncate",title:`${m.src} → ${m.dest}`},m.src.split(/[\\/]/).pop()," → ",f.jsx("span",{className:"font-mono text-xs",children:m.folder})),
-        m.status==="moved"?SFx(uc,{onClick:()=>undo(m.id)},"Undo"):f.jsx(Ba,{tone:"muted",children:m.note?`undone · ${m.note}`:"undone"}))))}));
+        m.status==="moved"?SFx(uc,{onClick:()=>undo(m.id)},"Undo"):f.jsx(Ba,{tone:m.status==="undone"?"muted":"warning",children:m.note?`${m.status} · ${m.note}`:m.status}))))}));
 }

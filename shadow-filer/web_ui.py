@@ -158,6 +158,10 @@ def _inbox_post(self, path: str, body: dict):
                     meta.update(source=hit["source"], rank=hit["rank"])
             res = mover.move(cfg, p, folder, meta, Ctx.log)
             return self._send(200, res)
+        if path == "/api/inbox/mkdir":
+            res = mover.make_folder(cfg, str(body.get("parent", "")), str(body.get("name", "")), Ctx.log)
+            Ctx.dests._at = 0  # the new folder is a destination straight away
+            return self._send(200, res)
         if path == "/api/inbox/dismiss":
             p = str(body.get("path", ""))
             if not any(Path(p).parent == Path(r) for r in cfg["inbox_folders"]):
@@ -357,6 +361,7 @@ class Handler(BaseHTTPRequestHandler):
                                  "auto": autofile.decide(cfg, fi, sug, proven, hints, now)})
                 return self._send(200, {"items": page, "total": len(files), "offset": off,
                                         "examples": sg.stats() if sg else None,
+                                        "parents": mover.folder_parents(cfg),
                                         "destinations": Ctx.dests.get() if cfg["para_root"].is_dir() else []})
             if u.path == "/api/autofile":
                 import autofile
@@ -439,7 +444,7 @@ class Handler(BaseHTTPRequestHandler):
             r = ocr.selftest(cfg_now())
             Ctx.log.info("OCR self-test: %s", r["message"])
             return self._send(200, r)
-        if u.path in ("/api/inbox/file", "/api/inbox/dismiss", "/api/moves/undo"):
+        if u.path in ("/api/inbox/file", "/api/inbox/mkdir", "/api/inbox/dismiss", "/api/moves/undo"):
             return self._inbox_post(u.path, body)
         if u.path == "/api/restart":
             if Ctx.status.get("mode") != "agent":
