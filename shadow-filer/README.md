@@ -56,6 +56,14 @@ This registers a Task Scheduler task that:
 
 If you update `install_task.ps1`, run it again; it replaces the existing task.
 
+**Moving an existing install** (e.g. from `D:\Tools\shadow-filer` to this folder): run, from the new folder,
+```
+powershell -ExecutionPolicy Bypass -File .\install_task.ps1 -MigrateFrom D:\Tools\shadow-filer
+```
+It stops the running agent, copies `config.yaml`, the databases, logs and `.venv`, and starts the agent from the
+new folder. The old folder is left as it was. Note: `pip.exe` inside a copied `.venv` still points at the old
+folder; use `.venv\Scripts\python -m pip ...` instead.
+
 Remove it with `install_task.ps1 -Remove`. Your data is kept.
 
 **What happens around a reboot**
