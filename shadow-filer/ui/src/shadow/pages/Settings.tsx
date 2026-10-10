@@ -19,7 +19,7 @@ import type { FsDirs, Raw, Rule, SettingsResponse, Status, SystemInfo } from "@/
 import { Bar, Card, Confirm, ListSkeleton, LoadError, Mono, Notice, PageHeader, Spin, act } from "../ui";
 import { FolderPicker } from "./Inbox";
 
-const SECTIONS = ["Folders", "Filing rules", "Model", "Watching", "Cleanup", "Search", "Auto-filing", "OCR", "Interface", "System", "Advanced"];
+const SECTIONS = ["Folders", "Filing rules", "Model", "Watching", "Cleanup", "Search", "Auto-filing", "OCR", "Document watch", "Interface", "System", "Advanced"];
 const sid = (s: string) => "set-" + s.toLowerCase().replace(/[^a-z]+/g, "-");
 
 function getPath(o: Raw, path: string) { return path.split(".").reduce<unknown>((a, k) => (a == null ? undefined : (a as Raw)[k]), o); }
@@ -143,6 +143,11 @@ export function SettingsPage({ status }: { status: Status | null }) {
             <Num c={ctx} p="ocr.min_image_kb" label="Skip images smaller than" unit="KB" min={0} max={10000} />
             <TestButton label="Test OCR" fn={api.ocrSelftest} />
           </Section>
+          <Section title="Document watch">
+            <Sw c={ctx} p="watch.enabled" label="Watch documents for dates and sensitive data" />
+            <Num c={ctx} p="watch.soon_days" label="Warn this many days ahead" unit="days" min={1} max={365} />
+            <Num c={ctx} p="watch.keep_expired_days" label="Keep passed dates listed for" unit="days" min={0} max={3650} />
+          </Section>
           <Section title="Interface">
             <Num c={ctx} p="ui.port" label="Port" min={1024} max={65535} restart />
             <Field label="Config file"><Mono className="text-sm">{meta.config_path}</Mono></Field>
@@ -154,7 +159,11 @@ export function SettingsPage({ status }: { status: Status | null }) {
             <Field label="Theme"><span className="text-sm text-muted-foreground">Use the sun / moon button in the top bar. Saved in this browser.</span></Field>
           </Section>
           <SystemSection />
-          <AdvancedSection onSaved={(rn) => { if (rn) setRestartNeeded(true); q.reload().then(() => setRaw(null)); /* the form must show what the YAML now says */ }} />
+          <AdvancedSection onSaved={async (rn) => {
+            if (rn) setRestartNeeded(true);
+            // the YAML save replaced the whole config, so reload the form from the agent (discarding unsaved form edits)
+            try { const s = await api.settings(); q.setData(s); setRaw(structuredClone(s.raw)); setRestartNeeded(s.restart_needed); } catch { /* leave the form as it is */ }
+          }} />
         </div>
       </div>
 
@@ -624,7 +633,7 @@ function AdvancedSection({ onSaved }: { onSaved: (restart: boolean) => void }) {
       <Notice tone="warn">Editing the raw file is for experts. The form above checks your values; this editor does not. Saving here replaces the whole config file.</Notice>
       <Textarea aria-label="Raw configuration (YAML)" value={text ?? ""} onChange={(e) => setText(e.target.value)} rows={18} spellCheck={false} className="font-mono text-xs leading-relaxed" />
       <div className="flex gap-2">
-        <Button variant="outline" disabled={busy || text === null} onClick={async () => { setBusy(true); const r = await act(() => api.saveConfig(text!)); setBusy(false); if (r) onSaved(!!r.restart_needed); }}>{busy && <Spin />} Save YAML</Button>
+        <Button variant="outline" disabled={busy || text === null} onClick={async () => { setBusy(true); const r = await act(() => api.saveConfig(text!)); if (r) { try { const c = await api.config(); setText(c.text); } catch { /* keep the saved text */ } } setBusy(false); if (r) onSaved(!!r.restart_needed); }}>{busy && <Spin />} Save YAML</Button>
         <Button variant="ghost" onClick={() => setText(q.data?.text ?? "")}>Revert</Button>
       </div>
     </Section>

@@ -342,3 +342,30 @@ export interface SystemInfo {
 export interface LogResponse {
   lines: string[];
 }
+
+export interface WatchDate {
+  path: string; name: string; folder: string; source: "para" | "inbox" | "extra"; size: number; modified: string;
+  date: string;
+  kind: "expires" | "valid until" | "due" | "renewal" | "ends";
+  days: number;
+  status: "soon" | "later" | "passed";
+  context: string;
+  key: string;
+  copies: string[];
+}
+export interface WatchSensitive {
+  path: string; name: string; folder: string; source: "inbox"; size: number; modified: string;
+  found: { kind: "pan" | "aadhaar" | "card" | "bank" | "passport" | "key"; label: string; count: number }[];
+  level: "high" | "medium";
+  key: string;
+}
+export interface WatchResponse {
+  enabled: boolean;
+  scanned_at?: string; files_read?: number;
+  settings?: { soon_days: number; keep_expired_days: number };
+  dates: WatchDate[]; older_passed?: number;
+  sensitive: WatchSensitive[];
+  counts: { soon: number; passed: number; later: number; sensitive: number };
+  dismissed?: number;
+  error?: string;
+}

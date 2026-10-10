@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
-  Activity as ActivityIcon, Eye, EyeOff, FlaskConical, Inbox as InboxIcon, Moon, RefreshCw, Search as SearchIcon,
+  Activity as ActivityIcon, BellRing, Eye, EyeOff, FlaskConical, Inbox as InboxIcon, Moon, RefreshCw, Search as SearchIcon,
   Settings as SettingsIcon, Sparkles, Sun, Trash2, WifiOff,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
@@ -17,10 +17,13 @@ import type { Status } from "@/lib/types";
 import { InboxPage } from "./pages/Inbox";
 import { SearchPage } from "./pages/Search";
 import { CleanupPage } from "./pages/Cleanup";
+import { WatchPage } from "./pages/Watch";
 import { ActivityPage } from "./pages/Activity";
 import { SettingsPage } from "./pages/Settings";
 
 export const INBOX_CHANGED = "sf-inbox-changed";
+export const WATCH_CHANGED = "sf-watch-changed";
+export const emitWatchChanged = () => window.dispatchEvent(new Event(WATCH_CHANGED));
 export const emitInboxChanged = () => window.dispatchEvent(new Event(INBOX_CHANGED));
 
 function useTheme() {
@@ -43,6 +46,7 @@ const NAV = [
   { path: "/inbox", label: "Inbox", icon: InboxIcon },
   { path: "/search", label: "Search", icon: SearchIcon },
   { path: "/cleanup", label: "Cleanup", icon: Trash2 },
+  { path: "/watch", label: "Watch", icon: BellRing },
   { path: "/activity", label: "Activity", icon: ActivityIcon },
   { path: "/settings", label: "Settings", icon: SettingsIcon },
 ] as const;
@@ -66,6 +70,12 @@ export default function ShadowApp() {
   useEffect(() => onConnection((c) => setConn({ ...c })), []);
   const status = usePoll<Status>(api.status, conn.reachable ? 10_000 : 3_000);
   const count = usePoll(() => api.inbox(0, 1), 30_000);
+  const watch = usePoll(() => api.watch(), 300_000);
+  useEffect(() => {
+    const h = () => watch.reload();
+    window.addEventListener(WATCH_CHANGED, h);
+    return () => window.removeEventListener(WATCH_CHANGED, h);
+  }, [watch]);
   useEffect(() => {
     const h = () => count.reload();
     window.addEventListener(INBOX_CHANGED, h);
@@ -83,6 +93,7 @@ export default function ShadowApp() {
   switch (section) {
     case "/search": page = <SearchPage />; break;
     case "/cleanup": page = <CleanupPage />; break;
+    case "/watch": page = <WatchPage />; break;
     case "/activity": page = <ActivityPage />; break;
     case "/settings": page = <SettingsPage status={s} />; break;
     default: page = <InboxPage />;
@@ -118,6 +129,11 @@ export default function ShadowApp() {
                   {p === "/inbox" && count.data && count.data.total > 0 && (
                     <span className="rounded-full bg-primary px-1.5 text-[11px] font-semibold leading-5 text-primary-foreground tabular" aria-label={`${count.data.total} files waiting`}>
                       {count.data.total}
+                    </span>
+                  )}
+                  {p === "/watch" && watch.data && watch.data.counts.soon > 0 && (
+                    <span className="rounded-full bg-warning-soft px-1.5 text-[11px] font-semibold leading-5 text-warning ring-1 ring-warning/30 tabular" aria-label={`${watch.data.counts.soon} dates coming up`}>
+                      {watch.data.counts.soon}
                     </span>
                   )}
                 </a>

@@ -8,10 +8,11 @@ accurate rules and the model are, per category and per confidence level.
 (never overwriting, journaled, undoable), and sends files to the Recycle Bin only when you confirm on Cleanup.
 The one exception is auto-filing (Phase 3, below), which is off until you switch it on.
 
-The console (http://127.0.0.1:8765) has five places: **Inbox** (the home page: files waiting, File it / Undo,
+The console (http://127.0.0.1:8765) has six places: **Inbox** (the home page: files waiting, File it / Undo,
 recent moves, auto-filing), **Search** (meaning + keyword search over your folders), **Cleanup** (duplicates,
-extracted archives, old installers), **Activity** (accuracy, predictions, log) and **Settings** (a form, system
-information, and the raw YAML under Advanced).
+extracted archives, old installers), **Watch** (dates coming up in your documents, sensitive files left in
+Downloads), **Activity** (accuracy, predictions, log) and **Settings** (a form, system information, and the raw
+YAML under Advanced).
 
 ## 1. Install (one time)
 
@@ -236,6 +237,18 @@ automatically only when **all** of these hold:
 Undoing an auto-move wipes everything that folder had earned, for every kind of suggestion: it goes back to
 suggestions only until it is proven again from zero. Below the bar, likewise.
 What "the first suggestion" was is worked out by the agent when you file, not reported by the page.
+
+## Document watch
+The Watch page reads the text the search index already holds; it opens no file again and changes nothing.
+- **Dates**: an expiry, renewal, due or "valid until" date is listed when the document itself says what the
+  date is. Dates within 60 days are "coming up" (the sidebar shows how many); dates that passed more than 90
+  days ago are counted but not listed. Copies of the same document appear once. Each entry quotes the line it
+  was read from so you can judge it, and **Dismiss** hides one that is wrong or dealt with.
+- **Sensitive files**: files in Downloads whose text holds a PAN (a person's, not a company's), an Aadhaar
+  number, a payment card number, bank account details, a passport number or a private key. The page says what
+  kind and how many, never the numbers themselves, and nothing about them is stored. Long numbers in logs and
+  spreadsheets are not flagged unless they are written like the real thing or named as such.
+Both are in Settings › Document watch (on/off, days ahead, how long passed dates stay listed).
 
 ## Tests
 `.venv\Scripts\python -m unittest discover -s tests` (from this folder). They run on throwaway folders and

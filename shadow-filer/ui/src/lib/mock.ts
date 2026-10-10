@@ -1,5 +1,5 @@
 /* Entirely fictional demo data with in-memory mutations, used when no agent token is present. */
-import type {
+import type { WatchDate, WatchSensitive,
   AutofileResponse,
   CleanupHistoryRow,
   CleanupItem,
@@ -92,14 +92,15 @@ function item(
 function seedInbox(): InboxItem[] {
   const list: InboxItem[] = [
     item("Acme_SOW_v3_signed.pdf", 2.4 * MB, 12, [
+      ["1-Projects/Acme-Rollout/Contracts", "origin", null, "6 of your 6 files from portal.acme.example are filed here"],
       ["1-Projects/Acme-Rollout/Contracts", "similar", 0.97, "9 of your filed SOWs live here", true],
       ["1-Projects/Acme-Rollout", "name", 0.71, "File name contains 'Acme'"],
       ["2-Areas/Finance", "model", null, "Model: looks like a contract with payment terms"],
-    ], { auto: { auto: true, folder: "1-Projects/Acme-Rollout/Contracts", why: "Proven folder", soon: true } }),
+    ], { auto: { auto: true, folder: "1-Projects/Acme-Rollout/Contracts", why: "Proven folder", soon: true }, origin: { host: "portal.acme.example", referrer: "portal.acme.example" } }),
     item("Invoice-NW-2026-0412.pdf", 184_000, 38, [
       ["2-Areas/Finance/Invoices", "rule", null, "Rule 'Invoices' matched name pattern"],
       ["1-Projects/Northwind-Audit", "similar", 0.62, "Similar to 3 audit documents"],
-    ], { auto: { auto: true, folder: "2-Areas/Finance/Invoices", why: "Rule-based, proven" } }),
+    ], { auto: { auto: true, folder: "2-Areas/Finance/Invoices", why: "Rule-based, proven" }, origin: { host: "mail.example.com", referrer: "mail.example.com" } }),
     item("Northwind posture audit - draft findings.docx", 812_000, 64, [
       ["1-Projects/Northwind-Audit/Findings", "similar", 0.88, "Close to 14 findings documents", true],
       ["1-Projects/Northwind-Audit", "name", 0.74, "Name contains 'Northwind'"],
@@ -180,6 +181,7 @@ const settingsRaw: Raw = {
   search: { enabled: true, model: "nomic-embed-text", extra_folders: [], exclude_globs: ["**/node_modules/**"], min_similarity: 0.35, sweep_minutes: 60 },
   autofile: { enabled: false, min_decisions: 20, min_rate: 0.95, window: 30, min_score: 0.9, delay_minutes: 30 },
   ocr: { enabled: true, max_pdf_pages: 20, min_image_kb: 50 },
+  watch: { enabled: true, soon_days: 30, keep_expired_days: 60 },
   ui: { port: 8765 },
   telemetry_note: "kept untouched",
 };
@@ -337,7 +339,49 @@ const logLines = (): string[] => {
 type Handler = (q: URLSearchParams, body: Raw) => unknown;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+
+/* --- document watch --- */
+const dayIso = (days: number) => iso(new Date(Date.now() + days * 86400000)).slice(0, 10);
+const P = "C:\\Users\\alex\\Documents\\PARA\\", WDL = "C:\\Users\\alex\\Downloads\\";
+const wd = (name: string, folder: string, source: "para" | "inbox" | "extra", days: number, kind: WatchDate["kind"], context: string, copies: string[] = []): WatchDate => ({
+  path: (source === "inbox" ? WDL : P + folder.replace(/\//g, "\\") + "\\") + name, name, folder, source, size: 80_000 + name.length * 9_311,
+  modified: ago(60 * 24 * (40 + name.length)), date: dayIso(days), kind, days,
+  status: days < 0 ? "passed" : days <= 30 ? "soon" : "later", context, key: `${name}|${kind}|${days}`, copies,
+});
+const watchDates: WatchDate[] = [
+  wd("Northwind-Fleet-Insurance-2025.pdf", "2-Areas/Insurance", "para", 9, "expires", "Policy period: 21 Oct 2025 to 20 Oct 2026. This policy expires on the date shown unless renewed.", [P + "4-Archives\\Old-Policies\\Northwind-Fleet-Insurance-2025.pdf"]),
+  wd("Globex-Quote-Q-4471.pdf", "3-Resources/Vendor-Research", "para", 0, "valid until", "This quotation is valid until the date below. Prices exclude GST."),
+  wd("Invoice-INV-20931.pdf", "Downloads", "inbox", 4, "due", "Payment due date: please remit within 30 days of the invoice date."),
+  wd("Acme-MSA-Signed.pdf", "1-Projects/Acme-Rollout", "para", 74, "ends", "The initial term of this Agreement ends on the date stated in Schedule A."),
+  wd("Initech-Support-Renewal.docx", "2-Areas/Subscriptions", "para", 133, "renewal", "Annual support renewal date. Auto-renews unless cancelled 30 days before."),
+  wd("Passport-Scan-Alex.pdf", "2-Areas/Identity", "para", 412, "expires", "Date of expiry"),
+  wd("Umbrella-NDA.pdf", "4-Archives/Globex-Completed", "para", -12, "ends", "This NDA ends two years after the effective date."),
+  wd("Gym-Membership.pdf", "2-Areas/Health", "para", -41, "valid until", "Membership valid until"),
+];
+const watchSensitive: WatchSensitive[] = [
+  { path: WDL + "KYC-Form-Filled.pdf", name: "KYC-Form-Filled.pdf", folder: "Downloads", source: "inbox", size: 412_000, modified: ago(60 * 26), level: "high", key: "",
+    found: [{ kind: "pan", label: "PAN", count: 1 }, { kind: "aadhaar", label: "Aadhaar number", count: 2 }] },
+  { path: WDL + "statement_sep.pdf", name: "statement_sep.pdf", folder: "Downloads", source: "inbox", size: 238_000, modified: ago(60 * 70), level: "medium", key: "",
+    found: [{ kind: "bank", label: "Bank account details", count: 1 }] },
+  { path: WDL + "deploy_key.txt", name: "deploy_key.txt", folder: "Downloads", source: "inbox", size: 3_400, modified: ago(60 * 24 * 9), level: "high", key: "",
+    found: [{ kind: "key", label: "Private key", count: 1 }] },
+];
+const watchHidden = new Set<string>();
+const watchId = (path: string, kind: string, key: string) => `${kind}|${path}|${key}`;
+let watchScanned = ago(95);
+
 const get: Record<string, Handler> = {
+  "/api/watch": (q) => {
+    if (q.get("refresh")) watchScanned = iso(now());
+    const ws = settingsRaw.watch ?? { enabled: true, soon_days: 30, keep_expired_days: 60 };
+    const all = watchDates.filter((d) => d.days >= -ws.keep_expired_days);
+    const dates = all.filter((d) => !watchHidden.has(watchId(d.path, "date", d.key)));
+    const sensitive = watchSensitive.filter((x) => !watchHidden.has(watchId(x.path, "sensitive", x.key)));
+    const c = (st: string) => dates.filter((d) => d.status === st).length;
+    if (!ws.enabled) return { enabled: false, dates: [], sensitive: [], counts: { soon: 0, passed: 0, later: 0, sensitive: 0 } };
+    return { enabled: true, scanned_at: watchScanned, files_read: 17_389, settings: { soon_days: ws.soon_days, keep_expired_days: ws.keep_expired_days },
+      dates, older_passed: watchDates.length - all.length + 3, sensitive, counts: { soon: c("soon"), passed: c("passed"), later: c("later"), sensitive: sensitive.length }, dismissed: watchHidden.size };
+  },
   "/api/status": (): Status => ({
     mode: "demo", started: ago(600), ollama: !demo.modelMissing, watching: !demo.problem, last_prediction: ago(12),
     restart_needed: restartNeeded, problem: demo.problem ? "Downloads folder is on a drive that is not connected (E:)." : null,
@@ -494,6 +538,11 @@ const get: Record<string, Handler> = {
 };
 
 const post: Record<string, Handler> = {
+  "/api/watch/dismiss": (_q, b) => {
+    const id = watchId(b.path, b.kind, b.key ?? "");
+    if (b.undo) watchHidden.delete(id); else watchHidden.add(id);
+    return { ok: true };
+  },
   "/api/inbox/file": (_q, b) => {
     const it = inbox.find((i) => i.path === b.path);
     if (!it) return { ok: false, message: "That file is no longer in Downloads." };

@@ -46,6 +46,9 @@ FIELDS = [
     ("autofile.min_rate", "float", 0.9, 1.0),
     ("autofile.min_score", "float", 0.5, 1.0),
     ("autofile.delay_minutes", "int", 1, 1440),
+    ("watch.enabled", "bool", None, None),
+    ("watch.soon_days", "int", 1, 365),
+    ("watch.keep_expired_days", "int", 0, 3650),
     ("search.enabled", "bool", None, None),
     ("search.model", "str", None, None),
     ("search.extra_folders", "paths", None, None),
@@ -55,7 +58,7 @@ FIELDS = [
 ]
 KEY_ORDER = ["inbox_folders", "para_root", "destination_depth", "exclude_destinations", "ollama", "extraction",
              "settle_seconds", "hash_max_mb", "reconcile_minutes", "history_examples", "catch_up_days", "ui",
-             "database", "log_file", "ignore_patterns", "rules", "cleanup", "search", "ocr", "autofile"]
+             "database", "log_file", "ignore_patterns", "rules", "cleanup", "search", "ocr", "autofile", "watch"]
 COMMENTS = {
     "inbox_folders": "Folders to watch for new files (e.g. Downloads). %USERPROFILE% and similar are expanded.",
     "para_root": "Root of your PARA tree: where you file things.",
@@ -75,6 +78,7 @@ COMMENTS = {
     "search": "Search index (Search page). Changing the model rebuilds the index.",
     "autofile": "Phase 3: file automatically into folders your Inbox decisions have proven. Off until you switch it on.",
     "ocr": "Read scanned PDFs, images and screenshot-only Word files with Windows' built-in OCR.",
+    "watch": "Document watch (Watch page): dates that are coming up in your documents, and sensitive files in Downloads.",
 }
 
 
@@ -176,12 +180,12 @@ def normalize(form: dict, current: dict) -> dict:
     out = copy.deepcopy(current) if isinstance(current, dict) else {}
     for key, kind, lo, hi in FIELDS:
         section = key.split(".")[0]
-        if "." in key and section in ("cleanup", "search", "ocr", "autofile") and not isinstance(form.get(section), dict):
+        if "." in key and section in ("cleanup", "search", "ocr", "autofile", "watch") and not isinstance(form.get(section), dict):
             continue  # optional section not used: leave it out, defaults apply
         v = _get(form, key)
         if v is None and kind not in ("strs", "paths"):
             # optional sections (cleanup/search) may be absent: keep defaults by not writing them
-            if key.split(".")[0] in ("cleanup", "search", "ocr", "autofile") or key.startswith("extraction."):
+            if key.split(".")[0] in ("cleanup", "search", "ocr", "autofile", "watch") or key.startswith("extraction."):
                 continue
             raise Invalid(f"{key.replace('.', ' → ')}: missing")
         _set(out, key, _coerce(key, kind, lo, hi, v))

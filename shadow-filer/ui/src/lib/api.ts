@@ -2,7 +2,7 @@
 import { adaptCleanup, adaptHistory, adaptLog, adaptMoves, adaptPredictions, adaptSearchStatus, adaptSystem } from "./adapt";
 import type {
   AutofileResponse, Decision, FsCheck, FsDirs, InboxResponse, OkResponse,
-  Raw, SaveResponse, SearchResponse, SettingsResponse, Stats, Status,
+  Raw, SaveResponse, SearchResponse, SettingsResponse, Stats, Status, WatchResponse,
 } from "./types";
 
 function readToken(): string | null {
@@ -119,6 +119,9 @@ export const api = {
   log: () => g<Raw>("/api/log?lines=300").then(adaptLog),
   fsCheck: (path: string) => g<FsCheck>("/api/fs/check" + qs({ path })),
   fsDirs: (path: string) => g<FsDirs>("/api/fs/dirs" + qs({ path })),
+  watch: (refresh = false) => g<WatchResponse>("/api/watch" + (refresh ? "?refresh=1" : "")),
+  watchDismiss: (path: string, kind: "date" | "sensitive", key: string, undo = false) =>
+    p("/api/watch/dismiss", undo ? { path, kind, key, undo: true } : { path, kind, key }),
   system: (refresh = false) => g<Raw>("/api/system" + (refresh ? "?refresh=1" : "")).then(adaptSystem),
 };
 
