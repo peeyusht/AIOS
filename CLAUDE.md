@@ -135,8 +135,9 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 ## Open items
 - Finance-type spreadsheets lean to `4-Archives/Frux-Technologies` (413 similar old docs); improves as the
   user files into Finance. A general archive down-weight does not help (see Measured numbers).
-- Nothing has been filed through the Inbox yet (0 moves, 11 Oct 2026), so auto-filing has no evidence and the
-  first-suggestion accuracy has only been measured on already-filed files, not on real Inbox decisions.
+- Only 3 files have been filed through the Inbox (11 Oct 2026; 8 more were filed by hand in Explorer), so
+  auto-filing has no folder near its 20 decisions and the first-suggestion accuracy has only been measured on
+  already-filed files, not on real Inbox decisions.
 - 15 PDFs in the index need a real password and stay "locked".
 - C: has <10% free space; Ollama runs qwen3:4b ~94% on GPU (`LLAMA_ARG_FIT_TARGET` was tuned to 512 MB).
 - Speed (11 Oct 2026, 1,365 filed examples, 17,710 chunks): comparisons use `math.sumprod` (~1.8x faster than
