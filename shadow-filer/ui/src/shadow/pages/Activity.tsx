@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownToLine, ArrowRight, ChevronDown } from "lucide-react";
+import { ArrowDownToLine, ArrowRight, BookOpen, ChevronDown, Copy } from "lucide-react";
+import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -9,25 +10,188 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useDebounced, usePoll } from "@/lib/hooks";
-import { dateTime, pct } from "@/lib/format";
-import type { Prediction, StatsBucket } from "@/lib/types";
-import { Card, ListSkeleton, LoadError, Mono, PageHeader, Stat } from "../ui";
+import { bytes, dateTime, pct } from "@/lib/format";
+import type { JournalDay, Prediction, StatsBucket } from "@/lib/types";
+import { Card, EmptyState, ListSkeleton, LoadError, Mono, PageHeader, Segmented, Stat } from "../ui";
 
 export function ActivityPage() {
   return (
     <>
-      <PageHeader title="Activity" sub="How well suggestions match where you actually file things." />
-      <Tabs defaultValue="accuracy">
+      <PageHeader title="Activity" sub="What happened day by day, and how well suggestions match where you file things." />
+      <Tabs defaultValue="journal">
         <TabsList className="mb-6">
+          <TabsTrigger value="journal">Journal</TabsTrigger>
           <TabsTrigger value="accuracy">Accuracy</TabsTrigger>
           <TabsTrigger value="predictions">Predictions</TabsTrigger>
           <TabsTrigger value="log">Log</TabsTrigger>
         </TabsList>
+        <TabsContent value="journal"><Journal /></TabsContent>
         <TabsContent value="accuracy"><Accuracy /></TabsContent>
         <TabsContent value="predictions"><Predictions /></TabsContent>
         <TabsContent value="log"><Log /></TabsContent>
       </Tabs>
     </>
+  );
+}
+
+type Range = "7" | "30" | "90";
+
+function Journal() {
+  const [range, setRange] = useState<Range>("30");
+  const q = usePoll(() => api.journal(Number(range)), 60_000, [range]);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(q.data?.text ?? ""); toast.success("Copied the journal as text"); }
+    catch { toast.error("Could not copy"); }
+  };
+  const d = q.data;
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center gap-3">
+        <Segmented label="Period" value={range} onChange={setRange}
+          options={[{ value: "7", label: "Last 7 days" }, { value: "30", label: "30 days" }, { value: "90", label: "90 days" }]} />
+        <Button variant="outline" size="sm" className="ml-auto" onClick={copy} disabled={!d}><Copy /> Copy as text</Button>
+      </div>
+      {q.error && !d && <LoadError error={q.error} onRetry={q.reload} />}
+      {!d && !q.error && <ListSkeleton rows={4} h="h-24" />}
+      {d && (
+        <>
+          <Card className="grid grid-cols-5 gap-4 p-5 max-[1100px]:grid-cols-3">
+            <Stat label="Arrived" value={d.totals.arrived.toLocaleString()} />
+            <Stat label="Filed" value={d.totals.filed.toLocaleString()} sub={d.totals.auto_filed > 0 ? `${d.totals.auto_filed} automatically` : undefined} />
+            <Stat label="Deleted" value={d.totals.deleted.toLocaleString()} sub={d.totals.deleted ? `${bytes(d.totals.deleted_bytes)} freed` : undefined} />
+            <Stat label="Documents added or changed" value={d.totals.worked_files.toLocaleString()} />
+            <Stat label="Active days" value={d.totals.active_days.toLocaleString()} />
+          </Card>
+          {d.folders.length > 0 && (
+            <Card className="overflow-x-auto p-5">
+              <h3 className="mb-3 text-sm font-medium">By folder</h3>
+              <table className="w-full text-sm">
+                <thead className="text-left text-xs text-muted-foreground">
+                  <tr><th className="pb-2 font-medium">Folder</th><th className="pb-2 text-right font-medium">Added or changed</th><th className="pb-2 text-right font-medium">Filed</th><th className="pb-2 text-right font-medium">Days</th></tr>
+                </thead>
+                <tbody>
+                  {d.folders.slice(0, 10).map((f) => (
+                    <tr key={f.folder} className="border-t">
+                      <td className="py-1.5"><Mono className="text-xs">{folderName(f.folder)}</Mono></td>
+                      <td className="text-right tabular">{f.worked}</td><td className="text-right tabular">{f.filed}</td><td className="text-right tabular">{f.days}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {d.folders.length > 10 && <p className="mt-2 text-xs text-muted-foreground">and {d.folders.length - 10} more folders</p>}
+            </Card>
+          )}
+          {d.days.length === 0 ? (
+            <EmptyState icon={<BookOpen />} title="Nothing recorded in this period.">The journal fills in as files arrive, get filed and change.</EmptyState>
+          ) : d.days.map((day) => <DayCard key={day.date} day={day} />)}
+          <p className="text-xs text-muted-foreground">Built from what the agent already records, plus file dates. A day's 'worked on' list is complete only for days the agent was running.</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+const folderName = (f: string) => f || "(top of your folders)";
+
+function dayLabel(date: string) {
+  const [y = 0, m = 1, dd = 1] = date.split("-").map(Number);
+  const d = new Date(y, m - 1, dd);
+  const t = new Date(); t.setHours(0, 0, 0, 0);
+  const diff = Math.round((t.getTime() - d.getTime()) / 86400000);
+  const full = d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return { rel: diff === 0 ? "Today" : diff === 1 ? "Yesterday" : null, full };
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{title}</div>
+      <div className="space-y-1 text-sm">{children}</div>
+    </div>
+  );
+}
+
+const Time = ({ t }: { t: string }) => <span className="w-12 shrink-0 text-xs text-muted-foreground tabular">{t}</span>;
+
+function DayCard({ day }: { day: JournalDay }) {
+  const [showDel, setShowDel] = useState(false);
+  const [allArr, setAllArr] = useState(false);
+  const { rel, full } = dayLabel(day.date);
+  const c = day.counts;
+  const chips = [[c.arrived, "arrived"], [c.filed, "filed"], [c.deleted, "deleted"], [c.worked_files, "worked on"]] as const;
+  const arr = allArr ? day.arrived : day.arrived.slice(0, 5);
+  return (
+    <Card className="space-y-4 p-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="font-medium">{rel ?? day.weekday} <span className={cn(rel ? "font-normal text-muted-foreground" : "")}>{rel ? `${day.weekday} ${full}` : full}</span></h3>
+        <div className="ml-auto flex flex-wrap gap-1.5">
+          {chips.filter(([n]) => n > 0).map(([n, l]) => <Badge key={l} variant="muted" className="tabular">{n} {l}</Badge>)}
+        </div>
+      </div>
+      {day.worked.length > 0 && (
+        <Section title="Worked on">
+          {day.worked.map((w) => (
+            <div key={w.folder} className="flex flex-wrap items-center gap-2">
+              <Mono className="text-xs">{folderName(w.folder)}</Mono>
+              <span className="text-xs text-muted-foreground tabular">{w.count} {w.count === 1 ? "document" : "documents"}</span>
+              {w.files.slice(0, 4).map((f) => (
+                <span key={f.path} className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground" title={f.kind === "changed" ? "edited" : "added"}>
+                  {f.kind === "changed" && <span className="size-1.5 rounded-full bg-primary" aria-label="edited" />}{f.name}
+                </span>
+              ))}
+              {w.count > 4 && <span className="text-xs text-muted-foreground">+{w.count - 4} more</span>}
+            </div>
+          ))}
+        </Section>
+      )}
+      {day.filed.length > 0 && (
+        <Section title="Filed">
+          {day.filed.map((f, i) => (
+            <div key={i} className={cn("flex items-center gap-2", f.undone && "line-through decoration-muted-foreground/60 opacity-70")}>
+              <Time t={f.time} />
+              <Mono className="min-w-0 truncate text-xs" title={f.path ?? ""}>{f.name}</Mono>
+              <ArrowRight className="size-3.5 shrink-0 text-muted-foreground" />
+              <Mono className="min-w-0 truncate text-xs">{folderName(f.folder)}</Mono>
+              {f.how === "hand" && <Badge variant="muted">by hand</Badge>}
+              {f.how === "auto" && <Badge variant="info">auto</Badge>}
+              {f.undone && <Badge variant="muted">undone</Badge>}
+            </div>
+          ))}
+        </Section>
+      )}
+      {day.undone.length > 0 && (
+        <Section title="Undone">
+          {day.undone.map((u, i) => (
+            <div key={i} className="flex items-center gap-2"><Time t={u.time} /><Mono className="min-w-0 truncate text-xs">{u.name}</Mono><span className="text-xs text-muted-foreground">moved back to Downloads</span></div>
+          ))}
+        </Section>
+      )}
+      {c.deleted > 0 && (
+        <Section title="Deleted">
+          <button className="flex items-center gap-1 text-left" aria-expanded={showDel} onClick={() => setShowDel(!showDel)}>
+            <ChevronDown className={cn("size-3.5 text-muted-foreground transition-transform", showDel && "rotate-180")} />
+            {c.deleted} {c.deleted === 1 ? "file" : "files"} · {bytes(c.deleted_bytes)} to the Recycle Bin
+          </button>
+          {showDel && day.deleted.map((x, i) => (
+            <div key={i} className="flex items-center gap-2 pl-5"><Time t={x.time} /><Mono className="min-w-0 truncate text-xs" title={x.path}>{x.name}</Mono><span className="ml-auto text-xs text-muted-foreground tabular">{bytes(x.size)}</span></div>
+          ))}
+        </Section>
+      )}
+      {day.arrived.length > 0 && (
+        <Section title="Arrived">
+          {arr.map((a, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Time t={a.time} />
+              <Mono className="min-w-0 truncate text-xs" title={a.path}>{a.name}</Mono>
+              <span className="text-xs text-muted-foreground tabular">{bytes(a.size)}</span>
+              {a.suggested && <span className="min-w-0 truncate text-xs text-muted-foreground">→ <span className="path">{a.suggested}</span></span>}
+              {!a.still_there && <span className="ml-auto shrink-0 text-xs text-muted-foreground">no longer in Downloads</span>}
+            </div>
+          ))}
+          {day.arrived.length > 5 && !allArr && <Button variant="ghost" size="sm" onClick={() => setAllArr(true)}>Show all {c.arrived}</Button>}
+        </Section>
+      )}
+    </Card>
   );
 }
 

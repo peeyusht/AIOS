@@ -33,7 +33,7 @@ own `#/inbox`-style routing, so it runs unchanged as a static page.
    those shapes). When a page shows wrong or missing real data, fix the mapping there.
 3. `npm run build`, then open every page against the running agent and look at the browser console.
 4. Any fix made locally must be sent back to Lovable as an exact change, or the next copy loses it.
-   Last copied Lovable commit: `62a532b` (Library page, Library settings, three Inbox wording fixes).
+   Last copied Lovable commit: `a16c140` (Journal tab on the Activity page; earlier: Library page, Inbox wording fixes).
    No local changes are waiting to be sent.
 
 ## Rules the UI must keep

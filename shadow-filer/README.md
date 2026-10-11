@@ -251,6 +251,14 @@ The Watch page reads the text the search index already holds; it opens no file a
   spreadsheets are not flagged unless they are written like the real thing or named as such.
 Both are in Settings › Document watch (on/off, days ahead, how long passed dates stay listed).
 
+## Work journal
+Activity › Journal is a dated record, newest day first: what arrived in Downloads, what was filed where (through
+the Inbox, automatically, or by hand in Explorer) and what was undone, what Cleanup sent to the Recycle Bin, and
+which of your folders had documents added or changed. Pick 7, 30 or 90 days; **Copy as text** gives the same
+record as plain text for a status report or a timesheet. It is put together from what the agent already
+records plus file dates; no file is opened. A file only remembers its last change, so the agent notes once a
+day which documents were added or changed: the "worked on" list is complete for days the agent was running.
+
 ## Library
 The Library page lists what you already hold. It is read-only: nothing is moved, renamed or deleted from it.
 - **Images**: firmware, OS and VM images grouped by product, with the versions you have, their size and where

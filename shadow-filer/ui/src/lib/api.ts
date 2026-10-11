@@ -1,7 +1,7 @@
 /* The single gateway to the Shadow Filer agent. Falls back to in-memory mock data when no token is present. */
 import { adaptCleanup, adaptHistory, adaptLog, adaptMoves, adaptPredictions, adaptSearchStatus, adaptSystem } from "./adapt";
 import type {
-  AutofileResponse, Decision, LibraryKind, LibraryResponse, FsCheck, FsDirs, InboxResponse, OkResponse,
+  AutofileResponse, Decision, LibraryKind, LibraryResponse, FsCheck, FsDirs, InboxResponse, JournalResponse, OkResponse,
   Raw, SaveResponse, SearchResponse, SettingsResponse, Stats, Status, WatchResponse,
 } from "./types";
 
@@ -128,6 +128,7 @@ export const api = {
     p("/api/library/dismiss", undo ? { kind, key, undo: true } : { kind, key }),
   libraryRestore: () => p("/api/library/restore", {}),
   libraryReveal: (path: string) => p("/api/library/reveal", { path }),
+  journal: (days = 30) => g<JournalResponse>("/api/journal?days=" + days),
   system: (refresh = false) => g<Raw>("/api/system" + (refresh ? "?refresh=1" : "")).then(adaptSystem),
 };
 

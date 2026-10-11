@@ -10,8 +10,8 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - Watches `%USERPROFILE%\Downloads`; PARA tree is `D:\Organized` (37 destinations at depth 2).
 - Ollama: `qwen3:4b` (filing guesses), `nomic-embed-text` (search + suggestions).
 - Console: **Inbox** (home; Waiting / Recent moves / Auto-filing), **Search**, **Cleanup**, **Watch** (Dates /
-  Sensitive files), **Library** (Images / Versions / Pictures / Installers), **Activity** (Accuracy / Predictions / Log), **Settings** (form + System + Advanced YAML).
-  Designed in Lovable.
+  Sensitive files), **Library** (Images / Versions / Pictures / Installers), **Activity** (Journal / Accuracy /
+  Predictions / Log), **Settings** (form + System + Advanced YAML). Designed in Lovable.
 
 | File | Role |
 |---|---|
@@ -22,6 +22,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 | `origin.py` | Phase 4: where a download came from (Zone.Identifier mark) as a filing signal; in memory only |
 | `watch.py` | Phase 5: dates that matter (expiry, due, valid until) and sensitive files in Downloads, read from `search.db` text; read-only |
 | `library.py` | Phase 6: firmware/VM catalogue, document version chains, look-alike pictures, program signatures; read-only, report in `library_report.json` |
+| `journal.py` | Phase 7: work journal (Activity › Journal): per day, what arrived, was filed, was deleted, and which folders had documents added or changed. Built from existing tables + file dates; writes only its own `journal_touch` table |
 | `mover.py` | the only code that moves files; journal + undo |
 | `autofile.py` | Phase 3 auto-filing, per-folder trust from the user's Inbox decisions |
 | `cleanup.py` | Cleanup recommendations + Recycle Bin delete of agreed files |
@@ -120,6 +121,13 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   bits apart and different screenshots of one window 10–17, so raising `image_distance` to 12 adds 7 groups of
   unrelated screenshots; an 8x8 fingerprint with chained matching had put 19 screenshots in one group. Programs:
   none in Downloads, 2 filed (1 not signed, 1 with no readable signature).
+- Work journal (`journal.py`, built in 0.07 s): 497 files seen in 7 days of predictions, but 418 of those rows
+  were written on 10–11 Oct by catch-up runs after reinstalling, so an arrival is dated by the file's own
+  arrival time while it is still in Downloads (91 of 123 in the last 30 days) and by the day the agent noticed
+  it only when the file is gone. Last 30 days: 123 arrived, 11 filed (3 through the Inbox, 8 by hand), 21
+  deleted (24.2 GB), 23 active days. "Worked on" was empty for the last 90 days: all 1,365 filed documents
+  carry dates from the day the tree was populated, and none was edited in place since. A file only remembers
+  its last change, which is why touches are noted daily in `journal_touch` (kept for a year).
 - Down-weighting Archive folders was measured and rejected: for filed files changed in the last year,
   similar-documents voting says "Archive" 18% of the time against 16% truly there, and any down-weight lowered
   accuracy (69% → 66%). The Finance → Frux-Technologies lean is specific to that folder's 413 old documents.
@@ -139,4 +147,6 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - The Library page only lists. It does not move the 33.6 GB of firmware/VM images out of Downloads (unpacked
   appliance folders are not something `mover.py` moves), and a version chain is found by file name only, not
   by comparing content.
-- Proposed next phase (not started): 7 work journal.
+- The work journal's "worked on" list only sees documents inside the PARA tree, and only on days the agent
+  was running (earlier days show a file's last change only). Work done in Downloads or elsewhere is not in it.
+- All seven planned phases are built. Nothing further is planned; the open items above are what is left.

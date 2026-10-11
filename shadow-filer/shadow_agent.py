@@ -757,6 +757,11 @@ def run(cfg: dict, db: DB, config_path: Path) -> None:
                         library.Runner.start(cfg, log)
                 except Exception as e:
                     log.warning("library scheduling failed: %s", e)
+                try:   # work journal: note which documents were added or changed, before a later edit hides it
+                    import journal
+                    journal.record_touches(cfg, min_gap=6 * 3600)
+                except Exception as e:
+                    log.warning("journal: %s", e)
             if time.time() - last_ping > 60:
                 ollama_ok(cfg)
                 last_ping = time.time()
