@@ -8,10 +8,11 @@ accurate rules and the model are, per category and per confidence level.
 (never overwriting, journaled, undoable), and sends files to the Recycle Bin only when you confirm on Cleanup.
 The one exception is auto-filing (Phase 3, below), which is off until you switch it on.
 
-The console (http://127.0.0.1:8765) has six places: **Inbox** (the home page: files waiting, File it / Undo,
+The console (http://127.0.0.1:8765) has seven places: **Inbox** (the home page: files waiting, File it / Undo,
 recent moves, auto-filing), **Search** (meaning + keyword search over your folders), **Cleanup** (duplicates,
 extracted archives, old installers), **Watch** (dates coming up in your documents, sensitive files left in
-Downloads), **Activity** (accuracy, predictions, log) and **Settings** (a form, system information, and the raw
+Downloads), **Library** (firmware and VM images, versions of a document, look-alike pictures, who signed your
+installers), **Activity** (accuracy, predictions, log) and **Settings** (a form, system information, and the raw
 YAML under Advanced).
 
 ## 1. Install (one time)
@@ -249,6 +250,20 @@ The Watch page reads the text the search index already holds; it opens no file a
   kind and how many, never the numbers themselves, and nothing about them is stored. Long numbers in logs and
   spreadsheets are not flagged unless they are written like the real thing or named as such.
 Both are in Settings › Document watch (on/off, days ahead, how long passed dates stay listed).
+
+## Library
+The Library page lists what you already hold. It is read-only: nothing is moved, renamed or deleted from it.
+- **Images**: firmware, OS and VM images grouped by product, with the versions you have, their size and where
+  they are. A folder an appliance was unpacked into counts as one item.
+- **Versions**: documents that are versions of one another ("_v2", "_Final", "_R1", a date in the name), newest
+  first, flagged when the copy you filed is older than one still in Downloads. Files that differ only by
+  "(1)" are listed separately as "same name": they are often different documents.
+- **Pictures**: pictures that look the same (resized, re-saved, downloaded twice), compared by a small
+  fingerprint of the picture rather than by name.
+- **Installers**: programs and installers, and whether Windows accepts the publisher's signature: signed, not
+  signed, not trusted, or changed after signing.
+A scan runs once a day (Settings › Library) or when you click Scan now; the first one takes a few seconds.
+**Hide** removes an entry from the list (not from disk); **Show** opens its folder.
 
 ## Tests
 `.venv\Scripts\python -m unittest discover -s tests` (from this folder). They run on throwaway folders and

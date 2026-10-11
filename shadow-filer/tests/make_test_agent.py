@@ -2,7 +2,8 @@
 
 It copies the code and the built UI into <target>/agent (so its search.db, cleanup report and logs are its
 own: they live next to the code), creates made-up inbox and PARA folders with fictional files, some carrying
-a "downloaded from" mark, and writes a config.yaml on port 8766.
+a "downloaded from" mark, plus made-up firmware, document versions, pictures and a program for the Library
+page, and writes a config.yaml on port 8766.
 
     python tests/make_test_agent.py <target folder> [--tiny-bin] [--proven]
     cd <target folder>/agent
@@ -76,10 +77,35 @@ w(inbox / "big_report.txt", "Quarterly report draft, version A. " * 400)
 (inbox / "big_report (1).txt").write_bytes((inbox / "big_report.txt").read_bytes())      # duplicate, over 1 KB
 w(inbox / "small_note.txt", "tiny " * 20)
 (inbox / "small_note (1).txt").write_bytes((inbox / "small_note.txt").read_bytes())      # duplicate, under 1 KB
+# Library page: firmware and an unpacked appliance, versions of one document, look-alike pictures, a program
+for name, n in (("FGT_100F-v7.4.8.M-build2795-FORTINET.out", 4000), ("FGT_100F-v7.6.2.M-build3462-FORTINET.out", 4200)):
+    (inbox / name).write_bytes(b"\0" * n)
+vm = inbox / "Northwind-NAC-9.2.1-411.ovf"
+vm.mkdir()
+(vm / "Northwind-NAC.ovf").write_bytes(b"\0" * 900)
+(vm / "disk1.vmdk").write_bytes(b"\0" * 20000)
+w(para / "1-Projects/Acme-Rollout" / "Acme rollout proposal.docx", "Proposal, first issue.")
+w(inbox / "Acme rollout proposal_v2.docx", "Proposal, second issue, with the revised timeline.")
+w(inbox / "Acme rollout proposal_v3_Final.docx", "Proposal, third and final issue, with the revised timeline and prices.")
+(inbox / "lab-tool-setup.exe").write_bytes(b"MZ" + b"\0" * 2000)   # not a real program: Windows reports it unsigned
+try:
+    from PIL import Image, ImageDraw
+    im = Image.new("RGB", (800, 600), "white")
+    d = ImageDraw.Draw(im)
+    for i in range(400):   # busy enough to be a few KB: tiny icons are not compared
+        x, y = (i * 137) % 760, (i * 251) % 560
+        d.ellipse([x, y, x + 20 + i % 60, y + 15 + i % 45], fill=((i * 18) % 255, 255 - (i * 15) % 255, (i * 60) % 255))
+    im.save(inbox / "team-photo.png")
+    im.resize((400, 300)).save(inbox / "team-photo-small.jpg")
+    im.save(para / "3-Resources/Manuals" / "team-photo.png")
+except ImportError:
+    pass
 old = time.time() - 40 * 86400   # Cleanup skips files changed in the last 10 minutes
 for p in list(inbox.rglob("*")) + list(para.rglob("*")):
     if p.is_file():
         os.utime(p, (old, old))
+for i, name in enumerate(("Acme rollout proposal_v2.docx", "Acme rollout proposal_v3_Final.docx")):
+    os.utime(inbox / name, (old + (i + 1) * 86400,) * 2)   # each version a day newer than the filed one
 (agent / "config.yaml").write_text(textwrap.dedent(f"""
     inbox_folders:
     - {inbox}

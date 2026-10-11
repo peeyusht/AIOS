@@ -1,5 +1,5 @@
 /* Entirely fictional demo data with in-memory mutations, used when no agent token is present. */
-import type { WatchDate, WatchSensitive,
+import type { WatchDate, WatchSensitive, LibraryChain, LibraryInstaller, LibraryPictureGroup, LibraryProduct, LibraryPicture,
   AutofileResponse,
   CleanupHistoryRow,
   CleanupItem,
@@ -182,6 +182,7 @@ const settingsRaw: Raw = {
   autofile: { enabled: false, min_decisions: 20, min_rate: 0.95, window: 30, min_score: 0.9, delay_minutes: 30 },
   ocr: { enabled: true, max_pdf_pages: 20, min_image_kb: 50 },
   watch: { enabled: true, soon_days: 30, keep_expired_days: 60 },
+  library: { enabled: true, scan_hours: 24, image_distance: 8, check_signatures: true },
   ui: { port: 8765 },
   telemetry_note: "kept untouched",
 };
@@ -370,7 +371,83 @@ const watchHidden = new Set<string>();
 const watchId = (path: string, kind: string, key: string) => `${kind}|${path}|${key}`;
 let watchScanned = ago(95);
 
+/* --- library --- */
+const GB = 1024 * MB;
+const lf = (src: "inbox" | "para", folder: string, name: string) => ({ path: src === "inbox" ? `${DL}\\${name}` : `${PARA}\\${folder.replace(/\//g, "\\")}\\${name}`, name, source: src, folder: src === "inbox" ? "Downloads" : folder });
+const libProducts: LibraryProduct[] = [
+  { key: "fortigate-100f", product: "FortiGate 100F", versions: ["7.6.2", "7.4.8"], size: 2 * 98 * MB, in_downloads: 2 * 98 * MB, items: [
+    { ...lf("inbox", "", "FGT_100F-v7.6.2-build3462-FORTINET.out"), is_dir: false, size: 98 * MB, files: 0, modified: ago(4 * 1440), version: "7.6.2", build: "3462" },
+    { ...lf("inbox", "", "FGT_100F-v7.4.8-build2795-FORTINET.out"), is_dir: false, size: 98 * MB, files: 0, modified: ago(60 * 1440), version: "7.4.8", build: "2795" },
+  ] },
+  { key: "northwind-nac", product: "Northwind NAC", versions: ["9.2.1", "9.1.0"], size: 3.1 * GB, in_downloads: 1.4 * GB, items: [
+    { ...lf("inbox", "", "northwind-nac-9.2.1"), is_dir: true, size: 1.4 * GB, files: 7, modified: ago(10 * 1440), version: "9.2.1", build: null },
+    { ...lf("para", "3-Resources/Vendor-Research", "northwind-nac-9.1.0.iso"), is_dir: false, size: 1.7 * GB, files: 0, modified: ago(120 * 1440), version: "9.1.0", build: null },
+  ] },
+  { key: "ubuntu", product: "ubuntu", versions: ["26.04"], size: 5.8 * GB, in_downloads: 0, items: [
+    { ...lf("para", "3-Resources/Images", "ubuntu-26.04-desktop-amd64.iso"), is_dir: false, size: 5.8 * GB, files: 0, modified: ago(170 * 1440), version: "26.04", build: null },
+  ] },
+  { key: "lab-vm", product: "Lab VM", versions: [], size: 12.4 * GB, in_downloads: 0, items: [
+    { ...lf("para", "1-Projects/Acme-Rollout/lab", "lab-vm.vhdx"), is_dir: false, size: 12.4 * GB, files: 0, modified: ago(30 * 1440), version: null, build: null },
+  ] },
+];
+const libChains: LibraryChain[] = [
+  { key: "acme-rollout-proposal", title: "acme rollout proposal", ext: ".docx", kind: "versions", filed_is_older: true, members: [
+    { ...lf("inbox", "", "Acme rollout proposal v3.docx"), size: 412_000, modified: ago(2 * 1440), label: "v3", newest: true },
+    { ...lf("inbox", "", "Acme rollout proposal v2.docx"), size: 398_000, modified: ago(9 * 1440), label: "v2", newest: false },
+    { ...lf("para", "1-Projects/Acme-Rollout", "Acme rollout proposal v1.docx"), size: 351_000, modified: ago(30 * 1440), label: "v1", newest: false },
+  ] },
+  { key: "northwind-quote", title: "northwind quote", ext: ".pdf", kind: "versions", filed_is_older: false, members: [
+    { ...lf("para", "2-Areas/Finance", "Northwind quote (final).pdf"), size: 220_000, modified: ago(12 * 1440), label: "final", newest: true },
+    { ...lf("para", "2-Areas/Finance", "Northwind quote (draft).pdf"), size: 205_000, modified: ago(20 * 1440), label: "draft", newest: false },
+  ] },
+  { key: "contoso-network-diagram", title: "contoso network diagram", ext: ".vsdx", kind: "versions", filed_is_older: false, members: [
+    { ...lf("para", "1-Projects/Acme-Rollout", "Contoso network diagram 2026-09-30.vsdx"), size: 1.1 * MB, modified: ago(11 * 1440), label: "2026-09-30", newest: true },
+    { ...lf("para", "1-Projects/Acme-Rollout", "Contoso network diagram 2026-08-14.vsdx"), size: 0.9 * MB, modified: ago(58 * 1440), label: "2026-08-14", newest: false },
+  ] },
+  { key: "statement", title: "statement", ext: ".pdf", kind: "same-name", filed_is_older: false, members: [
+    { ...lf("inbox", "", "statement.pdf"), size: 88_000, modified: ago(3 * 1440), label: "", newest: true },
+    { ...lf("para", "2-Areas/Finance", "statement.pdf"), size: 91_000, modified: ago(40 * 1440), label: "", newest: false },
+  ] },
+  { key: "invoice", title: "invoice", ext: ".pdf", kind: "same-name", filed_is_older: false, members: [
+    { ...lf("inbox", "", "invoice.pdf"), size: 64_000, modified: ago(6 * 1440), label: "", newest: true },
+    { ...lf("para", "4-Archives/Globex-Completed", "invoice.pdf"), size: 70_000, modified: ago(200 * 1440), label: "", newest: false },
+  ] },
+];
+const pic = (src: "inbox" | "para", folder: string, name: string, size: number, w: number, h: number, days: number): LibraryPicture => ({ ...lf(src, folder, name), size, w, h, modified: ago(days * 1440) });
+const libPictures: LibraryPictureGroup[] = [
+  { key: "team-photo", identical: false, members: [pic("para", "2-Areas/Team", "team-photo.jpg", 4.2 * MB, 4032, 3024, 50), pic("inbox", "", "team-photo-small.jpg", 0.6 * MB, 1600, 1200, 5)] },
+  { key: "acme-logo", identical: true, members: [pic("inbox", "", "acme-logo.png", 48_000, 800, 400, 7), pic("para", "1-Projects/Acme-Rollout/brand", "acme-logo.png", 48_000, 800, 400, 90)] },
+  { key: "whiteboard", identical: true, members: [pic("inbox", "", "IMG_2041.jpg", 3.1 * MB, 4000, 3000, 1), pic("inbox", "", "IMG_2041 (1).jpg", 3.1 * MB, 4000, 3000, 1)] },
+  { key: "office-floorplan", identical: false, members: [pic("para", "3-Resources/Office", "floorplan.png", 2.2 * MB, 2400, 1800, 120), pic("inbox", "", "floorplan-edited.jpg", 0.9 * MB, 1920, 1440, 8)] },
+];
+const libInstallers: LibraryInstaller[] = [
+  { ...lf("inbox", "", "ContosoSync-Setup-4.2.exe"), size: 84 * MB, modified: ago(3 * 1440), level: "signed", text: "Signed by Contoso Software Ltd and the signature is valid.", status: "Valid", publisher: "Contoso Software Ltd", expires: "2028-03-01", host: "downloads.contoso.example" },
+  { ...lf("inbox", "", "chart-tool-portable.exe"), size: 12 * MB, modified: ago(15 * 1440), level: "unsigned", text: "Not signed, so Windows cannot say who made it.", status: "NotSigned", publisher: "", expires: "", host: "files.example.net" },
+  { ...lf("para", "3-Resources/Tools", "northwind-agent-installer.msi"), size: 33 * MB, modified: ago(80 * 1440), level: "tampered", text: "The file was changed after it was signed.", status: "HashMismatch", publisher: "Northwind Networks", expires: "2027-06-30", host: null },
+  { ...lf("inbox", "", "driver-pack.zip"), size: 210 * MB, modified: ago(22 * 1440), level: "unknown", text: "Could not check this file.", status: "UnknownError", publisher: "", expires: "", host: null },
+];
+const libHidden = new Set<string>();
+const libRunner = { running: false, started: null as string | null, progress: null as string | null, error: null as string | null, finished: ago(180) as string | null };
+let libScanned: string | null = ago(180);
+
 const get: Record<string, Handler> = {
+  "/api/library": () => {
+    const ls = settingsRaw.library ?? { enabled: true, scan_hours: 24 };
+    const vis = <T,>(k: string, a: T[], key: (x: T) => string) => a.filter((x) => !libHidden.has(`${k}|${key(x)}`));
+    const images = vis("images", libProducts, (x) => x.key), versions = vis("versions", libChains, (x) => x.key);
+    const similar = vis("similar", libPictures, (x) => x.key), installers = vis("installers", libInstallers, (x) => x.path);
+    return {
+      enabled: ls.enabled !== false, runner: { ...libRunner }, settings: { scan_hours: ls.scan_hours ?? 24 },
+      scanned_at: libScanned, seconds: 42, files: 18_204, signatures_checked: ls.check_signatures !== false,
+      images, versions, similar, installers,
+      counts: { images: images.length, versions: versions.length, similar: similar.length, installers: installers.length },
+      dismissed: libHidden.size,
+      summary: {
+        images_bytes: images.reduce((s, x) => s + x.size, 0), images_in_downloads_bytes: images.reduce((s, x) => s + x.in_downloads, 0),
+        filed_is_older: versions.filter((x) => x.filed_is_older).length, not_signed: installers.filter((x) => x.level !== "signed").length,
+      },
+    };
+  },
   "/api/watch": (q) => {
     if (q.get("refresh")) watchScanned = iso(now());
     const ws = settingsRaw.watch ?? { enabled: true, soon_days: 30, keep_expired_days: 60 };
@@ -538,6 +615,19 @@ const get: Record<string, Handler> = {
 };
 
 const post: Record<string, Handler> = {
+  "/api/library/scan": () => {
+    if (libRunner.running) return { ok: false, message: "A scan is already running." };
+    Object.assign(libRunner, { running: true, started: iso(now()), progress: "Looking at pictures: 40 of 120", error: null });
+    setTimeout(() => { Object.assign(libRunner, { running: false, progress: null, finished: iso(now()) }); libScanned = iso(now()); }, 2000);
+    return { ok: true };
+  },
+  "/api/library/dismiss": (_q, b) => {
+    const id = `${b.kind}|${b.key}`;
+    if (b.undo) libHidden.delete(id); else libHidden.add(id);
+    return { ok: true };
+  },
+  "/api/library/restore": () => { libHidden.clear(); return { ok: true }; },
+  "/api/library/reveal": () => ({ ok: true }),
   "/api/watch/dismiss": (_q, b) => {
     const id = watchId(b.path, b.kind, b.key ?? "");
     if (b.undo) watchHidden.delete(id); else watchHidden.add(id);
