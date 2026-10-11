@@ -64,6 +64,16 @@ class SuggestTest(unittest.TestCase):
         return [(c["folder"], c["why"]) for c in sg.suggest("C:/Downloads/" + file)["candidates"]
                 if c["source"] == "name"]
 
+    def test_an_undo_refreshes_the_filed_examples(self):
+        # undo: the filed copy leaves the index and the inbox copy joins it, so the count stays the same
+        sg = self.suggester([("a", DESTS[0]), ("b", DESTS[1])])
+        sg.index.docvecs, sg.index.changes = {"x": 1, "y": 2}, 5
+        self.assertEqual(len(sg._examples()), 2)
+        sg.index.labelled.return_value = sg.index.labelled.return_value[:1]
+        self.assertEqual(len(sg._examples()), 2)       # nothing changed in the index: the kept answer
+        sg.index.changes = 7
+        self.assertEqual(len(sg._examples()), 1)
+
     def test_file_named_after_a_short_folder(self):
         sg = self.suggester()
         self.assertEqual(self.names(sg, "GR-One_FortiNAC_Activity_Sheet_09Oct2026.xlsx"),

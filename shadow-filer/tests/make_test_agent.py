@@ -4,11 +4,13 @@ It copies the code and the built UI into <target>/agent (so its search.db, clean
 own: they live next to the code), creates made-up inbox and PARA folders with fictional files, some carrying
 a "downloaded from" mark, and writes a config.yaml on port 8766.
 
-    python tests/make_test_agent.py <target folder> [--tiny-bin]
+    python tests/make_test_agent.py <target folder> [--tiny-bin] [--proven]
     cd <target folder>/agent
     <venv python> shadow_agent.py --config config.yaml run        -> http://127.0.0.1:8766
 
 --tiny-bin makes the copy pretend the Recycle Bin holds 1 KB, to exercise "too big, delete permanently".
+--proven records 20 agreed Inbox decisions for two folders (Payroll by same website, Acme-Rollout by file
+name), so auto-filing can be watched: switch it on in Settings, wait a minute, see the move, undo it.
 Files it recycles land in the real Recycle Bin; Show and Open launch Explorer / an app on the desktop.
 Stop it with Ctrl+C (or end the process on port 8766) and delete the target folder afterwards.
 """
@@ -108,5 +110,30 @@ for p in list(inbox.rglob("*")) + list(para.rglob("*")):
     rules: []
     cleanup:
       scan_hours: 0
+    autofile:
+      enabled: false
+      delay_minutes: 1
+      every_minutes: 1
     """).lstrip(), encoding="utf-8")
+
+if "--proven" in sys.argv:  # the evidence 20 real "File it" clicks would leave in the journal
+    sys.path.insert(0, str(agent))
+    import mover
+    from datetime import datetime, timedelta
+    w(inbox / "payslip-november.txt", "Payslip for November: basic pay, allowances, deductions, net pay.",
+      "portal.payroll.example")
+    w(inbox / "Acme_cutover_plan.txt", "Acme rollout cutover plan: freeze window, rollback steps, sign-off.")
+    c = mover._conn(agent / "shadow.db")
+    for folder, kind, stem, site in (("2-Areas/Payroll", "origin", "Payslip_2025", "portal.payroll.example"),
+                                     ("1-Projects/Acme-Rollout", "name", "Acme_wave", None)):
+        for i in range(1, 21):
+            dest = para / folder / f"{stem}_{i:02d}.txt"
+            w(dest, f"{stem.replace('_', ' ')} {i}: filed earlier through the Inbox.", site)
+            os.utime(dest, (old, old))
+            c.execute("INSERT INTO moves (ts, src, dest, size, sha256, folder, source, rank, top_folder, top_score, "
+                      "top_source, status) VALUES (?,?,?,?,?,?,?,1,?,NULL,?, 'moved')",
+                      ((datetime.now() - timedelta(days=30 - i)).isoformat(timespec="seconds"), str(inbox / dest.name),
+                       str(dest), dest.stat().st_size, mover.sha256_of(str(dest)), folder, kind, folder, kind))
+    c.commit()
+    c.close()
 print(f"ready: {T}\nrun:   cd {agent}  &&  python shadow_agent.py --config config.yaml run   (http://127.0.0.1:8766)")

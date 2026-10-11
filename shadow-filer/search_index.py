@@ -194,6 +194,7 @@ class Index:
 
     def __init__(self, cfg: dict, log=None, embedder=None, extract=None, ocr_fn="default"):
         self.cfg, self.log = cfg, log
+        self.changes = 0  # goes up whenever a fingerprint is added, replaced or dropped (suggest.py watches it)
         self.embed = embedder or Embedder(cfg)
         self._extract = extract
         if ocr_fn == "default":
@@ -454,6 +455,7 @@ class Index:
                 for r, v in zip(batch, vs):
                     self.conn.execute("INSERT OR REPLACE INTO docvec VALUES (?, ?)", (r["path"], v.tobytes()))
                     self.docvecs[r["path"]] = v
+                self.changes += 1
                 self.conn.commit()
             n += len(batch)
             self.state.update(done=n, current=batch[-1]["name"])
@@ -517,6 +519,7 @@ class Index:
             self.conn.execute("DELETE FROM files WHERE path=?", (path,))
             self.conn.execute("DELETE FROM docvec WHERE path=?", (path,))
             self.docvecs.pop(path, None)
+            self.changes += 1
             self.conn.commit()
             if ids:
                 drop = set(ids)
@@ -620,6 +623,7 @@ class Index:
             if dvec is not None:
                 self.conn.execute("INSERT OR REPLACE INTO docvec VALUES (?, ?)", (path, dvec.tobytes()))
                 self.docvecs[path] = dvec
+                self.changes += 1
             fts = has_fts(self.conn)
             new_ids = []
             for i, (d, v) in enumerate(zip(docs, vecs)):

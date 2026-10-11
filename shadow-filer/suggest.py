@@ -129,7 +129,8 @@ class Suggester:
 
     def _examples(self):
         """(path, folder at destination depth, fingerprint) for filed documents in valid destinations."""
-        n = len(getattr(self.index, "docvecs", {}) or {})
+        # the count alone misses an undo: one filed copy goes, one inbox copy comes, the total stays
+        n = (len(getattr(self.index, "docvecs", {}) or {}), getattr(self.index, "changes", 0))
         if self._cache is not None and n == self._cache_n and time.time() - self._cache_at < 300:
             return self._cache
         depth = self.cfg["destination_depth"]

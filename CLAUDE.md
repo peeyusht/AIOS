@@ -78,10 +78,11 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   after touching `mover.py`, `autofile.py`, `cleanup.py` or the cloud-only checks; add a test with any new rule.
 - Test file moves on throwaway folders first; never experiment on `Downloads` or `D:\Organized`.
 - To click through the console for real (File it, Undo, delete, save settings) use a throwaway agent, never the
-  live one: `python tests\make_test_agent.py <temp folder> [--tiny-bin]` builds a copy of the code with made-up
+  live one: `python tests\make_test_agent.py <temp folder> [--tiny-bin] [--proven]` builds a copy of the code with made-up
   inbox/PARA files on port 8766 (its own `search.db`, cleanup report and logs, because those live next to the
   code), then run `shadow_agent.py --config config.yaml run` in `<temp folder>\agent`. Files it recycles do
-  land in the real Recycle Bin. "Show"/"Open" launch Explorer or an app on the user's desktop: close them after.
+  land in the real Recycle Bin. `--proven` records 20 agreed decisions for two folders (and a 1-minute wait), so
+  switching auto-filing on in the copy moves four files within a minute: the way to watch auto-filing and its Undo. "Show"/"Open" launch Explorer or an app on the user's desktop: close them after.
   Screenshots of the tab sometimes stall; reading the page with JavaScript (`innerText`, clicking by text) works.
 
 ## Measured numbers (11 Oct 2026, leave-one-out on the user's filed documents)
