@@ -404,6 +404,13 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/watch":
                 import search_index, watch
                 return self._send(200, watch.report(cfg, search_index.DB_FILE, force=q.get("refresh") == "1"))
+            if u.path == "/api/journal":
+                import journal
+                try:
+                    days = int(q.get("days", "30"))
+                except ValueError:
+                    days = 30
+                return self._send(200, journal.build(cfg, days))
             if u.path == "/api/library":
                 import library
                 return self._send(200, library.view(cfg))

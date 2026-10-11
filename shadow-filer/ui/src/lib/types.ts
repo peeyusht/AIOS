@@ -389,3 +389,22 @@ export interface LibraryResponse {
   dismissed: number;
   summary: { images_bytes: number; images_in_downloads_bytes: number; filed_is_older: number; not_signed: number };
 }
+
+export interface JournalArrived { ts: string; time: string; name: string; path: string; size: number | null; still_there: boolean; suggested: string | null; }
+export interface JournalFiled { ts: string; time: string; name: string; path: string | null; size: number | null; folder: string; how: "inbox" | "auto" | "hand"; undone: boolean; }
+export interface JournalUndone { ts: string; time: string; name: string; path: string | null; size: number | null; folder: string; how: "inbox" | "auto"; }
+export interface JournalDeleted { ts: string; time: string; name: string; path: string; size: number | null; category: string; mode: string; }
+export interface JournalWorked { folder: string; count: number; files: { name: string; path: string; kind: "added" | "changed" }[]; }
+export interface JournalDay {
+  date: string;
+  weekday: string;
+  counts: { arrived: number; filed: number; auto_filed: number; undone: number; deleted: number; deleted_bytes: number; worked_files: number; worked_folders: number };
+  arrived: JournalArrived[]; filed: JournalFiled[]; undone: JournalUndone[]; deleted: JournalDeleted[]; worked: JournalWorked[];
+}
+export interface JournalResponse {
+  days_asked: number; from: string; to: string;
+  totals: { arrived: number; filed: number; auto_filed: number; undone: number; deleted: number; deleted_bytes: number; worked_files: number; active_days: number };
+  folders: { folder: string; filed: number; worked: number; days: number }[];
+  days: JournalDay[];
+  text: string;
+}

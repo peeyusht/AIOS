@@ -251,7 +251,7 @@ function Installers({ d, reveal, hide }: P) {
       ) : (
         <>
           <Strip warn={d.summary.not_signed > 0 && `${d.summary.not_signed} without a publisher Windows can vouch for`}>
-            {d.installers.length} programs and installers
+            {d.installers.length === 1 ? "1 program or installer" : `${d.installers.length} programs and installers`}
           </Strip>
           <Card className="overflow-x-auto">
             <table className="w-full text-sm">

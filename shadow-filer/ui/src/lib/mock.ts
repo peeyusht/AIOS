@@ -1,5 +1,5 @@
 /* Entirely fictional demo data with in-memory mutations, used when no agent token is present. */
-import type { WatchDate, WatchSensitive, LibraryChain, LibraryInstaller, LibraryPictureGroup, LibraryProduct, LibraryPicture,
+import type { JournalDay, JournalResponse, WatchDate, WatchSensitive, LibraryChain, LibraryInstaller, LibraryPictureGroup, LibraryProduct, LibraryPicture,
   AutofileResponse,
   CleanupHistoryRow,
   CleanupItem,
@@ -430,7 +430,94 @@ const libHidden = new Set<string>();
 const libRunner = { running: false, started: null as string | null, progress: null as string | null, error: null as string | null, finished: ago(180) as string | null };
 let libScanned: string | null = ago(180);
 
+/* ---------- Journal ---------- */
+const WD = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+function jDay(back: number, spec: {
+  arrived?: [string, string, number, number, string | null, boolean][]; // hh:mm, name, MB, _, suggested, still
+  filed?: [string, string, string, "inbox" | "auto" | "hand", boolean][];
+  undone?: [string, string, string][];
+  deleted?: [string, string, number][];
+  worked?: [string, [string, "added" | "changed"][], number?][];
+}): JournalDay {
+  const d = new Date(); d.setDate(d.getDate() - back);
+  const date = iso(d).slice(0, 10);
+  const ts = (t: string) => `${date}T${t}:00`;
+  const arrived = (spec.arrived ?? []).map(([t, n, mb, , sg, st]) => ({ ts: ts(t), time: t, name: n, path: `${DL}\\${n}`, size: Math.round(mb * MB), still_there: st, suggested: sg }));
+  const filed = (spec.filed ?? []).map(([t, n, f, how, u]) => ({ ts: ts(t), time: t, name: n, path: `${PARA}\\${f.replace(/\//g, "\\")}\\${n}`, size: 2 * MB, folder: f, how, undone: u }));
+  const undone = (spec.undone ?? []).map(([t, n, f]) => ({ ts: ts(t), time: t, name: n, path: `${DL}\\${n}`, size: MB, folder: f, how: "inbox" as const }));
+  const deleted = (spec.deleted ?? []).map(([t, n, mb]) => ({ ts: ts(t), time: t, name: n, path: `${DL}\\${n}`, size: Math.round(mb * MB), category: "installer", mode: "recycle" }));
+  const worked = (spec.worked ?? []).map(([f, files, extra]) => ({ folder: f, count: files.length + (extra ?? 0), files: files.map(([n, kind]) => ({ name: n, path: `${PARA}\\${f.replace(/\//g, "\\")}\\${n}`, kind })) }));
+  const wf = worked.reduce((a, w) => a + w.count, 0);
+  return {
+    date, weekday: WD[d.getDay()] ?? "", arrived, filed, undone, deleted, worked,
+    counts: { arrived: arrived.length, filed: filed.length, auto_filed: filed.filter((f) => f.how === "auto").length, undone: undone.length, deleted: deleted.length, deleted_bytes: deleted.reduce((a, x) => a + (x.size ?? 0), 0), worked_files: wf, worked_folders: worked.length },
+  };
+}
+const bigDel: [string, string, number][] = Array.from({ length: 21 }, (_, i) => [`14:${String(10 + i).padStart(2, "0")}`, i === 0 ? "vm-image-old.iso" : `setup-tool-${i}.exe`, i === 0 ? 18000 : 6.5 * 1024 / 20 + i * 3]);
+const journalDays: JournalDay[] = [
+  jDay(0, {
+    arrived: [["09:12", "Acme-SOW-v3.pdf", 1.2, 0, "1-Projects/Acme-Rollout/Contracts", false], ["10:40", "northwind-findings.xlsx", 0.4, 0, "1-Projects/Northwind-Audit/Findings", false], ["11:05", "screenshot-2026.png", 0.8, 0, null, true]],
+    filed: [["09:20", "Acme-SOW-v3.pdf", "1-Projects/Acme-Rollout/Contracts", "inbox", false], ["10:52", "northwind-findings.xlsx", "1-Projects/Northwind-Audit/Findings", "auto", false]],
+    worked: [["1-Projects/Acme-Rollout", [["rollout-plan.docx", "changed"], ["site-list.xlsx", "added"], ["kickoff-notes.md", "added"]]]],
+  }),
+  jDay(1, {
+    arrived: [["08:30", "invoice-contoso-0912.pdf", 0.2, 0, "2-Areas/Finance", true], ["09:01", "globex-closeout.pdf", 3, 0, "4-Archives/Globex-Completed", false], ["11:15", "vendor-brochure.pdf", 5, 0, "3-Resources/Vendor-Research", true], ["13:44", "meeting.ics", 0.01, 0, null, false], ["15:02", "photo-001.jpg", 2.4, 0, null, true], ["16:30", "report (1).pdf", 1.1, 0, null, true]],
+    filed: [["09:10", "globex-closeout.pdf", "4-Archives/Globex-Completed", "hand", false], ["13:50", "meeting.ics", "2-Areas/Finance", "inbox", true]],
+    undone: [["13:55", "meeting.ics", "2-Areas/Finance"]],
+  }),
+  jDay(3, {
+    arrived: [["10:00", "contoso-quote.pdf", 0.6, 0, "3-Resources/Vendor-Research", false]],
+    filed: [["10:15", "contoso-quote.pdf", "3-Resources/Vendor-Research", "inbox", false]],
+    worked: [["2-Areas/Finance", [["budget-2026.xlsx", "changed"]]]],
+  }),
+  jDay(5, { deleted: bigDel }),
+  jDay(8, {
+    worked: [["1-Projects/Northwind-Audit", [["scope.docx", "changed"], ["interview-notes.docx", "added"], ["evidence-01.pdf", "added"], ["evidence-02.pdf", "added"], ["evidence-03.pdf", "added"]], 2], ["", [["readme.txt", "changed"]]]],
+  }),
+  jDay(11, {
+    arrived: [["09:30", "acme-invoice-0042.pdf", 0.3, 0, "2-Areas/Finance", false], ["12:10", "northwind-agent-installer.msi", 33, 0, "3-Resources/Tools", false]],
+    filed: [["09:35", "acme-invoice-0042.pdf", "2-Areas/Finance", "auto", false], ["12:20", "northwind-agent-installer.msi", "3-Resources/Tools", "hand", false]],
+  }),
+  jDay(15, {
+    arrived: [["14:00", "globex-final-report.pdf", 4, 0, "4-Archives/Globex-Completed", false]],
+    filed: [["14:05", "globex-final-report.pdf", "4-Archives/Globex-Completed", "inbox", false]],
+    worked: [["4-Archives/Globex-Completed", [["handover.docx", "added"]]]],
+  }),
+  jDay(19, {
+    arrived: [["11:11", "contoso-pricing.xlsx", 0.5, 0, "3-Resources/Vendor-Research", true]],
+    worked: [["1-Projects/Acme-Rollout", [["risks.xlsx", "changed"], ["timeline.pptx", "changed"]]]],
+  }),
+];
+function journalFor(days: number): JournalResponse {
+  const to = new Date(), from = new Date(); from.setDate(from.getDate() - (days - 1));
+  const fromS = iso(from).slice(0, 10), toS = iso(to).slice(0, 10);
+  const ds = journalDays.filter((d) => d.date >= fromS);
+  const sum = (k: keyof JournalDay["counts"]) => ds.reduce((a, d) => a + d.counts[k], 0);
+  const fm = new Map<string, { folder: string; filed: number; worked: number; days: Set<string> }>();
+  const fe = (f: string) => fm.get(f) ?? (fm.set(f, { folder: f, filed: 0, worked: 0, days: new Set() }), fm.get(f)!);
+  for (const d of ds) {
+    for (const f of d.filed) { const e = fe(f.folder); e.filed++; e.days.add(d.date); }
+    for (const w of d.worked) { const e = fe(w.folder); e.worked += w.count; e.days.add(d.date); }
+  }
+  const folders = [...fm.values()].map((e) => ({ folder: e.folder, filed: e.filed, worked: e.worked, days: e.days.size })).sort((a, b) => b.worked + b.filed - (a.worked + a.filed));
+  const text = [`Work journal ${fromS} to ${toS}`, "", ...ds.flatMap((d) => [
+    `${d.weekday} ${d.date}`,
+    ...d.worked.map((w) => `  Worked on ${w.folder || "(top of your folders)"}: ${w.count} documents`),
+    ...d.filed.map((f) => `  ${f.time} filed ${f.name} -> ${f.folder}${f.undone ? " (undone)" : ""}`),
+    ...d.undone.map((u) => `  ${u.time} undone ${u.name}`),
+    ...(d.counts.deleted ? [`  Deleted ${d.counts.deleted} files to the Recycle Bin`] : []),
+    ...(d.counts.arrived ? [`  ${d.counts.arrived} files arrived in Downloads`] : []),
+    "",
+  ])].join("\n");
+  return {
+    days_asked: days, from: fromS, to: toS,
+    totals: { arrived: sum("arrived"), filed: sum("filed"), auto_filed: sum("auto_filed"), undone: sum("undone"), deleted: sum("deleted"), deleted_bytes: sum("deleted_bytes"), worked_files: sum("worked_files"), active_days: ds.length },
+    folders, days: ds, text,
+  };
+}
+
 const get: Record<string, Handler> = {
+  "/api/journal": (q) => journalFor(Math.max(1, Number(q.get("days")) || 30)),
   "/api/library": () => {
     const ls = settingsRaw.library ?? { enabled: true, scan_hours: 24 };
     const vis = <T,>(k: string, a: T[], key: (x: T) => string) => a.filter((x) => !libHidden.has(`${k}|${key(x)}`));
