@@ -44,7 +44,7 @@ export function InboxPage() {
 export async function undoMove(id: number, after?: () => void) {
   const r = await act(() => api.undo(id));
   if (r) {
-    toast.success(r.restored ? `Moved back to ${baseName(r.restored)}'s original place` : "Move undone");
+    toast.success(r.restored ? `${baseName(r.restored)} is back where it was` : "Move undone");
     emitInboxChanged();
     after?.();
   }
@@ -67,7 +67,11 @@ function Waiting() {
   return (
     <div className="space-y-5">
       <Notice tone="success" icon={<ShieldCheck />}>
-        <span className="font-medium">Files move only when you click File it.</span> Every move can be undone.
+        {autoOn ? (
+          <><span className="font-medium">Folders you have proven are filed for you after the waiting time.</span> Everything else moves only when you click File it. Every move can be undone.</>
+        ) : (
+          <><span className="font-medium">Files move only when you click File it.</span> Every move can be undone.</>
+        )}
       </Notice>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -426,7 +430,7 @@ function AutoFiling() {
       <Notice tone="info">
         A folder is filed automatically only after <b>{s.min_decisions}</b> decisions where you agreed with its suggestion at least <b>{pct(s.min_rate)}</b> of the time,
         counted separately for each kind of suggestion. Similar-document suggestions must also score <b>{pct(s.min_score)}</b> or more.
-        New downloads are left alone for <b>{s.delay_minutes}</b> minutes first.
+        New downloads are left alone for <b>{s.delay_minutes}</b> {s.delay_minutes === 1 ? "minute" : "minutes"} first.
       </Notice>
 
       {s.enabled && (

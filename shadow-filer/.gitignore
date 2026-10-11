@@ -10,6 +10,8 @@ __pycache__/
 *.log
 *.log.*
 cleanup_report.json
+library_report.json
+library_report.tmp
 *.tmp
 *.shadowfiler-partial
 *.before-migrate

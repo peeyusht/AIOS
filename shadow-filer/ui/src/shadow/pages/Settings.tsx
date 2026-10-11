@@ -19,7 +19,7 @@ import type { FsDirs, Raw, Rule, SettingsResponse, Status, SystemInfo } from "@/
 import { Bar, Card, Confirm, ListSkeleton, LoadError, Mono, Notice, PageHeader, Spin, act } from "../ui";
 import { FolderPicker } from "./Inbox";
 
-const SECTIONS = ["Folders", "Filing rules", "Model", "Watching", "Cleanup", "Search", "Auto-filing", "OCR", "Document watch", "Interface", "System", "Advanced"];
+const SECTIONS = ["Folders", "Filing rules", "Model", "Watching", "Cleanup", "Search", "Auto-filing", "OCR", "Document watch", "Library", "Interface", "System", "Advanced"];
 const sid = (s: string) => "set-" + s.toLowerCase().replace(/[^a-z]+/g, "-");
 
 function getPath(o: Raw, path: string) { return path.split(".").reduce<unknown>((a, k) => (a == null ? undefined : (a as Raw)[k]), o); }
@@ -147,6 +147,11 @@ export function SettingsPage({ status }: { status: Status | null }) {
             <Sw c={ctx} p="watch.enabled" label="Watch documents for dates and sensitive data" />
             <Num c={ctx} p="watch.soon_days" label="Warn this many days ahead" unit="days" min={1} max={365} />
             <Num c={ctx} p="watch.keep_expired_days" label="Keep passed dates listed for" unit="days" min={0} max={3650} />
+          </Section>
+          <Section title="Library">
+            <Sw c={ctx} p="library.enabled" label="Build the library" />
+            <Num c={ctx} p="library.scan_hours" label="Rescan every" unit="hours" min={0} max={720} hint="How often the running agent rescans. 0 = only when you click Scan now." />
+            <Sw c={ctx} p="library.check_signatures" label="Check who signed programs and installers" />
           </Section>
           <Section title="Interface">
             <Num c={ctx} p="ui.port" label="Port" min={1024} max={65535} restart />

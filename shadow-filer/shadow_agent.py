@@ -751,6 +751,12 @@ def run(cfg: dict, db: DB, config_path: Path) -> None:
                         cleanup.Runner.start(cfg, log)
                 except Exception as e:
                     log.warning("cleanup scheduling failed: %s", e)
+                try:
+                    import library
+                    if library.Runner.due(cfg):
+                        library.Runner.start(cfg, log)
+                except Exception as e:
+                    log.warning("library scheduling failed: %s", e)
             if time.time() - last_ping > 60:
                 ollama_ok(cfg)
                 last_ping = time.time()

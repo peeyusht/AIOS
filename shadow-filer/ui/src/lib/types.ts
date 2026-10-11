@@ -369,3 +369,23 @@ export interface WatchResponse {
   dismissed?: number;
   error?: string;
 }
+
+export type LibraryKind = "images" | "versions" | "similar" | "installers";
+export type LibrarySrc = "inbox" | "para";
+export interface LibraryImageItem { path: string; name: string; is_dir: boolean; size: number; files: number; source: LibrarySrc; folder: string; modified: string | null; version: string | null; build: string | null; }
+export interface LibraryProduct { key: string; product: string; versions: string[]; items: LibraryImageItem[]; size: number; in_downloads: number; }
+export interface LibraryChainMember { path: string; name: string; size: number; source: LibrarySrc; folder: string; modified: string | null; label: string; newest: boolean; }
+export interface LibraryChain { key: string; title: string; ext: string; kind: "versions" | "same-name"; filed_is_older: boolean; members: LibraryChainMember[]; }
+export interface LibraryPicture { path: string; name: string; size: number; source: LibrarySrc; folder: string; modified: string | null; w: number; h: number; distance?: number; }
+export interface LibraryPictureGroup { key: string; identical: boolean; members: LibraryPicture[]; }
+export interface LibraryInstaller { path: string; name: string; size: number; source: LibrarySrc; folder: string; modified: string | null; level: "signed" | "unsigned" | "untrusted" | "tampered" | "unknown"; text: string; status: string; publisher: string; expires: string; host: string | null; }
+export interface LibraryResponse {
+  enabled: boolean;
+  runner: { running: boolean; started: string | null; progress: string | null; error: string | null; finished: string | null };
+  settings: { scan_hours: number };
+  scanned_at: string | null; seconds?: number; files?: number; signatures_checked?: boolean;
+  images: LibraryProduct[]; versions: LibraryChain[]; similar: LibraryPictureGroup[]; installers: LibraryInstaller[];
+  counts: Record<LibraryKind, number>;
+  dismissed: number;
+  summary: { images_bytes: number; images_in_downloads_bytes: number; filed_is_older: number; not_signed: number };
+}

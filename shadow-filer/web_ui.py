@@ -347,7 +347,8 @@ class Handler(BaseHTTPRequestHandler):
                     "destinations": Ctx.dests.get() if cfg["para_root"].is_dir() else [],
                     "defaults": {"cleanup": cleanup.DEFAULTS, "search": search_index.DEFAULTS,
                                  "ocr": __import__("ocr").DEFAULTS, "autofile": __import__("autofile").DEFAULTS,
-                                 "watch": __import__("watch").DEFAULTS},
+                                 "watch": __import__("watch").DEFAULTS,
+                                 "library": __import__("library").DEFAULTS},
                     "restart_needed": Ctx.status.get("restart_needed", False),
                     "restart_keys": list(RESTART_KEYS), "config_path": str(Ctx.config_path),
                     "os": os.name})
@@ -403,6 +404,9 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/watch":
                 import search_index, watch
                 return self._send(200, watch.report(cfg, search_index.DB_FILE, force=q.get("refresh") == "1"))
+            if u.path == "/api/library":
+                import library
+                return self._send(200, library.view(cfg))
             if u.path == "/api/destinations":
                 return self._send(200, Ctx.dests.get() if cfg["para_root"].is_dir() else [])
             return self._send(404, {"error": "not found"})
@@ -477,6 +481,8 @@ class Handler(BaseHTTPRequestHandler):
             watch.dismiss(cfg_now()["database"], p, kind, key, undo=bool(body.get("undo")))
             Ctx.log.info("WATCH %s %s: %s", "restored" if body.get("undo") else "dismissed", kind, os.path.basename(p))
             return self._send(200, {"ok": True})
+        if u.path.startswith("/api/library/"):
+            return self._library_post(u.path, body)
         if u.path == "/api/ocr/selftest":
             import ocr
             if os.name != "nt":
@@ -559,6 +565,43 @@ def _cleanup_post(self, path: str, body: dict):
 
 
 Handler._cleanup_post = _cleanup_post
+
+
+def _library_post(self, path: str, body: dict):
+    """Library page. Nothing here changes a file: scan, hide or show an entry, open Explorer at a file."""
+    import library
+    cfg = Ctx.cfg
+    if path == "/api/library/scan":
+        if not library.settings(cfg)["enabled"]:
+            return self._send(400, {"ok": False, "message": "The library is switched off in Settings."})
+        started = library.Runner.start(cfg, Ctx.log)
+        return self._send(200, {"ok": True, "started": started, "runner": library.Runner.state})
+    if path == "/api/library/restore":
+        library.restore_all(cfg["database"])
+        return self._send(200, {"ok": True})
+    rep = library.load_report() or {}
+    if path == "/api/library/dismiss":
+        kind, key = body.get("kind"), str(body.get("key", ""))
+        known = kind in library.KINDS and any(library.key_of(kind, e) == key for e in rep.get(kind, []))
+        if not known:
+            return self._send(400, {"ok": False, "message": "Unknown entry. Run a new scan."})
+        library.dismiss(cfg["database"], kind, key, undo=bool(body.get("undo")))
+        return self._send(200, {"ok": True})
+    if path == "/api/library/reveal":
+        target = str(body.get("path", ""))
+        if target not in library.paths_in(rep):   # only paths from the last scan: not a way to point at any file
+            return self._send(400, {"ok": False, "message": "Unknown file."})
+        if os.name != "nt":
+            return self._send(400, {"ok": False, "message": "Only available on Windows."})
+        if not os.path.exists(target):
+            return self._send(400, {"ok": False, "message": "That file is no longer there. Run a new scan."})
+        import subprocess
+        subprocess.Popen(["explorer.exe", "/select,", target])
+        return self._send(200, {"ok": True})
+    return self._send(404, {"error": "not found"})
+
+
+Handler._library_post = _library_post
 
 
 def _search_post(self, path: str, body: dict):

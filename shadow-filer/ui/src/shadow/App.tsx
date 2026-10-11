@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
-  Activity as ActivityIcon, BellRing, Eye, EyeOff, FlaskConical, Inbox as InboxIcon, Moon, RefreshCw, Search as SearchIcon,
+  Activity as ActivityIcon, LibraryBig, BellRing, Eye, EyeOff, FlaskConical, Inbox as InboxIcon, Moon, RefreshCw, Search as SearchIcon,
   Settings as SettingsIcon, Sparkles, Sun, Trash2, WifiOff,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
@@ -18,6 +18,7 @@ import { InboxPage } from "./pages/Inbox";
 import { SearchPage } from "./pages/Search";
 import { CleanupPage } from "./pages/Cleanup";
 import { WatchPage } from "./pages/Watch";
+import { LibraryPage } from "./pages/Library";
 import { ActivityPage } from "./pages/Activity";
 import { SettingsPage } from "./pages/Settings";
 
@@ -47,6 +48,7 @@ const NAV = [
   { path: "/search", label: "Search", icon: SearchIcon },
   { path: "/cleanup", label: "Cleanup", icon: Trash2 },
   { path: "/watch", label: "Watch", icon: BellRing },
+  { path: "/library", label: "Library", icon: LibraryBig },
   { path: "/activity", label: "Activity", icon: ActivityIcon },
   { path: "/settings", label: "Settings", icon: SettingsIcon },
 ] as const;
@@ -94,6 +96,7 @@ export default function ShadowApp() {
     case "/search": page = <SearchPage />; break;
     case "/cleanup": page = <CleanupPage />; break;
     case "/watch": page = <WatchPage />; break;
+    case "/library": page = <LibraryPage />; break;
     case "/activity": page = <ActivityPage />; break;
     case "/settings": page = <SettingsPage status={s} />; break;
     default: page = <InboxPage />;

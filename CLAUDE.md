@@ -10,7 +10,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - Watches `%USERPROFILE%\Downloads`; PARA tree is `D:\Organized` (37 destinations at depth 2).
 - Ollama: `qwen3:4b` (filing guesses), `nomic-embed-text` (search + suggestions).
 - Console: **Inbox** (home; Waiting / Recent moves / Auto-filing), **Search**, **Cleanup**, **Watch** (Dates /
-  Sensitive files), **Activity** (Accuracy / Predictions / Log), **Settings** (form + System + Advanced YAML).
+  Sensitive files), **Library** (Images / Versions / Pictures / Installers), **Activity** (Accuracy / Predictions / Log), **Settings** (form + System + Advanced YAML).
   Designed in Lovable.
 
 | File | Role |
@@ -21,6 +21,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 | `suggest.py` | suggestions: rule → same website (`origin.py`) → file-name-names-one-folder → kNN over filed docs → model |
 | `origin.py` | Phase 4: where a download came from (Zone.Identifier mark) as a filing signal; in memory only |
 | `watch.py` | Phase 5: dates that matter (expiry, due, valid until) and sensitive files in Downloads, read from `search.db` text; read-only |
+| `library.py` | Phase 6: firmware/VM catalogue, document version chains, look-alike pictures, program signatures; read-only, report in `library_report.json` |
 | `mover.py` | the only code that moves files; journal + undo |
 | `autofile.py` | Phase 3 auto-filing, per-folder trust from the user's Inbox decisions |
 | `cleanup.py` | Cleanup recommendations + Recycle Bin delete of agreed files |
@@ -54,7 +55,12 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - File contents are untrusted data in model prompts.
 - `watch.py` never returns, logs or stores the numbers it finds (PAN, Aadhaar, card, account, passport): only
   the kind and a count. Keep it that way in the API, the log and any test output. It reads `search.db` only.
+- `library.py` is read-only: it lists, it never moves, renames or deletes (deleting stays with Cleanup). It
+  opens only pictures (to fingerprint them, with Pillow) and programs (Windows checks the signature); documents
+  and firmware/VM images are judged by name, size and date alone. "Show" opens Explorer only for a path the
+  last scan listed. File paths reach PowerShell on standard input, never on the command line.
 - Never commit personal data: `*.db`, logs (including rotated `shadow.log.1`…), `cleanup_report.json`,
+  `library_report.json`,
   `config.yaml` (see `.gitignore`).
   `search.db` holds extracted text from personal documents (PAN, insurance, contracts).
 
@@ -106,6 +112,14 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   card data). The first cut flagged 67: Aadhaar/card "hits" in logs and spreadsheets were chance matches (1
   random number in 10 passes the checksum), so a number now also needs the usual grouping or a naming word
   nearby, and only a person's PAN counts (4th letter P), not the company PANs printed on invoices.
+- Library (`library.py`, 862 files in Downloads + 1,368 filed; first scan 3 s, repeat 0.1 s): 45 firmware/VM
+  files (33.6 GB, all in Downloads) make 8 products. 59 version chains: 43 named as versions (v2, final, R1, a
+  date), 16 "(1)"-style re-downloads with different content, which are mostly different documents under one
+  name and are a separate kind; in 2 chains the filed copy is older than one in Downloads. Pictures: 30
+  look-alike groups among 255 at distance 8 of 256 bits (11 are same-size copies). Real resizes measured 0–9
+  bits apart and different screenshots of one window 10–17, so raising `image_distance` to 12 adds 7 groups of
+  unrelated screenshots; an 8x8 fingerprint with chained matching had put 19 screenshots in one group. Programs:
+  none in Downloads, 2 filed (1 not signed, 1 with no readable signature).
 - Down-weighting Archive folders was measured and rejected: for filed files changed in the last year,
   similar-documents voting says "Archive" 18% of the time against 16% truly there, and any down-weight lowered
   accuracy (69% → 66%). The Finance → Frux-Technologies lean is specific to that folder's 413 old documents.
@@ -122,5 +136,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   change. A search is still seconds, mostly the Ollama embedding call.
 - Document watch has no notification outside the console (no Windows toast, no email): the user has to open
   the Watch page or see the sidebar badge.
-- Proposed next phases (not started): 6 library and hygiene (firmware/VM library, version chains, near-duplicate
-  images, Authenticode checks), 7 work journal.
+- The Library page only lists. It does not move the 33.6 GB of firmware/VM images out of Downloads (unpacked
+  appliance folders are not something `mover.py` moves), and a version chain is found by file name only, not
+  by comparing content.
+- Proposed next phase (not started): 7 work journal.
