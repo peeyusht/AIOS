@@ -1,9 +1,9 @@
-# Fleet server (phases 1 and 2)
+# Fleet server (phases 1 to 3)
 
 The central server from `docs/architecture.md`: PCs enrol and report what is installed; the server judges
 each one (known flaws, end of support, the Cyber Essentials control areas); an administrator sees the
-fleet, each device and the evidence report in a web console. No sign-in with named users yet (phase 3), no
-remote actions (phase 5).
+fleet, each device and the evidence report in a web console, signed in under their own name with a password
+and an authenticator code. No remote actions (phase 5).
 
 Everything here runs in containers and is started with Docker Compose. Nothing needs to be installed on the
 machine except Docker.
@@ -32,14 +32,26 @@ the agent), so run compose from this folder and let it find the Dockerfile.
 Both ports are reachable from this machine only. `docker compose down` stops everything and keeps the data;
 `docker compose down -v` also deletes the database.
 
-## First organisation, key and token
+## First organisation and its first owner
 ```
 docker compose run --rm manage org "Acme Ltd"
-docker compose run --rm manage admin-key "Acme Ltd"          # console key, shown once
-docker compose run --rm manage token "Acme Ltd" --uses 5     # enrolment token, shown once
+docker compose run --rm manage user "Acme Ltd" jo@acme.example     # prints a one-time link to set a password
 docker compose run --rm manage list
 ```
-Open http://127.0.0.1:8770 and paste the console key.
+Open the printed link, set a password, sign in, and set up the second factor with an authenticator app
+(the page shows a code to scan and then eight recovery codes, once). Everything else is done in the
+console under **Access**: more people, share links, enrolment tokens for PCs. The same command gives a
+new link to someone who forgot their password; `--role admin|auditor` for other roles.
+
+| Role | May |
+|---|---|
+| auditor | read everything |
+| admin | also accept a failing check, record declarations, make share links and enrolment tokens, remove a device |
+| owner | also add people, change roles, switch a person off, reset a password or second factor |
+
+Still there from phase 1, for scripts: `manage admin-key "Acme Ltd"` prints an organisation key (send it as
+`Authorization: Bearer ...`; it can read and change nothing), and `manage token "Acme Ltd" --uses 5` prints
+an enrolment token.
 
 ## Enrol a PC
 The agent is the one part that is not a container and cannot be: it has to read the PC's own registry,
@@ -81,12 +93,20 @@ roles.
   BYPASSRLS, for the three functions that turn a presented secret into an organisation and the one that
   tells the worker which devices are waiting (ids only). The worker's role cannot read keys, tokens or the
   audit log; the API's role cannot create a judgement.
-- **Secrets:** tokens and keys are random; only their SHA-256 is stored. Each is printed once.
+- **Secrets:** tokens and keys are random; only their SHA-256 is stored. Each is shown once. Passwords are
+  scrypt hashes. The authenticator secret has to be readable to check a code, so it is encrypted with
+  `FLEET_SECRET_KEY`, which is given to the API container and never stored in the database.
+- **Signing in:** the second factor is required for everyone; a code works once; five wrong tries lock the
+  account for 15 minutes; the session is a cookie the page cannot read (HttpOnly, SameSite=Strict, Secure
+  over https) and every change also needs a header only the console adds. A share link opens one
+  read-only page and nothing else.
 - **Requests:** 5 MB limit, only the five known kinds of report, strict response headers (scripts only from
-  the server itself). The console keeps the key for the browser tab only.
+  the server itself).
 - **Containers:** the API runs as an unprivileged user; the image that serves requests carries no test code.
 
 ## Not for production yet
-Default passwords (set `POSTGRES_PASSWORD`, `FLEET_APP_PASSWORD` and `FLEET_WORKER_PASSWORD` in a `.env` file next to
-`docker-compose.yml`), no TLS, no rate limiting, no backups, console access by a shared key instead of named
-users. These are phases 3 and 6.
+A default `FLEET_SECRET_KEY` that is in this repository (make your own with `docker compose run --rm manage
+secret-key`, put it in `.env`, and keep a copy: without it nobody's second factor can be checked and each
+person needs theirs reset). Default passwords (set `POSTGRES_PASSWORD`, `FLEET_APP_PASSWORD` and `FLEET_WORKER_PASSWORD` in a `.env` file next to
+`docker-compose.yml`), no TLS (the session cookie is only marked Secure over https), no rate limiting by
+network address, no backups, no email for set-password links. These are phase 6.

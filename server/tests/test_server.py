@@ -1,4 +1,4 @@
-"""Fleet server, phases 1 and 2. Runs against a throwaway database in the PostgreSQL started by docker-compose
+"""Fleet server, phases 1 to 3. Runs against a throwaway database in the PostgreSQL started by docker-compose
 (127.0.0.1:5433); skipped when that is not running. The important tests are the ones that try to cross from
 one organisation to another: through the API, and directly in SQL as the application's database role.
 Phase 2 is judged against a tiny made-up copy of the reference lists; nothing is downloaded."""
@@ -6,6 +6,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 from contextlib import contextmanager
@@ -32,10 +33,11 @@ if READY:
     base = OWNER.rsplit("/", 1)[0]
     os.environ["DATABASE_URL_OWNER"] = f"{base}/{NAME}"
     os.environ["DATABASE_URL"] = f"postgresql://fleet_app:{APP_PASSWORD}@{base.split('@', 1)[1]}/{NAME}"
+    os.environ.setdefault("FLEET_SECRET_KEY", "ZGV2ZWxvcGVyLXBjLW9ubHktbm90LWEtc2VjcmV0ISE=")
     from fastapi.testclient import TestClient
     import cve
     import eol
-    from app import db, manage, worker
+    from app import auth, db, manage, people, worker
     from app.main import app, MAX_BODY
 
 
@@ -50,6 +52,29 @@ def as_worker():
     finally:
         db.close()
         os.environ["DATABASE_URL"] = api_url
+
+
+PASSWORD = "four unrelated words here"
+
+
+def code(secret: str, ahead: int = 0) -> str:
+    return auth.totp_at(secret, int(time.time() // 30) + ahead)
+
+
+def person(org, email: str, role: str) -> tuple:
+    """A person who has set a password and a second factor and is signed in: (their browser, the authenticator
+    secret, their recovery codes)."""
+    with manage.connect() as c:
+        token = people.add_first_user(c, org, email, role)
+    browser = TestClient(app)
+    assert browser.post("/api/v1/auth/setup", json={"token": token, "password": PASSWORD}).status_code == 200
+    assert browser.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD}).json() == {"stage": "mfa_setup"}
+    secret = browser.get("/api/v1/auth/mfa/setup").json()["secret"]
+    used = code(secret)
+    done = browser.post("/api/v1/auth/mfa/setup", json={"code": used}).json()
+    assert done["stage"] == "ok" and len(done["recovery_codes"]) == 8, done
+    browser.headers["X-Fleet-Console"] = "1"
+    return browser, secret, done["recovery_codes"] + [used]
 
 
 def make_lists(folder: Path) -> dict:
@@ -113,6 +138,8 @@ class ServerTest(unittest.TestCase):
             cls.token_b = manage.create_token(c, cls.org_b, uses=1)
             cls.expired = manage.create_token(c, cls.org_a, uses=5, days=-1)
         cls.http = TestClient(app)
+        cls.owner_a, cls.secret_a, cls.codes_a = person(cls.org_a, "olive@acme.example", "owner")
+        cls.owner_b, _, _ = person(cls.org_b, "bo@globex.example", "owner")
         cls.tmp = Path(tempfile.mkdtemp(prefix="fleet-test-"))
         cls.lists = make_lists(cls.tmp)
         cls.today = datetime.now(timezone.utc).date()
@@ -248,11 +275,12 @@ class ServerTest(unittest.TestCase):
 
     def test_6_exceptions_declarations_and_the_report(self):
         url = f"/api/v1/devices/{self.dev_a}/exceptions"
-        self.assertEqual(self.http.post(url, headers=self.auth(self.admin_b), json={"check_id": "fw.on", "reason": "x"}).status_code, 404)
+        self.assertEqual(self.owner_b.post(url, json={"check_id": "fw.on", "reason": "x"}).status_code, 404)
         self.assertEqual(self.http.post(url, headers=self.auth(self.key_a), json={"check_id": "fw.on", "reason": "x"}).status_code, 401)
-        for bad, code in (({"check_id": "'; DROP", "reason": "x"}, 400), ({"check_id": "zz.nothing", "reason": "x"}, 404)):
-            self.assertEqual(self.http.post(url, headers=self.auth(self.admin_a), json=bad).status_code, code)
-        ok = self.http.post(url, headers=self.auth(self.admin_a), json={"check_id": "fw.on", "reason": "Behind the office firewall until March."})
+        self.assertEqual(self.http.post(url, headers=self.auth(self.admin_a), json={"check_id": "fw.on", "reason": "x"}).status_code, 403)   # a key only reads
+        for bad, status in (({"check_id": "'; DROP", "reason": "x"}, 400), ({"check_id": "zz.nothing", "reason": "x"}, 404)):
+            self.assertEqual(self.owner_a.post(url, json=bad).status_code, status)
+        ok = self.owner_a.post(url, json={"check_id": "fw.on", "reason": "Behind the office firewall until March."})
         self.assertEqual(ok.status_code, 200, ok.text)
         d = self.http.get(f"/api/v1/devices/{self.dev_a}", headers=self.auth(self.admin_a)).json()
         fw = next(g for g in d["compliance"]["controls"] if g["key"] == "firewalls")
@@ -267,13 +295,13 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(worker.round_(self.lists, self.today), 1)
         d = self.http.get(f"/api/v1/devices/{self.dev_a}", headers=self.auth(self.admin_a)).json()
         self.assertEqual(d["judgement"]["compliance"]["accepted"], 1)
-        self.assertEqual(self.http.post(url, headers=self.auth(self.admin_a), json={"check_id": "fw.on", "reason": ""}).status_code, 200)
+        self.assertEqual(self.owner_a.post(url, json={"check_id": "fw.on", "reason": ""}).status_code, 200)
         d = self.http.get(f"/api/v1/devices/{self.dev_a}", headers=self.auth(self.admin_a)).json()
         self.assertEqual((d["judgement"]["compliance"]["accepted"], d["judgement"]["compliance"]["areas"]["firewalls"]), (0, "fail"))
         # declarations belong to the organisation and are only ever shown as declared
         for bad in ({"key": "nonsense", "answer": "yes"}, {"key": "mfa", "answer": "maybe"}):
-            self.assertEqual(self.http.post("/api/v1/declarations", headers=self.auth(self.admin_a), json=bad).status_code, 400)
-        self.assertEqual(self.http.post("/api/v1/declarations", headers=self.auth(self.admin_a), json={"key": "mfa", "answer": "yes", "note": "all mailboxes"}).status_code, 200)
+            self.assertEqual(self.owner_a.post("/api/v1/declarations", json=bad).status_code, 400)
+        self.assertEqual(self.owner_a.post("/api/v1/declarations", json={"key": "mfa", "answer": "yes", "note": "all mailboxes"}).status_code, 200)
         said = {q["key"]: q for q in self.http.get("/api/v1/fleet", headers=self.auth(self.admin_a)).json()["declared"]}
         self.assertEqual((said["mfa"]["answer"], said["mfa"]["note"], said["backups"]["answer"]), ("yes", "all mailboxes", None))
         other = {q["key"]: q["answer"] for q in self.http.get("/api/v1/fleet", headers=self.auth(self.admin_b)).json()["declared"]}
@@ -288,10 +316,13 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.http.get(f"/api/v1/devices/{self.dev_a}/report", headers=self.auth(self.admin_b)).status_code, 404)
         actions = [e["action"] for e in self.http.get("/api/v1/audit", headers=self.auth(self.admin_a)).json()["entries"]]
         self.assertEqual(actions[:3], ["declaration.changed", "check.acceptance_withdrawn", "check.accepted"])
+        who = self.http.get("/api/v1/audit", headers=self.auth(self.admin_a)).json()["entries"][0]["actor"]
+        self.assertEqual(who, "user:olive@acme.example")                    # a named person, not a shared key
 
     def test_7_judgements_stay_inside_their_organisation(self):
         with db.anon() as c:
-            for table in ("judgements", "compliance_history", "declarations", "exceptions"):
+            for table in ("judgements", "compliance_history", "declarations", "exceptions", "users", "sessions", "setup_links",
+                          "recovery_codes", "share_links"):
                 self.assertEqual(c.execute(f"SELECT count(*) AS n FROM {table}").fetchone()["n"], 0, table)
         with db.org(self.org_b) as c:
             self.assertEqual(c.execute("SELECT count(*) AS n FROM judgements").fetchone()["n"], 1)
@@ -311,6 +342,142 @@ class ServerTest(unittest.TestCase):
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):  # the worker cannot touch keys or the audit log
                 with db.org(self.org_a) as c:
                     c.execute("SELECT count(*) FROM admin_keys")
+
+    def login(self, email, password=PASSWORD):
+        browser = TestClient(app)
+        return browser, browser.post("/api/v1/auth/login", json={"email": email, "password": password})
+
+    def test_8_signing_in(self):
+        refused = self.login("olive@acme.example", "not the password")[1]
+        nobody = self.login("nobody@acme.example")[1]
+        self.assertEqual((refused.status_code, nobody.status_code, refused.json(), "set-cookie" in refused.headers), (401, 401, nobody.json(), False))
+        browser, r = self.login("olive@acme.example")
+        self.assertEqual(r.json(), {"stage": "mfa"})
+        self.assertTrue("HttpOnly" in r.headers["set-cookie"] and "SameSite=strict" in r.headers["set-cookie"])
+        # the password alone opens nothing
+        self.assertEqual(browser.get("/api/v1/devices").status_code, 401)
+        self.assertEqual(browser.get("/api/v1/auth/me").json(), {"stage": "mfa", "email": "olive@acme.example"})
+        self.assertEqual(browser.get("/api/v1/auth/mfa/setup").status_code, 400)                  # the secret is not shown a second time
+        self.assertEqual(browser.post("/api/v1/auth/mfa", json={"code": "000000"}).status_code, 401)
+        self.assertEqual(browser.post("/api/v1/auth/mfa", json={"code": self.codes_a[-1]}).status_code, 401)        # the code used at set-up: good once
+        self.assertEqual(browser.post("/api/v1/auth/mfa", json={"code": code(self.secret_a, 1)}).json(), {"stage": "ok"})
+        me = browser.get("/api/v1/auth/me").json()
+        self.assertEqual((me["stage"], me["role"], me["organisation"]), ("ok", "owner", "Acme Ltd"))
+        self.assertEqual(len(browser.get("/api/v1/devices").json()["devices"]), 2)
+        # a change needs the console's own header as well as the cookie
+        self.assertEqual(browser.post("/api/v1/declarations", json={"key": "backups", "answer": "yes"}).status_code, 403)
+        # a recovery code works once
+        b2, _ = self.login("olive@acme.example")
+        self.assertEqual(b2.post("/api/v1/auth/mfa", json={"code": self.codes_a[0]}).json(), {"stage": "ok", "recovery_left": 7})
+        b3, _ = self.login("olive@acme.example")
+        self.assertEqual(b3.post("/api/v1/auth/mfa", json={"code": self.codes_a[0]}).status_code, 401)
+        # signing out ends that session only; an idle session ends by itself
+        self.assertEqual(b2.post("/api/v1/auth/logout").status_code, 200)
+        self.assertEqual((b2.get("/api/v1/devices").status_code, browser.get("/api/v1/devices").status_code), (401, 200))
+        with manage.connect() as c:
+            c.execute("UPDATE sessions SET last_seen = now() - interval '3 hours' WHERE org_id = %s", (self.org_a,))
+        self.assertEqual((browser.get("/api/v1/devices").status_code, self.owner_a.get("/api/v1/devices").status_code), (401, 401))
+        type(self).owner_a = b4 = self.login("olive@acme.example")[0]
+        self.assertEqual(b4.post("/api/v1/auth/mfa", json={"code": self.codes_a[1]}).status_code, 200)
+        b4.headers["X-Fleet-Console"] = "1"
+        # nothing that opens a door is stored as it is
+        with manage.connect() as c:
+            stored = " ".join(str(x) for row in c.execute(
+                "SELECT password_hash || ' ' || coalesce(totp_secret, '') FROM users UNION ALL SELECT token_hash FROM sessions "
+                "UNION ALL SELECT code_hash FROM recovery_codes UNION ALL SELECT token_hash FROM setup_links") for x in row)
+        for secret in (PASSWORD, self.secret_a, self.codes_a[2], b4.cookies.get(auth.COOKIE)):
+            self.assertNotIn(secret, stored)
+        # five wrong passwords lock the account for a while, even for the right one
+        with manage.connect() as c:
+            token = people.add_first_user(c, self.org_a, "lee@acme.example", "auditor")
+        self.assertEqual(self.http.post("/api/v1/auth/setup", json={"token": token, "password": "short"}).status_code, 400)
+        self.assertEqual(self.http.post("/api/v1/auth/setup/check", json={"token": token}).json()["email"], "lee@acme.example")
+        self.assertEqual(self.http.post("/api/v1/auth/setup", json={"token": token, "password": PASSWORD}).status_code, 200)
+        self.assertEqual(self.http.post("/api/v1/auth/setup", json={"token": token, "password": PASSWORD + "!"}).status_code, 404)      # the link works once
+        for _ in range(auth.MAX_FAILED):
+            self.assertEqual(self.login("lee@acme.example", "a wrong guess")[1].status_code, 401)
+        self.assertEqual(self.login("lee@acme.example")[1].status_code, 401)
+        log = b4.get("/api/v1/audit").json()["entries"]
+        self.assertEqual((log[0]["action"], log[0]["actor"]), ("signin.locked", "user:lee@acme.example"))
+        with manage.connect() as c:
+            c.execute("UPDATE users SET locked_until = now() - interval '1 minute' WHERE email = 'lee@acme.example'")
+        self.assertEqual(self.login("lee@acme.example")[1].json(), {"stage": "mfa_setup"})
+
+    def test_9_roles_people_and_share_links(self):
+        boss = self.owner_a
+        added = boss.post("/api/v1/users", json={"email": "Ada@Acme.example", "name": "Ada", "role": "admin"}).json()
+        self.assertTrue(added["ok"] and added["setup_token"].startswith("sfu_"))
+        self.assertEqual(boss.post("/api/v1/users", json={"email": "bo@globex.example", "role": "auditor"}).status_code, 400)       # taken, in another organisation
+        self.assertEqual(boss.post("/api/v1/users", json={"email": "not an address", "role": "admin"}).status_code, 400)
+        self.assertEqual(self.http.post("/api/v1/auth/setup", json={"token": added["setup_token"], "password": PASSWORD}).status_code, 200)
+        ada = self.login("ada@acme.example")[0]
+        secret = ada.get("/api/v1/auth/mfa/setup").json()
+        self.assertTrue(secret["qr"].startswith("data:image/svg+xml") and secret["secret"] in secret["uri"])
+        self.assertEqual(ada.post("/api/v1/auth/mfa/setup", json={"code": code(secret["secret"])}).json()["stage"], "ok")
+        ada.headers["X-Fleet-Console"] = "1"
+        vera, _, _ = person(self.org_a, "vera@acme.example", "auditor")
+        # an auditor reads; an admin also records; only an owner manages people
+        self.assertEqual((vera.get("/api/v1/fleet").status_code, vera.get("/api/v1/report").status_code), (200, 200))
+        for url, body in (("/api/v1/declarations", {"key": "backups", "answer": "yes"}), ("/api/v1/share-links", {"label": "x"}),
+                          ("/api/v1/tokens", {}), (f"/api/v1/devices/{self.dev_a}/remove", {}), ("/api/v1/users", {"email": "x@acme.example", "role": "owner"})):
+            self.assertEqual(vera.post(url, json=body).status_code, 403, url)
+        self.assertEqual((vera.get("/api/v1/access").json()["users"], vera.get("/api/v1/access").json()["me"]["role"]), ([], "auditor"))
+        self.assertEqual(ada.post("/api/v1/declarations", json={"key": "backups", "answer": "yes"}).status_code, 200)
+        self.assertEqual(ada.post("/api/v1/users", json={"email": "x@acme.example", "role": "owner"}).status_code, 403)
+        self.assertEqual(ada.post(f"/api/v1/users/{added['id']}", json={"action": "role", "role": "owner"}).status_code, 403)       # nor promote herself
+        people_a = {u["email"]: u for u in boss.get("/api/v1/access").json()["users"]}
+        self.assertEqual(sorted(people_a), ["ada@acme.example", "lee@acme.example", "olive@acme.example", "vera@acme.example"])
+        self.assertEqual((people_a["ada@acme.example"]["role"], people_a["ada@acme.example"]["second_factor"], people_a["lee@acme.example"]["second_factor"]),
+                         ("admin", True, False))
+        self.assertEqual([u["email"] for u in self.owner_b.get("/api/v1/access").json()["users"]], ["bo@globex.example"])
+        me = boss.get("/api/v1/access").json()["me"]["id"]
+        self.assertEqual(boss.post(f"/api/v1/users/{me}", json={"action": "disable"}).status_code, 400)                # not yourself
+        self.assertEqual(self.owner_b.post(f"/api/v1/users/{added['id']}", json={"action": "disable"}).status_code, 404)  # not another organisation's
+        self.assertEqual(boss.post("/api/v1/users/nonsense", json={"action": "disable"}).status_code, 404)
+        vera_id = people_a["vera@acme.example"]["id"]
+        self.assertEqual(boss.post(f"/api/v1/users/{vera_id}", json={"action": "disable"}).status_code, 200)
+        self.assertEqual((vera.get("/api/v1/fleet").status_code, self.login("vera@acme.example")[1].status_code), (401, 401))
+        self.assertEqual(boss.post(f"/api/v1/users/{vera_id}", json={"action": "enable"}).status_code, 200)
+        self.assertEqual(boss.post(f"/api/v1/users/{vera_id}", json={"action": "reset_second_factor"}).status_code, 200)
+        self.assertEqual(self.login("vera@acme.example")[1].json(), {"stage": "mfa_setup"})
+        again = boss.post(f"/api/v1/users/{vera_id}", json={"action": "reset_password"}).json()
+        self.assertEqual(self.http.post("/api/v1/auth/setup", json={"token": again["setup_token"], "password": PASSWORD + " again"}).status_code, 200)
+        self.assertEqual((self.login("vera@acme.example")[1].status_code, self.login("vera@acme.example", PASSWORD + " again")[1].status_code), (401, 200))
+        # a share link: the evidence, read-only, for someone without an account
+        link = ada.post("/api/v1/share-links", json={"label": "Broker, renewal 2027", "days": 14}).json()["share_token"]
+        seen = self.http.get("/api/v1/shared", headers={"Authorization": "Share " + link})
+        self.assertEqual(seen.status_code, 200, seen.text)
+        d = seen.json()
+        self.assertEqual((d["organisation"], d["label"], sorted(x["name"] for x in d["device_list"]), d["judged"]), ("Acme Ltd", "Broker, renewal 2027", ["DEMO-PC", "SECOND-PC"], 1))
+        self.assertTrue("Security posture of Acme Ltd" in d["text"] and "GLOBEX" not in seen.text and len(d["device_list"][0]["compliance"]["controls"]) == 5)
+        for url in ("/api/v1/devices", "/api/v1/fleet", "/api/v1/audit", "/api/v1/access"):                              # it opens that one page and nothing else
+            self.assertEqual(self.http.get(url, headers={"Authorization": "Share " + link}).status_code, 401, url)
+            self.assertEqual(self.http.get(url, headers=self.auth(link)).status_code, 401, url)
+        listed = ada.get("/api/v1/access").json()["share_links"][0]
+        self.assertEqual((listed["label"], listed["state"], listed["opened"], listed["created_by"]), ("Broker, renewal 2027", "active", 1, "user:ada@acme.example"))
+        self.assertEqual(self.owner_b.post(f"/api/v1/share-links/{listed['id']}/revoke").status_code, 404)
+        self.assertEqual(ada.post(f"/api/v1/share-links/{listed['id']}/revoke").status_code, 200)
+        self.assertEqual(self.http.get("/api/v1/shared", headers={"Authorization": "Share " + link}).status_code, 401)
+        self.assertEqual(self.http.get("/api/v1/shared", headers={"Authorization": "Share sfl_made_up"}).status_code, 401)
+        with manage.connect() as c:
+            self.assertNotIn(link, " ".join(r[0] for r in c.execute("SELECT token_hash FROM share_links")))
+        # an enrolment token made in the console, and removing a device
+        token = ada.post("/api/v1/tokens", json={"label": "front desk", "uses": 1, "days": 3}).json()["enrolment_token"]
+        new = self.enrol(token, "THIRD-PC").json()["device_id"]
+        self.assertEqual(self.enrol(token, "FOURTH-PC").status_code, 403)
+        self.assertEqual(self.owner_b.post(f"/api/v1/devices/{new}/remove").status_code, 404)
+        self.assertEqual(ada.post(f"/api/v1/devices/{new}/remove").status_code, 200)
+        self.assertEqual(sorted(x["name"] for x in ada.get("/api/v1/devices").json()["devices"]), ["DEMO-PC", "SECOND-PC"])
+        # changing a password needs the current one and signs out the other browsers
+        other = self.login("ada@acme.example")[0]
+        self.assertEqual(ada.post("/api/v1/auth/password", json={"current": "wrong", "new": PASSWORD + " 2"}).status_code, 400)
+        self.assertEqual(ada.post("/api/v1/auth/password", json={"current": PASSWORD, "new": "tiny"}).status_code, 400)
+        self.assertEqual(ada.post("/api/v1/auth/password", json={"current": PASSWORD, "new": PASSWORD + " 2"}).status_code, 200)
+        self.assertEqual((ada.get("/api/v1/auth/me").json()["stage"], other.get("/api/v1/auth/me").status_code), ("ok", 401))
+        actions = [e["action"] for e in boss.get("/api/v1/audit").json()["entries"]]
+        for a in ("user.added", "user.disable", "user.reset_second_factor", "share_link.created", "share_link.withdrawn", "enrolment_token.created",
+                  "device.removed", "password.changed", "signin", "mfa.set_up"):
+            self.assertIn(a, actions)
 
 
 if __name__ == "__main__":

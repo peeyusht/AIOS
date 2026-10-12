@@ -6,9 +6,10 @@ Ollama). Wants direct, skeptical engineering; push back when something is wrong.
 
 ## What's here
 Two things. `shadow-filer/` is the agent and local console on one PC (below). `server/` is the central
-fleet server, phases 1 and 2 of `docs/architecture.md` (read that first for anything about several PCs):
+fleet server, phases 1 to 3 of `docs/architecture.md` (read that first for anything about several PCs):
 FastAPI + PostgreSQL, with enrolment and check-in, a worker that keeps the CVE and end-of-life lists and
-judges every device (flaws, end of support, the compliance checks), and a web console. The server image is
+judges every device (flaws, end of support, the compliance checks), a web console, and named people who
+sign in with a password and an authenticator code and have a role (`server/app/people.py`, `auth.py`). The server image is
 built from the repository root because it shares `cve.py`, `eol.py`, `compliance.py` and the console's
 source (`shadow-filer/ui`, second entry `src/fleet`) with the agent; `/.dockerignore` lets in those and
 nothing else. A change to those three agent modules is therefore also a change to the server: run both
@@ -127,6 +128,18 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   The server judges only what `fleet.payload()` sends (counts and true/false), so its evidence says how
   many, never who; do not widen the payload to make a server page nicer without asking. Declarations are
   always shown as declared; an accepted exception keeps its failing mark; never a certificate or a score.
+- People on the server (`server/app/people.py`, `auth.py`; don't relax without asking): the second factor
+  is required for everyone, and a session that has not given it opens nothing; passwords are scrypt hashes;
+  the authenticator secret is stored encrypted with `FLEET_SECRET_KEY`, which never goes into the database;
+  session, set-password and share tokens are stored as hashes; the session cookie is HttpOnly and
+  SameSite=Strict and every change also needs the `X-Fleet-Console` header; a code works once; five wrong
+  tries lock an account for 15 minutes; the same answer and the same work for a wrong password and an
+  unknown address. Nobody sets a password for someone else: an owner (or `manage user`) makes a one-time
+  link. An organisation key and a share link can only read, and a share link opens `/api/v1/shared` and
+  nothing else. Every change is recorded under the person's name. A handler must not raise inside
+  `db.org()` after writing something that has to stay (a failed sign-in is counted): leave the block first.
+  Each new way to turn a presented secret into an organisation is one more SECURITY DEFINER function in
+  `schema.sql` (eight now) and one more thing to test from another organisation.
 - `compliance.py` reads and judges; it changes nothing on the PC and sends nothing. It writes only its own
   tables (`compliance_history`, `compliance_declared`, `compliance_accepted`). Things it cannot measure are
   declarations by the owner and must always be shown as declared, never as measured or passed. An accepted
@@ -292,7 +305,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   kind changed on every check-in, because of a timestamp, then short-lived UDP ports (40 of 58 UDP listeners
   were in the dynamic range), then discovery ports (mDNS 5353 coming and going). With those left out,
   repeated check-ins store nothing. Server tests: 7, including reads and writes across organisations
-  refused in SQL.
+  refused in SQL (9 with phase 3: sign-in, roles, people, share links).
 - Fleet, phase 2 (12 Oct 2026): the worker's first download of the lists took about 9 minutes in the
   container (385,946 CVEs, 1,739 known exploited, 436 end-of-life products); judging this PC then takes
   0.6 s. The server's result for this PC equals the agent's own on the same day: 36 of 85 programs
@@ -333,14 +346,18 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   catalogue, not programs winget cannot identify), and nothing is updated for the user. Packaged apps have no
   size and no true install date (the package folder's creation day is shown). Changes are only known from
   the first scan on (12 Oct 2026) and only as of the day a scan noticed them.
-- Fleet server: phases 1 and 2. It runs on localhost with default passwords and no TLS, so only this PC
-  can enrol, and it has only ever held one device: the fleet views (several devices per check, versions of
-  one program across PCs) have run on made-up data in the tests only. Console access is one shared key per
-  organisation (phase 3: named users, roles). The server cannot tell "no newer versions" from "the PC's
+- Fleet server: phases 1 to 3. It runs on localhost with default passwords, a default `FLEET_SECRET_KEY`
+  and no TLS, so only this PC can enrol, and it has only ever held one device: the fleet views (several devices per check, versions of
+  one program across PCs) have run on made-up data in the tests only. Sign-in was clicked through once in
+  the browser with a throwaway account (set password, authenticator set-up, recovery codes, add a person,
+  share link, sign out and in); the user's own owner account for "Home lab" was made on 12 Oct 2026 and
+  its set-password link is in `server/local-keys.txt`. Not there: sending email (links are passed on by
+  hand), single sign-on, passkeys, a share link limited to chosen devices, deleting a person (only
+  switching off), a limit on sign-in tries per network address (only per account). The server cannot tell "no newer versions" from "the PC's
   check for newer versions is off" (shown as a note), counts Administrators-group members including groups
   and disabled accounts, and does not see a browser's disabled update service: each needs a field added to
-  `fleet.payload()`, which needs the user's yes. There is no Hide for a wrong CVE match on the server, no
-  way to remove a device from the console, and no PDF: the report is text, a device page prints. The
+  `fleet.payload()`, which needs the user's yes. There is no Hide for a wrong CVE match on the server and
+  no PDF: the report is text, a device page prints. The
   console was built locally in the Lovable style, not in Lovable. No cloud server has been rented.
 - Compliance is for one PC. Not checked: multi-factor login, backups and the router
   (declared). "Windows is up to date" means an update within 35 days, not "no newer build exists". The
