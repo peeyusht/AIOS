@@ -1,70 +1,109 @@
 /* Update an application and stop a service: the two things the console can change on this PC.
-   Each is one click, confirmed in a dialog, run by the agent one at a time, and reported in the bar. */
-import { useEffect, useRef, useState } from "react";
+   Each is one click, confirmed in a dialog, run by the agent one at a time. What is happening is shown in
+   three places, so it cannot be missed wherever the page is scrolled to: the button that was clicked, a
+   toast, and a bar that stays at the top of the window. */
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Download, Square, X } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
-import { usePoll } from "@/lib/hooks";
-import type { RemedyJob, RemedyResponse, UpdatePlan } from "@/lib/types";
+import type { RemedyJob, UpdatePlan } from "@/lib/types";
 import { Confirm, Mono, Notice, Spin, Tip, act } from "./ui";
 
-const REMEDY_STARTED = "sf-remedy-started";
-const emitStarted = () => window.dispatchEvent(new Event(REMEDY_STARTED));
+/* One job at a time on the agent, so one shared state here: every button and the bar read the same thing. */
+type Store = { job: RemedyJob | null; mine: string | null; result: RemedyJob | null };
+let store: Store = { job: null, mine: null, result: null };
+const subs = new Set<() => void>();
+const doneSubs = new Set<() => void>();
+const set = (p: Partial<Store>) => { store = { ...store, ...p }; subs.forEach((f) => f()); };
+const useStore = () => useSyncExternalStore((f) => { subs.add(f); return () => void subs.delete(f); }, () => store);
 
-/** Shows the running update or stop, then its result. `onDone` reloads the page's lists. */
+let timer: ReturnType<typeof setTimeout> | null = null;
+let toastId: string | number | undefined;
+async function tick() {
+  timer = null;
+  let job: RemedyJob | null = null;
+  try { job = (await api.remedy()).job; } catch { /* the agent may be busy: ask again */ }
+  const was = !!store.job?.running;
+  if (job) set({ job });
+  if (job?.running || (!job && was)) { timer = setTimeout(tick, 1500); return; }
+  if (was && job) {                                       // it just finished
+    set({ result: job, mine: null });
+    const id = toastId;                                   // the "Updating…" toast turns into the result
+    toastId = undefined;
+    if (job.ok) toast.success(job.message ?? "Done.", { id, description: undefined, duration: 10_000 });
+    else toast.error(job.message ?? "It did not work.", { id, description: undefined, duration: 20_000 });
+    doneSubs.forEach((f) => f());
+  }
+}
+function watch() { if (!timer) timer = setTimeout(tick, 300); }
+
+function started(id: string, text: string, action: "update" | "stop", name: string, target: string | null) {
+  set({ mine: id, result: null, job: { ...EMPTY, running: true, action, name, target } });
+  toastId = toast.loading(text, { description: "Windows may ask for permission on your desktop. This can take a few minutes.", duration: Infinity });
+  watch();
+}
+const EMPTY: RemedyJob = { running: false, action: null, name: null, target: null, started: null, finished: null, ok: null, message: null };
+
+/** Stays at the top of the window while an update or stop runs, then shows its result. `onDone` reloads the page's lists. */
 export function RemedyBar({ onDone }: { onDone: () => void }) {
-  const [fast, setFast] = useState(false);
-  const [result, setResult] = useState<RemedyJob | null>(null);
-  const q = usePoll<RemedyResponse>(() => api.remedy(), fast ? 2000 : 60_000);
-  const job = q.data?.job;
-  const was = useRef(false);
+  const s = useStore();
+  const done = useRef(onDone);
+  done.current = onDone;
   useEffect(() => {
-    const h = () => { setFast(true); setResult(null); void q.reload(); };
-    window.addEventListener(REMEDY_STARTED, h);
-    return () => window.removeEventListener(REMEDY_STARTED, h);
-  }, [q]);
-  useEffect(() => {
-    const r = !!job?.running;
-    if (r) setFast(true);
-    if (was.current && !r && job) { setFast(false); setResult(job); onDone(); }
-    was.current = r;
-  }, [job?.running]); // eslint-disable-line react-hooks/exhaustive-deps
-
+    const f = () => done.current();
+    doneSubs.add(f);
+    void tick();                                          // a job started earlier, or from another tab, shows too
+    return () => void doneSubs.delete(f);
+  }, []);
+  const job = s.job;
   if (job?.running) {
     return (
-      <Notice className="mb-4" icon={<Spin />}>
-        {job.action === "stop" ? <>Stopping <b>{job.name}</b>…</> : <>Updating <b>{job.name}</b> to {job.target}…</>}
-        <span className="block text-muted-foreground">Windows may ask for permission on your desktop. This can take a few minutes.</span>
-      </Notice>
+      <div className="sticky top-14 z-10 mb-4" role="status" aria-live="polite">
+        <Notice icon={<Spin />} className="bg-card shadow-md">
+          {job.action === "stop" ? <>Stopping <b>{job.name ?? "the service"}</b>…</>
+            : job.name ? <>Updating <b>{job.name}</b>{job.target ? <> to {job.target}</> : null}…</> : <>Starting…</>}
+          <span className="block text-muted-foreground">
+            {job.message ?? "Windows may ask for permission on your desktop. This can take a few minutes."}
+          </span>
+        </Notice>
+      </div>
     );
   }
-  if (!result) return null;
+  if (!s.result) return null;
   return (
-    <Notice className="mb-4" tone={result.ok ? "success" : "danger"}>
-      <div className="flex items-start gap-3">
-        <span className="flex-1">{result.message}</span>
-        <button aria-label="Dismiss" className="text-muted-foreground hover:text-foreground" onClick={() => setResult(null)}><X className="size-4" /></button>
-      </div>
-    </Notice>
+    <div className="sticky top-14 z-10 mb-4" role="status" aria-live="polite">
+      <Notice tone={s.result.ok ? "success" : "danger"} className="shadow-md">
+        <div className="flex items-start gap-3">
+          <span className="flex-1">{s.result.message}</span>
+          <button aria-label="Dismiss" className="text-muted-foreground hover:text-foreground" onClick={() => set({ result: null })}><X className="size-4" /></button>
+        </div>
+      </Notice>
+    </div>
   );
 }
 
 /** The Update button for one application, or why it cannot be updated from here. */
 export function UpdateButton({ app }: { app: { id: string; name: string; version: string; update?: UpdatePlan | null } }) {
   const [open, setOpen] = useState(false);
+  const s = useStore();
   const u = app.update;
   if (!u) return null;
   if (u.blocked) {
     return <Tip tip={u.blocked}><span><Badge variant="muted">Not from here</Badge></span></Tip>;
   }
+  const busy = !!s.job?.running, mine = busy && s.mine === app.id;
   const go = async () => {
     setOpen(false);
-    if (await act(() => api.remedyUpdate(app.id))) emitStarted();
+    if (await act(() => api.remedyUpdate(app.id))) started(app.id, `Updating ${app.name} to ${u.to}…`, "update", app.name, u.to);
   };
   return (
     <>
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)}><Download /> Update</Button>
+      <Button variant="outline" size="sm" disabled={busy} onClick={() => setOpen(true)}
+        title={busy && !mine ? "Another update or stop is still running" : undefined}>
+        {mine ? <><Spin /> Updating…</> : <><Download /> Update</>}
+      </Button>
       <Confirm open={open} onOpenChange={setOpen} title={`Update ${app.name}?`} confirmLabel="Accept terms and update" onConfirm={go}>
         <p className="text-foreground"><span className="tabular">{app.version || "?"}</span> → <b className="tabular">{u.to}</b></p>
         {u.kind === "same_line" && (
@@ -81,14 +120,19 @@ export function UpdateButton({ app }: { app: { id: string; name: string; version
 /** Stop one running service. */
 export function StopButton({ svc }: { svc: { id: string; name: string; running: boolean } }) {
   const [open, setOpen] = useState(false);
+  const s = useStore();
   if (!svc.running) return null;
+  const busy = !!s.job?.running, mine = busy && s.mine === svc.id;
   const go = async () => {
     setOpen(false);
-    if (await act(() => api.remedyStop(svc.id))) emitStarted();
+    if (await act(() => api.remedyStop(svc.id))) started(svc.id, `Stopping ${svc.name}…`, "stop", svc.name, null);
   };
   return (
     <>
-      <Button variant="ghost" size="sm" onClick={() => setOpen(true)}><Square /> Stop</Button>
+      <Button variant="ghost" size="sm" disabled={busy} onClick={() => setOpen(true)}
+        title={busy && !mine ? "Another update or stop is still running" : undefined}>
+        {mine ? <><Spin /> Stopping…</> : <><Square /> Stop</>}
+      </Button>
       <Confirm open={open} onOpenChange={setOpen} title={`Stop ${svc.name}?`} confirmLabel="Stop service" danger onConfirm={go}>
         <p>Whatever uses this service stops working until it is started again.</p>
         <p>It is stopped, not disabled: Windows starts it again at the next restart if it is set to start automatically. To keep it off, change its start-up type in Windows' Services.</p>
