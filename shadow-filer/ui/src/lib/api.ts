@@ -126,6 +126,7 @@ export const api = {
     p("/api/watch/dismiss", undo ? { path, kind, key, undo: true } : { path, kind, key }),
   library: () => g<LibraryResponse>("/api/library"),
   libraryScan: () => p("/api/library/scan", {}),
+  libraryCheckUpdates: () => p("/api/library/check-updates", {}),
   libraryDismiss: (kind: LibraryKind, key: string, undo = false) =>
     p("/api/library/dismiss", undo ? { kind, key, undo: true } : { kind, key }),
   libraryRestore: () => p("/api/library/restore", {}),

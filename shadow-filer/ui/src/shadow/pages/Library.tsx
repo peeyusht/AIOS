@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowDown, ArrowUp, EyeOff, File as FileIcon, Folder, FolderSearch, LibraryBig, RefreshCw } from "lucide-react";
+import { ArrowDown, ArrowUp, Copy, EyeOff, File as FileIcon, Folder, FolderSearch, LibraryBig, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -39,6 +39,9 @@ export function LibraryPage() {
 
   const scan = async () => {
     if (await act(() => api.libraryScan())) { setRunning(true); await q.reload(); }
+  };
+  const checkUpdates = async () => {
+    if (await act(() => api.libraryCheckUpdates())) { setRunning(true); await q.reload(); }
   };
   const reveal = (path: string) => void act(() => api.libraryReveal(path));
   const hide = async (kind: LibraryKind, key: string) => {
@@ -101,7 +104,7 @@ export function LibraryPage() {
           <TabsContent value="versions"><Versions d={d} reveal={reveal} hide={hide} /></TabsContent>
           <TabsContent value="similar"><Pictures d={d} reveal={reveal} hide={hide} /></TabsContent>
           <TabsContent value="installers"><Installers d={d} reveal={reveal} hide={hide} /></TabsContent>
-          <TabsContent value="applications"><Applications a={d.applications ?? null} /></TabsContent>
+          <TabsContent value="applications"><Applications a={d.applications ?? null} checkNow={checkUpdates} isRunning={isRunning} /></TabsContent>
         </Tabs>
       )}
       {d && d.dismissed > 0 && (
@@ -326,12 +329,22 @@ function cmpVersion(a: string, b: string) {
   }
   return 0;
 }
-type SortKey = "name" | "version" | "publisher" | "installed" | "size";
+type SortKey = "name" | "version" | "available" | "publisher" | "installed" | "size";
 const DATE_TITLE = "No install date recorded: this is the day the entry last changed, which moves with every update";
 
-function Applications({ a }: { a: LibraryApplications | null }) {
+function copyUpgrade(id: string | null | undefined) {
+  if (!id) return;
+  try {
+    void navigator.clipboard?.writeText(`winget upgrade --id ${id}`).then(() => toast.success("Command copied. Paste it into a terminal to update."), () => {});
+  } catch { /* fall back silently */ }
+}
+const CopyCmd = ({ id }: { id: string | null | undefined }) => id ? (
+  <Button variant="ghost" size="icon" className="size-7 [&_svg]:size-3.5" aria-label="Copy the update command" title={`winget upgrade --id ${id}`} onClick={() => copyUpgrade(id)}><Copy /></Button>
+) : null;
+
+function Applications({ a, checkNow, isRunning }: { a: LibraryApplications | null; checkNow: () => void; isRunning: boolean }) {
   const [text, setText] = useState("");
-  const [show, setShow] = useState<"desktop" | "packaged" | "all">("desktop");
+  const [show, setShow] = useState<"desktop" | "packaged" | "all" | "updates">("desktop");
   const [sort, setSort] = useState<{ k: SortKey; asc: boolean }>({ k: "name", asc: true });
   const [allChanges, setAllChanges] = useState(false);
   if (!a) return (
@@ -340,17 +353,18 @@ function Applications({ a }: { a: LibraryApplications | null }) {
     </EmptyState>
   );
   if (!a.scanned_at) return <EmptyState icon={<LibraryBig />} title="No list yet">Scan now fills it.</EmptyState>;
+  const upd = a.updates?.enabled ? a.updates : null;
   const t = text.trim().toLowerCase();
   const list = a.apps
-    .filter((x) => show === "all" || x.kind === show)
+    .filter((x) => show === "all" || (show === "updates" ? !!(upd && x.available) : x.kind === show))
     .filter((x) => !t || x.name.toLowerCase().includes(t) || x.publisher.toLowerCase().includes(t));
   const val = (x: InstalledApp): string | number | null =>
-    sort.k === "size" ? x.size : sort.k === "installed" ? x.installed : sort.k === "version" ? x.version : sort.k === "publisher" ? x.publisher : x.name;
+    sort.k === "size" ? x.size : sort.k === "installed" ? x.installed : sort.k === "version" ? x.version : sort.k === "available" ? (x.available ?? null) : sort.k === "publisher" ? x.publisher : x.name;
   const sorted = [...list].sort((p, q) => {
     const x = val(p), y = val(q);
     const ex = x == null || x === "", ey = y == null || y === "";
     if (ex || ey) return ex === ey ? p.name.localeCompare(q.name) : ex ? 1 : -1; // empty values last
-    const c = sort.k === "version" ? cmpVersion(String(x), String(y))
+    const c = sort.k === "version" || sort.k === "available" ? cmpVersion(String(x), String(y))
       : typeof x === "number" && typeof y === "number" ? x - y
       : String(x).localeCompare(String(y), undefined, { sensitivity: "base", numeric: true });
     return sort.asc ? c : -c;
@@ -372,6 +386,22 @@ function Applications({ a }: { a: LibraryApplications | null }) {
       <Strip warn={(!a.desktop_read || !a.packaged_read) && "Windows could not be asked this time; showing the last list"}>
         {a.counts.desktop} programs · {bytes(a.total_bytes)} for the {a.sized} that state a size · {a.counts.packaged} Store and packaged apps
       </Strip>
+      {!upd ? (
+        <p className="mb-4 text-sm text-muted-foreground">Checking for newer versions is off. It goes online, so it is switched on in <a href="#/settings" className="text-primary underline-offset-4 hover:underline">Settings › Library</a>.</p>
+      ) : (
+        <>
+          <div className="mb-4 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+            <span>
+              {upd.count === 0 && upd.checked_at ? "Everything winget knows about is up to date" : `${upd.count} with a newer version`}
+              {" · "}{upd.checked_at ? `asked ${when(upd.checked_at)}` : "not asked yet"}
+            </span>
+            <Button variant="outline" size="sm" onClick={checkNow} disabled={isRunning}>{isRunning ? <Spin /> : <RefreshCw />} Check now</Button>
+          </div>
+          {!upd.ok && (
+            <Notice tone="warn" className="mb-4">{upd.error ?? "The last check did not work."}{upd.listed_at ? ` Showing the list from ${when(upd.listed_at)}.` : ""}</Notice>
+          )}
+        </>
+      )}
       {a.changes.length > 0 ? (
         <Card className="mb-4 p-4">
           <div className="mb-2 font-semibold">Changed recently</div>
@@ -393,7 +423,7 @@ function Applications({ a }: { a: LibraryApplications | null }) {
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <Input value={text} onChange={(e) => setText(e.target.value)} placeholder="Filter by name or publisher" aria-label="Filter applications" className="w-72" />
         <Segmented label="Show" value={show} onChange={setShow}
-          options={[{ value: "desktop", label: "Programs" }, { value: "packaged", label: "Store and packaged" }, { value: "all", label: "All" }]} />
+          options={[{ value: "desktop", label: "Programs" }, { value: "packaged", label: "Store and packaged" }, { value: "all", label: "All" }, ...(upd ? [{ value: "updates" as const, label: "Updates" }] : [])]} />
       </div>
       {!sorted.length ? (
         <p className="text-sm text-muted-foreground">Nothing matches.</p>
@@ -402,7 +432,7 @@ function Applications({ a }: { a: LibraryApplications | null }) {
           <table className="w-full text-sm">
             <thead className="text-left text-xs text-muted-foreground">
               <tr className="border-b">
-                <Th k="name">Name</Th><Th k="version">Version</Th><Th k="publisher">Publisher</Th><Th k="installed">Installed</Th><Th k="size" right>Size</Th>
+                <Th k="name">Name</Th><Th k="version">Version</Th>{upd && <Th k="available">Available</Th>}<Th k="publisher">Publisher</Th><Th k="installed">Installed</Th><Th k="size" right>Size</Th>
               </tr>
             </thead>
             <tbody>
@@ -415,6 +445,13 @@ function Applications({ a }: { a: LibraryApplications | null }) {
                     )}
                   </td>
                   <td className="whitespace-nowrap px-2 py-2.5 tabular">{x.version || "—"}</td>
+                  {upd && (
+                    <td className="whitespace-nowrap px-2 py-1.5">
+                      {x.available
+                        ? <span className="inline-flex items-center gap-1"><Badge variant="info" className="tabular">{x.available}</Badge><CopyCmd id={x.update_id} /></span>
+                        : <span className="text-muted-foreground">—</span>}
+                    </td>
+                  )}
                   <td className="px-2 py-2.5">{x.publisher || "—"}</td>
                   <td className="whitespace-nowrap px-2 py-2.5 tabular">
                     {x.date_is === "changed" && x.installed
@@ -426,6 +463,19 @@ function Applications({ a }: { a: LibraryApplications | null }) {
               ))}
             </tbody>
           </table>
+        </Card>
+      )}
+      {upd && upd.unmatched.length > 0 && (
+        <Card className="mt-4 p-4">
+          <div className="mb-1 font-semibold">Newer versions for things not in this list</div>
+          <p className="mb-2 text-xs text-muted-foreground">winget knows these under another name.</p>
+          {upd.unmatched.map((u) => (
+            <Row key={u.id}>
+              <span className="min-w-0 flex-1 truncate">{u.name}</span>
+              <Muted className="tabular">{u.version} → {u.available}</Muted>
+              <CopyCmd id={u.id} />
+            </Row>
+          ))}
         </Card>
       )}
       {a.counts.date_is_a_guess > 0 && (

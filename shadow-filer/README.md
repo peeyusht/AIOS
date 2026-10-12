@@ -286,8 +286,13 @@ The Library page lists what you already hold. It is read-only: nothing is moved,
 - **Applications**: the programs installed on this PC with version, publisher, install date and size, and
   what was installed, updated or removed since the last scan (also in Activity › Journal). Store and packaged
   apps are a separate filter. Where Windows records no install date, the day the entry last changed is shown
-  with an asterisk. Nothing goes online: it does not check whether a newer version exists. From the command
-  line: `shadow_agent.py apps [--store] [--json]`.
+  with an asterisk. From the command line: `shadow_agent.py apps [--store] [--updates] [--json]`.
+  **Newer versions** (Settings › Library › "Check for newer versions", off until you switch it on): once a day
+  the agent asks winget, Windows' package manager, which installed applications have a newer version, and the
+  tab shows it in an Available column with an Updates filter and a Check now button. This is the only thing
+  in the agent that goes online: winget downloads its community catalogue from Microsoft and compares on this
+  PC. Nothing is updated for you; the copy button gives you the `winget upgrade --id ...` command to run
+  yourself.
 A scan runs once a day (Settings › Library) or when you click Scan now; the first one takes a few seconds.
 **Hide** removes an entry from the list (not from disk); **Show** opens its folder.
 

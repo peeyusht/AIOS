@@ -54,6 +54,8 @@ DEFAULTS = {
     "image_distance": 8,       # of 256 fingerprint bits; how different two pictures may be and still match
     "check_signatures": True,  # ask Windows about the publisher signature of programs and installers
     "applications": True,      # list the applications installed on this PC and what changed (apps.py)
+    "check_updates": False,    # ONLINE: ask winget which applications have a newer version. Off until switched on
+    "update_hours": 24,        # how often the running agent asks again
 }
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
 OFFICE_EXT = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".xlsm", ".xlsb", ".ppt", ".pptx", ".odt", ".ods",
@@ -75,6 +77,7 @@ def settings(cfg: dict) -> dict:
             except (TypeError, ValueError):
                 s[k] = d
     s["scan_hours"] = max(0, s["scan_hours"])
+    s["update_hours"] = min(720, max(1, s["update_hours"]))
     s["image_distance"] = min(40, max(0, s["image_distance"]))
     return s
 
@@ -523,6 +526,8 @@ def view(cfg: dict) -> dict:
     empty = {k: [] for k in KINDS}
     import apps
     installed = apps.view(cfg) if s["enabled"] and s["applications"] else None
+    if installed:
+        installed = apps.with_updates(cfg, installed, s["check_updates"], s["update_hours"])
     base = {"enabled": s["enabled"], "runner": Runner.state, "settings": {"scan_hours": s["scan_hours"]},
             "applications": installed}
     rep = load_report() if s["enabled"] else None
@@ -552,7 +557,7 @@ class Runner:
     state = {"running": False, "started": None, "progress": None, "error": None, "finished": None}
 
     @classmethod
-    def start(cls, cfg: dict, log=None) -> bool:
+    def start(cls, cfg: dict, log=None, updates: bool = False) -> bool:
         with cls.lock:
             if cls.state["running"]:
                 return False
@@ -566,6 +571,10 @@ class Runner:
                     import apps
                     cls.state.update(progress="Listing the applications on this PC")
                     apps.scan(cfg, log=log)
+                    s = settings(cfg)
+                    if s["check_updates"] and (updates or apps.updates_due(cfg, s["update_hours"])):
+                        cls.state.update(progress="Asking winget about newer versions (online)")
+                        apps.check_updates(cfg, log=log)
             except Exception as e:  # never take the agent down
                 cls.state["error"] = str(e)[:300]
                 if log:
@@ -583,4 +592,9 @@ class Runner:
         if not s["enabled"] or not s["scan_hours"] or cls.state["running"]:
             return False
         rep_time = REPORT_FILE.stat().st_mtime if REPORT_FILE.exists() else 0
-        return time.time() - rep_time > s["scan_hours"] * 3600
+        if time.time() - rep_time > s["scan_hours"] * 3600:
+            return True
+        if s["applications"] and s["check_updates"]:      # the update check keeps its own, shorter clock
+            import apps
+            return apps.updates_due(cfg, s["update_hours"])
+        return False

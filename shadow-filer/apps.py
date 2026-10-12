@@ -10,7 +10,8 @@ Shown on Library > Applications. READ-ONLY: nothing is installed, updated, remov
 
 What is read: the registry, and for packaged apps one fixed PowerShell call (the package list, the Start menu
 names and each package's manifest, for the name and publisher). None of your files are opened. Nothing goes
-online: whether a newer version exists is not checked.
+online, with one exception that is off until switched on: asking winget which applications have a newer
+version (see "newer versions" below).
 
 A list of versions only shows today, so every scan is compared with the one before and the differences are
 kept in `apps_history` (installed, updated from -> to, removed, with the day the agent noticed). The very
@@ -315,6 +316,150 @@ def view(cfg: dict, days: int = 90, today: date | None = None) -> dict:
             "total_bytes": sum(a["size"] or 0 for a in desk), "sized": sum(1 for a in desk if a["size"])}
 
 
+# --------------------------------------------------------------------------- newer versions (online, optional)
+# The one part of this file that goes online, and only when `library.check_updates` is on. `winget upgrade`
+# compares what is installed with winget's package catalogue. Only the community catalogue is asked
+# ("--source winget"): winget downloads that catalogue's index from Microsoft's servers and compares on this
+# PC. The Store catalogue is left out: it is asked about one package at a time, which tells it what is
+# installed. Nothing is ever updated from here: the list says what is available, you update yourself.
+WINGET_ARGS = ["upgrade", "--source", "winget", "--disable-interactivity"]
+
+
+def parse_upgrades(text: str) -> list:
+    """Rows of winget's table(s): {'name', 'id', 'version', 'available'}. The columns are found from where
+    the header words start, so the header's language does not matter."""
+    lines = [ln.split("\r")[-1].rstrip() for ln in text.replace("\r\n", "\n").split("\n")]
+    out, seen = [], set()
+    for i, line in enumerate(lines):
+        if i == 0 or not re.fullmatch(r"-{20,}", line):
+            continue
+        cols = [m.start() for m in re.finditer(r"\S+", lines[i - 1])]
+        if len(cols) < 4:
+            continue
+        for row in lines[i + 1:]:
+            if len(row) <= cols[3] or row[cols[1] - 1] != " ":
+                break       # the footer ("31 upgrades available."), or the end of this table
+            name, pid = row[:cols[1]].strip(), row[cols[1]:cols[2]].strip()
+            version = row[cols[2]:cols[3]].strip()
+            available = row[cols[3]:cols[4]].strip() if len(cols) > 4 else row[cols[3]:].strip()
+            if not name or not re.fullmatch(r"\S+", pid) or not available or pid in seen:
+                continue
+            seen.add(pid)
+            out.append({"name": name, "id": pid, "version": version, "available": available})
+    return out
+
+
+def read_updates() -> dict:
+    """Ask winget which installed applications have a newer version. {'ok', 'error', 'rows'}."""
+    import shutil
+    exe = shutil.which("winget") or os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WindowsApps",
+                                                 "winget.exe")
+    if os.name != "nt" or not os.path.exists(exe):
+        return {"ok": False, "error": "winget (Windows' App Installer) was not found on this PC.", "rows": []}
+    try:
+        r = subprocess.run([exe, *WINGET_ARGS], capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=180, creationflags=CREATE_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError) as e:
+        return {"ok": False, "error": f"winget did not answer ({type(e).__name__}).", "rows": []}
+    rows = parse_upgrades(r.stdout or "")
+    if r.returncode != 0 and not rows:
+        return {"ok": False, "error": f"winget stopped with code {r.returncode}. Run 'winget upgrade' once in a "
+                                      "terminal to see why (it may be asking you to accept its terms).", "rows": []}
+    return {"ok": True, "error": None, "rows": rows}
+
+
+def _updates(c) -> dict | None:
+    r = c.execute("SELECT value FROM apps_state WHERE k='updates'").fetchone()
+    try:
+        return json.loads(r[0]) if r else None
+    except ValueError:
+        return None
+
+
+def check_updates(cfg: dict, read=read_updates, now: datetime | None = None, log=None) -> dict:
+    """Ask once and keep the answer. A failed check keeps the previous list, and says so."""
+    got = read()
+    c = _conn(cfg["database"])
+    try:
+        prev = _updates(c) or {}
+        ts = (now or datetime.now()).isoformat(timespec="seconds")
+        installed = (_snapshot(c) or {}).get("apps", [])
+        new = {"checked_at": ts, "ok": bool(got["ok"]), "error": got.get("error"),
+               "rows": match_updates(installed, got["rows"]) if got["ok"] else prev.get("rows", []),
+               "rows_from": ts if got["ok"] else prev.get("rows_from")}
+        c.execute("INSERT OR REPLACE INTO apps_state VALUES ('updates', ?)", (json.dumps(new),))
+        c.commit()
+    finally:
+        c.close()
+    if log:
+        if got["ok"]:
+            log.info("applications: winget lists %d newer version(s)", len(got["rows"]))
+        else:
+            log.warning("applications: update check failed: %s", got.get("error"))
+    return new
+
+
+def updates_due(cfg: dict, hours: int, now: datetime | None = None) -> bool:
+    c = _conn(cfg["database"])
+    try:
+        last = (_updates(c) or {}).get("checked_at")
+    finally:
+        c.close()
+    try:
+        return not last or (now or datetime.now()) - datetime.fromisoformat(last) >= timedelta(hours=hours)
+    except ValueError:
+        return True
+
+
+def match_updates(apps: list, rows: list) -> list:
+    """The rows, each with the application it is about: 'app_id' and 'app_version' (None when it fits
+    nothing in the list). By name: winget shows the name Windows lists, but often writes the version
+    differently ("3.11.1" for "3.11.1150.0"), so the version only decides between two of the same name.
+    winget can list one application under two package ids; the second row is dropped."""
+    by_name, by_key = {}, {}
+    for a in apps:
+        by_name.setdefault(a["name"].lower(), []).append(a)
+        by_key.setdefault(name_key(a["name"], a["version"]), []).append(a)
+    out, taken = [], set()
+    for r in rows:
+        known = by_name.get(r["name"].lower()) or by_key.get(name_key(r["name"], r["version"])) or []
+        if not known:       # a packaged app: winget's id is the package's own name
+            known = [a for a in apps if a["key"].startswith(f"packaged:{r['id'].lower()}_")]
+        cands = [a for a in known if a["id"] not in taken]
+        if known and not cands:
+            continue
+        same = [a for a in cands if a["version"] == r["version"]]
+        hit = same[0] if same else min(cands, key=lambda a: version_tuple(a["version"])) if cands else None
+        if hit:
+            taken.add(hit["id"])
+        out.append({**r, "app_id": hit["id"] if hit else None, "app_version": hit["version"] if hit else None})
+    return out
+
+
+def with_updates(cfg: dict, v: dict, enabled: bool, hours: int) -> dict:
+    """The page's view plus what the last update check found."""
+    c = _conn(cfg["database"])
+    try:
+        u = _updates(c) if enabled else None
+    finally:
+        c.close()
+    # a row counts only while the installed version is still the one the check saw, so an application you
+    # have updated since stops showing as out of date
+    rows = {r["app_id"]: r for r in (u or {}).get("rows", []) if r.get("app_id")}
+    apps = []
+    for a in v["apps"]:
+        r = rows.get(a["id"])
+        ok = bool(r) and r["app_version"] == a["version"]
+        apps.append({**a, "available": r["available"] if ok else None, "update_id": r["id"] if ok else None})
+    loose = [{k: r[k] for k in ("name", "id", "version", "available")} for r in (u or {}).get("rows", [])
+             if not r.get("app_id")]
+    return {**v, "apps": apps,
+            "updates": {"enabled": enabled, "hours": hours, "checked_at": (u or {}).get("checked_at"),
+                        "listed_at": (u or {}).get("rows_from"), "ok": (u or {}).get("ok", True),
+                        "error": (u or {}).get("error"), "count": sum(1 for a in apps if a["available"]),
+                        "unmatched": loose}}
+
+
 # --------------------------------------------------------------------------- installer files you hold
 def match_installers(installers: list, apps: list) -> list:
     """For each program file from the Library scan, the installed application it belongs to, if one is
@@ -353,8 +498,16 @@ def as_text(v: dict, packaged: bool = False) -> str:
              f"(listed {v['scanned_at'].replace('T', ' ')})", ""]
     for a in rows:
         when = (a["installed"] or "") + ("" if a["date_is"] == "installed" or not a["installed"] else "*")
-        lines.append(f"{a['name'][:w]:<{w}}  {a['version'][:22]:<22}  {when:<11}  {a['publisher'][:36]}")
+        newer = f"  -> {a['available']}" if a.get("available") else ""
+        lines.append(f"{a['name'][:w]:<{w}}  {a['version'][:22]:<22}  {when:<11}  {a['publisher'][:36]}{newer}")
     lines += ["", "* no install date recorded: the day the entry last changed (moves with every update)"]
+    u = v.get("updates")
+    if u and u["enabled"]:
+        lines += ["", f"Newer versions (winget, asked {(u['checked_at'] or 'never').replace('T', ' ')}): {u['count']}"
+                  + (f", and {len(u['unmatched'])} for applications not in this list" if u["unmatched"] else "")]
+        lines += [f"  {r['name']}: {r['version']} -> {r['available']}" for r in u["unmatched"]]
+        if u["error"]:
+            lines.append("  The last check failed: " + u["error"])
     if v["changes"]:
         lines += ["", f"Changed in the last {v['changes_days']} days:"]
         lines += ["  " + change_text(e, with_day=True) for e in v["changes"]]

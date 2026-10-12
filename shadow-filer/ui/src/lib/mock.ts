@@ -182,7 +182,7 @@ const settingsRaw: Raw = {
   autofile: { enabled: false, min_decisions: 20, min_rate: 0.95, window: 30, min_score: 0.9, delay_minutes: 30 },
   ocr: { enabled: true, max_pdf_pages: 20, min_image_kb: 50 },
   watch: { enabled: true, soon_days: 30, keep_expired_days: 60 },
-  library: { enabled: true, scan_hours: 24, image_distance: 8, check_signatures: true, applications: true },
+  library: { enabled: true, scan_hours: 24, image_distance: 8, check_signatures: true, applications: true, check_updates: true, update_hours: 24 },
   ui: { port: 8765 },
   telemetry_note: "kept untouched",
 };
@@ -456,15 +456,28 @@ const libChanges = (): AppChange[] => [
   chg(20, "removed", "Gridline Spreadsheet Viewer", "2.3", ""),
   chg(22, "updated", "Quillmark PDF Reader", "26.001.20110", "26.002.21931", "Quillmark"),
 ];
+const libAvail: Record<string, [string, string]> = {
+  "Brightpad Notes": ["4.13.0", "Brightpad.Notes"],
+  "Northwind VPN Client": ["7.4.4.4801", "Northwind.VPNClient"],
+  "Pine Runtime 3.12.4 (64-bit)": ["3.12.10", "Pine.Runtime.3.12"],
+  "Sketch Pad": ["2.2.0.0", "Vendor.SketchPad"],
+};
+let libUpdChecked = ago(5 * 60);
 function libApplications(): LibraryApplications {
+  const ls = settingsRaw.library ?? {};
+  const on = !!ls.check_updates;
+  const apps = libApps.map((a) => { const u = on ? libAvail[a.name] : undefined; return { ...a, available: u?.[0] ?? null, update_id: u?.[1] ?? null }; });
   const sized = libApps.filter((a) => a.size != null);
   return {
-    scanned_at: libScanned, apps: libApps, changes: libChanges(), changes_days: 90, history_since: ago(60 * 1440),
+    scanned_at: libScanned, apps, changes: libChanges(), changes_days: 90, history_since: ago(60 * 1440),
     desktop_read: true, packaged_read: true,
     counts: { desktop: libApps.filter((a) => a.kind === "desktop").length, packaged: libApps.filter((a) => a.kind === "packaged").length,
       store: libApps.filter((a) => a.from_store).length, no_version: libApps.filter((a) => !a.version).length,
       date_is_a_guess: libApps.filter((a) => a.kind === "desktop" && a.date_is === "changed").length },
     total_bytes: sized.reduce((s, a) => s + (a.size ?? 0), 0), sized: sized.length,
+    updates: { enabled: on, hours: Number(ls.update_hours ?? 24), checked_at: libUpdChecked, listed_at: libUpdChecked, ok: true, error: null,
+      count: apps.filter((a) => a.available).length,
+      unmatched: on ? [{ name: "Gridline Terminal", id: "Gridline.Terminal", version: "1.24.1", available: "1.25.0" }] : [] },
   };
 }
 const libHidden = new Set<string>();
@@ -754,6 +767,12 @@ const post: Record<string, Handler> = {
     Object.assign(libRunner, { running: true, started: iso(now()), progress: "Looking at pictures: 40 of 120", error: null });
     setTimeout(() => { Object.assign(libRunner, { running: false, progress: null, finished: iso(now()) }); libScanned = iso(now()); }, 2000);
     return { ok: true };
+  },
+  "/api/library/check-updates": () => {
+    if (libRunner.running) return { ok: false, message: "The library is already being scanned." };
+    Object.assign(libRunner, { running: true, started: iso(now()), progress: "Asking winget for newer versions…", error: null });
+    setTimeout(() => { Object.assign(libRunner, { running: false, progress: null, finished: iso(now()) }); libUpdChecked = iso(now()); }, 2000);
+    return { ok: true, started: true, runner: { ...libRunner } };
   },
   "/api/library/dismiss": (_q, b) => {
     const id = `${b.kind}|${b.key}`;
