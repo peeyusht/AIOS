@@ -56,6 +56,13 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - File contents are untrusted data in model prompts.
 - `watch.py` never returns, logs or stores the numbers it finds (PAN, Aadhaar, card, account, passport): only
   the kind and a count. Keep it that way in the API, the log and any test output. It reads `search.db` only.
+- File contents leave the agent in exactly one place, `web_ui._file`, for the Preview panel, and only against
+  a ticket (`issue_ticket`, POST with the session token): the file must be in the index or directly in a
+  watched folder, of a kind in `VIEWABLE` (PDF, .docx, common pictures; never HTML or SVG, which a browser
+  would run), under the size limit, not cloud-only, and not a password-protected PDF. Tickets are random, last
+  5 minutes, are for one file, and die if the file changes; the response is `nosniff`, never cached and
+  framable only by the console itself. Don't add a kind to `VIEWABLE` or serve bytes any other way without
+  asking. The page draws .docx with `docx-preview` inside a sandboxed frame with no scripts, and strips links.
 - `library.py` is read-only: it lists, it never moves, renames or deletes (deleting stays with Cleanup). It
   opens only pictures (to fingerprint them, with Pillow) and programs (Windows checks the signature); documents
   and firmware/VM images are judged by name, size and date alone. "Show" opens Explorer only for a path the
@@ -150,11 +157,6 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   by comparing content.
 - The work journal's "worked on" list only sees documents inside the PARA tree, and only on days the agent
   was running (earlier days show a file's last change only). Work done in Downloads or elsewhere is not in it.
-- Preview before filing (Inbox and Search, 12 Oct 2026) shows the text the index already holds
-  (`Index.preview`, POST `/api/search/preview`): 586 of 887 files in Downloads have text; the rest say why not.
-  It is text only. The user wants to see the real PDF/Word page in the console eventually ("step 2", agreed
-  but not built): that needs an endpoint that serves file bytes, which does not exist today. Design it with
-  care: files directly in a watched folder or in the index only, a short-lived one-time ticket (an embedded
-  viewer cannot send the token header), never cloud-only placeholders, and the CSP opened only as far as
-  embedding from 'self'. A browser cannot draw Word files: those need converting or stay text.
+- Preview (Inbox and Search) shows PDFs, pictures and .docx as they look, and the indexed text for everything
+  else. Not drawn: .doc, Excel, PowerPoint (text + Open), and password-protected PDFs (Open only).
 - All seven planned phases are built. Nothing further is planned; the open items above are what is left.

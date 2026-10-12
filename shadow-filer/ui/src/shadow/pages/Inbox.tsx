@@ -54,6 +54,7 @@ export async function undoMove(id: number, after?: () => void) {
 
 function Waiting() {
   const [offset, setOffset] = useState(0);
+  const [preview, setPreview] = useState<string | null>(null);
   const q = usePoll(() => api.inbox(offset, PAGE), 30_000, [offset]);
   const [autoOn, setAutoOn] = useState(false);
   useEffect(() => { api.autofile().then((a) => setAutoOn(a.settings.enabled)).catch(() => {}); }, []);
@@ -111,7 +112,7 @@ function Waiting() {
       {d && d.items.length > 0 && (
         <ul className="space-y-3" aria-label="Files waiting">
           {d.items.map((it) => (
-            <InboxCard key={it.path} item={it} data={d} autoOn={autoOn} onGone={() => removeLocal(it.path)} />
+            <InboxCard key={it.path} item={it} data={d} autoOn={autoOn} onGone={() => removeLocal(it.path)} onPreview={setPreview} />
           ))}
         </ul>
       )}
@@ -127,6 +128,7 @@ function Waiting() {
           </Button>
         </div>
       )}
+      <FilePreview path={preview} onClose={() => setPreview(null)} />
     </div>
   );
 }
@@ -140,10 +142,9 @@ function cleanupLabel(c: NonNullable<InboxItem["cleanup"]>) {
   return `Cleanup: ${c.level}`;
 }
 
-function InboxCard({ item, data, autoOn, onGone }: { item: InboxItem; data: InboxResponse; autoOn: boolean; onGone: () => void }) {
+function InboxCard({ item, data, autoOn, onGone, onPreview }: { item: InboxItem; data: InboxResponse; autoOn: boolean; onGone: () => void; onPreview: (path: string) => void }) {
   const chips = item.candidates.slice(0, 4);
   const firstOk = chips.find((c) => c.exists)?.folder ?? null;
-  const [preview, setPreview] = useState<string | null>(null);
   const [folder, setFolderRaw] = useState<string | null>(firstOk);
   // Until you pick a folder yourself, the selection follows the first suggestion (which can change when
   // the list refreshes); once you pick, your choice stays.
@@ -213,7 +214,7 @@ function InboxCard({ item, data, autoOn, onGone }: { item: InboxItem; data: Inbo
           <FolderPicker destinations={data.destinations} onPick={choose} />
           <Button variant="ghost" size="sm" onClick={() => setMk((v) => !v)} aria-expanded={mk}><FolderPlus /> New folder…</Button>
           <div className="ml-auto flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setPreview(item.path)}><Eye /> Preview</Button>
+            <Button variant="ghost" size="sm" onClick={() => onPreview(item.path)}><Eye /> Preview</Button>
             <Button variant="ghost" size="sm" onClick={() => act(() => api.reveal(item.path))}><FolderSearch /> Show</Button>
             <Button variant="ghost" size="sm" onClick={dismiss} disabled={!!busy}>{busy === "dismiss" ? <Spin /> : null} Leave it</Button>
             <Button onClick={file} disabled={!folder || selectedMissing || !!busy} className="max-w-md">
@@ -232,7 +233,6 @@ function InboxCard({ item, data, autoOn, onGone }: { item: InboxItem; data: Inbo
           />
         )}
       </Card>
-      <FilePreview path={preview} onClose={() => setPreview(null)} />
     </li>
   );
 }

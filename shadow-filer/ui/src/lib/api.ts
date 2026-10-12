@@ -2,7 +2,7 @@
 import { adaptCleanup, adaptHistory, adaptLog, adaptMoves, adaptPredictions, adaptSearchStatus, adaptSystem } from "./adapt";
 import type {
   AutofileResponse, Decision, LibraryKind, LibraryResponse, FsCheck, FsDirs, InboxResponse, JournalResponse, OkResponse,
-  PreviewResponse, Raw, SaveResponse, SearchResponse, SettingsResponse, Stats, Status, WatchResponse,
+  FileTicket, PreviewResponse, Raw, SaveResponse, SearchResponse, SettingsResponse, Stats, Status, WatchResponse,
 } from "./types";
 
 function readToken(): string | null {
@@ -103,6 +103,7 @@ export const api = {
   searchStatus: () => g<Raw>("/api/search/status").then(adaptSearchStatus),
   searchOpen: (path: string) => p("/api/search/open", { path }),
   preview: (path: string) => p<PreviewResponse>("/api/search/preview", { path }),
+  fileTicket: (path: string) => p<FileTicket>("/api/file/ticket", { path }),
   searchReveal: (path: string) => p("/api/search/reveal", { path }),
   rebuildIndex: () => p("/api/search/rebuild", {}),
   cleanup: () => g<Raw>("/api/cleanup").then(adaptCleanup),

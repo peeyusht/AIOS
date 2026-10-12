@@ -18,7 +18,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import yaml
 
@@ -148,6 +148,99 @@ def _reindex(*paths: str) -> None:
         pass
 
 
+# --------------------------------------------------------------------------- looking at a document
+# The console can show a document as it really looks (Preview): the browser's own PDF viewer, a picture,
+# or a Word file drawn by the page. For that, and only that, the agent hands out a file's bytes:
+#   - only for a file the index knows or that sits directly in a watched folder, of a kind in VIEWABLE,
+#     under the size limit, not a cloud-only placeholder, and not a password-protected PDF (those are
+#     never opened by the agent or through it: use Open);
+#   - only against a ticket: asked for with the session token (POST), random, good for a few minutes and
+#     for that one file. The address with the ticket is what the page puts in a frame or picture, because
+#     a frame cannot send the token header;
+#   - the file is checked again on every request (still there, unchanged, not cloud-only);
+#   - never as HTML or SVG, always with nosniff, never cached, and it may only be framed by this page.
+VIEWABLE = {
+    ".pdf": ("pdf", "application/pdf"),
+    ".docx": ("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+    ".png": ("image", "image/png"), ".jpg": ("image", "image/jpeg"), ".jpeg": ("image", "image/jpeg"),
+    ".gif": ("image", "image/gif"), ".webp": ("image", "image/webp"), ".bmp": ("image", "image/bmp"),
+}
+VIEW_MAX_MB = {"pdf": 300, "docx": 40, "image": 40}
+TICKET_SECONDS = 300
+_tickets: dict = {}
+_tickets_lock = threading.Lock()
+
+
+def view_kind(path: str) -> str | None:
+    """'pdf', 'docx' or 'image' when the console can show this kind of file as it looks; else None."""
+    v = VIEWABLE.get(os.path.splitext(path)[1].lower())
+    return v[0] if v else None
+
+
+def viewable(path: str) -> tuple:
+    """(record, None) if this file may be shown, else (None, why not). Opens nothing except, for a PDF
+    the index has not read yet, the same password check the agent already makes."""
+    import search_index
+    idx = search_index.get()
+    rec = idx.preview(path) if idx else None
+    if rec is None and not _inbox_file(path):
+        return None, "Unknown file."
+    v = VIEWABLE.get(os.path.splitext(path)[1].lower())
+    if not v:
+        return None, "This kind of file can't be shown here. Use Open."
+    kind, ctype = v
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None, "That file is no longer there."
+    import stat as _stat
+    if not _stat.S_ISREG(st.st_mode):
+        return None, "Unknown file."
+    if search_index.is_cloud_only(st):
+        return None, "This file is only in the cloud, so it isn't opened. Use Open to download and view it."
+    if st.st_size > VIEW_MAX_MB[kind] * 1024 * 1024:
+        return None, f"Too big to show here (over {VIEW_MAX_MB[kind]} MB). Use Open."
+    if kind == "pdf" and ((rec and rec["status"] == "locked") or (rec is None and sa.is_encrypted_pdf(Path(path)))):
+        return None, "Password-protected: the agent does not open it. Use Open."
+    return {"path": path, "kind": kind, "ctype": ctype, "size": st.st_size, "mtime_ns": st.st_mtime_ns}, None
+
+
+def issue_ticket(path: str) -> dict:
+    rec, why = viewable(path)
+    if rec is None:
+        return {"ok": False, "message": why}
+    now = time.time()
+    with _tickets_lock:
+        for t in [t for t, r in _tickets.items() if r["expires"] < now]:
+            del _tickets[t]
+        while len(_tickets) >= 200:      # oldest out
+            del _tickets[min(_tickets, key=lambda t: _tickets[t]["expires"])]
+        ticket = secrets.token_urlsafe(32)
+        _tickets[ticket] = {**rec, "expires": now + TICKET_SECONDS}
+    # the file's name rides along only so the browser's PDF viewer has a title to show; the ticket decides
+    return {"ok": True, "url": f"/api/file/{ticket}/{quote(os.path.basename(path))}", "kind": rec["kind"],
+            "size": rec["size"], "expires_in": TICKET_SECONDS}
+
+
+def redeem_ticket(ticket: str) -> dict | None:
+    """The file a ticket stands for, if the ticket is still good and the file is as it was."""
+    with _tickets_lock:
+        rec = _tickets.get(ticket)
+        if rec and rec["expires"] < time.time():
+            del _tickets[ticket]
+            rec = None
+    if not rec:
+        return None
+    import search_index
+    try:
+        st = os.stat(rec["path"])
+    except OSError:
+        return None
+    if st.st_size != rec["size"] or st.st_mtime_ns != rec["mtime_ns"] or search_index.is_cloud_only(st):
+        return None
+    return rec
+
+
 def _inbox_file(path: str):
     """A file directly inside a watched folder, or None. Lets Show work for any Inbox file."""
     try:
@@ -250,7 +343,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Content-Security-Policy",
-                         "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+                         "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
                          "script-src 'self' 'unsafe-inline'; frame-ancestors 'none'")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
@@ -270,6 +363,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, html, "text/html")
             if not u.path.startswith("/api/"):
                 return self._static(u.path)
+            if u.path.startswith("/api/file/"):
+                return self._file(u.path[len("/api/file/"):])
             if u.path == "/api/status":
                 return self._send(200, {
                     **Ctx.status,
@@ -443,6 +538,39 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _file(self, ticket: str):
+        """A document's bytes for the Preview panel, against a ticket (see 'looking at a document')."""
+        rec = redeem_ticket(ticket.split("/", 1)[0])
+        if rec is None:
+            return self._send(404, {"error": "This preview has expired. Close it and open it again."})
+        try:
+            f = open(rec["path"], "rb")
+        except OSError:
+            return self._send(404, {"error": "That file can't be read right now."})
+        with f:
+            self.send_response(200)
+            self.send_header("Content-Type", rec["ctype"])
+            self.send_header("Content-Length", str(rec["size"]))
+            # a Word file is fetched by the page and drawn there; opened on its own it should just download
+            self.send_header("Content-Disposition", ("attachment" if rec["kind"] == "docx" else "inline")
+                             + "; filename*=UTF-8\'\'" + quote(os.path.basename(rec["path"])))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "SAMEORIGIN")
+            self.send_header("Content-Security-Policy", "frame-ancestors 'self'")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.end_headers()
+            left = rec["size"]
+            try:
+                while left > 0:
+                    chunk = f.read(min(1024 * 1024, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+            except (BrokenPipeError, ConnectionError, OSError):
+                pass      # the panel was closed while the file was still loading
+
     def do_POST(self):
         if not self._host_ok():
             return self._send(403, {"error": "bad host"})
@@ -475,6 +603,9 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             return self._send(200, res)
+        if u.path == "/api/file/ticket":
+            res = issue_ticket(str(body.get("path", "")))
+            return self._send(200 if res["ok"] else 400, res)
         if u.path.startswith("/api/search/"):
             return self._search_post(u.path, body)
         if u.path.startswith("/api/cleanup/"):
@@ -631,9 +762,11 @@ def _search_post(self, path: str, body: dict):
             if _inbox_file(target):
                 return self._send(200, {"ok": True, "path": target, "name": os.path.basename(target), "status": "pending",
                                         "text": "", "chars": 0, "truncated": False, "openable": False,
+                                        "view": view_kind(target),
                                         "note": "The agent has not read this file yet. Try again in a minute."})
             return self._send(400, {"ok": False, "message": "Unknown file."})
-        return self._send(200, {"ok": True, **pv})
+        # 'view': the document itself can be shown (ask /api/file/ticket); a locked PDF never is
+        return self._send(200, {"ok": True, **pv, "view": None if pv["status"] == "locked" else view_kind(target)})
     if path in ("/api/search/reveal", "/api/search/open"):
         target = str(body.get("path", ""))
         rec = idx.is_indexed(target)  # only files in the index, never arbitrary paths
