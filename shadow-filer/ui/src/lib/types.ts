@@ -540,6 +540,10 @@ export interface NetworkResponse {
   adapters: NetAdapter[]; routes: NetRoute[];
   firewall: { name: string; enabled: boolean; inbound: string; outbound: string }[];
   other_firewalls?: string[];
+  /** Enabled rules that let connections in, grouped by program (absent on older agents, null if unreadable). */
+  rules?: { total: number; windows: number; missing: number; wide_open: { name: string; profiles: string[]; any_address: boolean }[];
+    programs: { program: string; path: string; rules: number; ports: string[]; more_ports: number; any_port: boolean; profiles: string[];
+      any_address: boolean; public: boolean; missing: boolean }[] } | null;
   shares: { name: string; path: string; description: string; builtin: boolean; printer: boolean }[];
   listening: NetListener[]; connections: NetConnectionGroup[]; devices: NetDevice[];
   dns: { suffixes: string[]; servers: string[] };

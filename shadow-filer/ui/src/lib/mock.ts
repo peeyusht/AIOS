@@ -735,6 +735,11 @@ function mockNetwork(): NetworkResponse {
     read_at: iso(now()), seconds: 4.8, computer: "DEMO-PC", adapters, routes, remediate: !!(settingsRaw.library ?? {}).remediate,
     firewall: [{ name: "Domain", enabled: true, inbound: "Block", outbound: "Allow" }, { name: "Private", enabled: fwOn("Private"), inbound: fwOn("Private") ? "Block" : "NotConfigured", outbound: fwOn("Private") ? "Allow" : "NotConfigured" }, { name: "Public", enabled: true, inbound: "Block", outbound: "Allow" }],
     other_firewalls: [], shares, listening, connections, devices,
+    rules: { total: 48, windows: 41, missing: 1, wide_open: [], programs: [
+      { program: "old-sync.exe", path: "C:\\Program Files\\OldSync\\old-sync.exe", rules: 2, ports: [], more_ports: 0, any_port: true, profiles: ["all"], any_address: true, public: true, missing: true },
+      { program: "tessellate-engine.exe", path: "C:\\Program Files\\Tessellate\\engine.exe", rules: 2, ports: ["27017"], more_ports: 0, any_port: false, profiles: ["Private"], any_address: true, public: false, missing: false },
+      { program: "harbor-remote.exe", path: "C:\\Program Files\\Harbor\\harbor-remote.exe", rules: 3, ports: ["7070"], more_ports: 0, any_port: false, profiles: ["all"], any_address: true, public: true, missing: false },
+    ] },
     dns: { servers: ["192.168.50.1", "9.9.9.9"], suffixes: ["home.example"] },
     proxy: { enabled: false, server: "", script: "", bypass: "" }, hosts,
     findings: [
