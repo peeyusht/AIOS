@@ -33,7 +33,7 @@ own `#/inbox`-style routing, so it runs unchanged as a static page.
    those shapes). When a page shows wrong or missing real data, fix the mapping there.
 3. `npm run build`, then open every page against the running agent and look at the browser console.
 4. Any fix made locally must be sent back to Lovable as an exact change, or the next copy loses it.
-   Last copied Lovable commit: `34b4a0c` (document view in the Preview panel: PDF, Word, pictures).
+   Last copied Lovable commit: `e725d10` (Library › Applications tab, application changes in the Journal).
    Lovable also writes test files (`*.test.tsx`, vitest); they are not copied and `tsconfig.json` excludes them.
    Dependencies Lovable adds must be added to our `package.json` too (so far: `docx-preview`).
    No local changes are waiting to be sent.

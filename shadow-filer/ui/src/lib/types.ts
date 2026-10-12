@@ -378,8 +378,25 @@ export interface LibraryChainMember { path: string; name: string; size: number; 
 export interface LibraryChain { key: string; title: string; ext: string; kind: "versions" | "same-name"; filed_is_older: boolean; members: LibraryChainMember[]; }
 export interface LibraryPicture { path: string; name: string; size: number; source: LibrarySrc; folder: string; modified: string | null; w: number; h: number; distance?: number; }
 export interface LibraryPictureGroup { key: string; identical: boolean; members: LibraryPicture[]; }
-export interface LibraryInstaller { path: string; name: string; size: number; source: LibrarySrc; folder: string; modified: string | null; level: "signed" | "unsigned" | "untrusted" | "tampered" | "unknown"; text: string; status: string; publisher: string; expires: string; host: string | null; }
+export interface LibraryInstaller { path: string; name: string; size: number; source: LibrarySrc; folder: string; modified: string | null; level: "signed" | "unsigned" | "untrusted" | "tampered" | "unknown"; text: string; status: string; publisher: string; expires: string; host: string | null; product?: string; version?: string; installed_name?: string; installed_version?: string; file_is?: "older" | "same" | "newer" | null; }
+export interface InstalledApp {
+  id: string; key: string; name: string; version: string; publisher: string;
+  kind: "desktop" | "packaged"; from_store: boolean; scope: "machine" | "user"; arch: string;
+  installed: string | null; date_is: "installed" | "changed"; size: number | null; location: string | null;
+}
+export interface AppChange {
+  ts: string; event: "installed" | "updated" | "removed";
+  key: string; name: string; publisher: string; kind: "desktop" | "packaged";
+  old_version: string; new_version: string;
+}
+export interface LibraryApplications {
+  scanned_at: string | null; apps: InstalledApp[]; changes: AppChange[]; changes_days: number; history_since: string | null;
+  desktop_read: boolean; packaged_read: boolean;
+  counts: { desktop: number; packaged: number; store: number; no_version: number; date_is_a_guess: number };
+  total_bytes: number; sized: number;
+}
 export interface LibraryResponse {
+  applications: LibraryApplications | null;
   enabled: boolean;
   runner: { running: boolean; started: string | null; progress: string | null; error: string | null; finished: string | null };
   settings: { scan_hours: number };
@@ -398,12 +415,13 @@ export interface JournalWorked { folder: string; count: number; files: { name: s
 export interface JournalDay {
   date: string;
   weekday: string;
-  counts: { arrived: number; filed: number; auto_filed: number; undone: number; deleted: number; deleted_bytes: number; worked_files: number; worked_folders: number };
+  counts: { arrived: number; filed: number; auto_filed: number; undone: number; deleted: number; deleted_bytes: number; worked_files: number; worked_folders: number; apps?: number };
+  apps?: (AppChange & { time: string })[];
   arrived: JournalArrived[]; filed: JournalFiled[]; undone: JournalUndone[]; deleted: JournalDeleted[]; worked: JournalWorked[];
 }
 export interface JournalResponse {
   days_asked: number; from: string; to: string;
-  totals: { arrived: number; filed: number; auto_filed: number; undone: number; deleted: number; deleted_bytes: number; worked_files: number; active_days: number };
+  totals: { arrived: number; filed: number; auto_filed: number; undone: number; deleted: number; deleted_bytes: number; worked_files: number; active_days: number; apps?: number };
   folders: { folder: string; filed: number; worked: number; days: number }[];
   days: JournalDay[];
   text: string;

@@ -24,6 +24,7 @@ Commands:
   python shadow_agent.py reconcile           match pending predictions against PARA now
   python shadow_agent.py report [--csv out]  accuracy report
   python shadow_agent.py sysinfo [--json]    hardware, OS, storage, GPUs and what Ollama is doing
+  python shadow_agent.py apps [--json] [--store]   installed applications, versions, and what changed
   python shadow_agent.py search "<query>"     search the index (the agent builds it in the background)
   python shadow_agent.py cleanup [--csv out]  recommend files in Downloads that could be deleted
                                              (duplicates, old installers/drivers...). Deletes nothing.
@@ -1026,6 +1027,9 @@ def main():
     si.add_argument("--json", action="store_true", help="print raw JSON instead of text")
     se = sub.add_parser("search")
     se.add_argument("query")
+    apc = sub.add_parser("apps")
+    apc.add_argument("--json", action="store_true", help="print raw JSON instead of text")
+    apc.add_argument("--store", action="store_true", help="also list Store and packaged apps")
     cl = sub.add_parser("cleanup")
     cl.add_argument("--csv", help="also write the recommendations to this CSV file")
     cl.add_argument("--json", action="store_true", help="print raw JSON instead of text")
@@ -1042,6 +1046,14 @@ def main():
         import sysinfo
         info = sysinfo.collect(cfg)
         print(json.dumps(info, indent=2) if a.json else sysinfo.as_text(info))
+        return
+    if a.cmd == "apps":
+        import apps
+        if apps.scan(cfg, log=log) is None:
+            print("The list of installed applications could not be read (Windows only).")
+            return
+        v = apps.view(cfg)
+        print(json.dumps(v, indent=1) if a.json else apps.as_text(v, packaged=a.store))
         return
     if a.cmd == "search":
         import search_index

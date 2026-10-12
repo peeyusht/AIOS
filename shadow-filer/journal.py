@@ -3,7 +3,8 @@ Phase 7: work journal. A dated record, day by day, of
   arrived    what landed in Downloads,
   filed      what was filed where (by you in the Inbox, by auto-filing, or by hand in Explorer), and undone,
   deleted    what Cleanup sent to the Recycle Bin,
-  worked on  which of your folders had documents added or changed that day.
+  worked on  which of your folders had documents added or changed that day,
+  apps       applications installed, updated or removed on this PC (noticed by apps.py at each Library scan).
 
 READ-ONLY for your files: it is put together from what the agent already records (predictions, the move
 journal, Cleanup's history) plus file dates. The one thing it writes is its own table, `journal_touch`: a file
@@ -24,6 +25,7 @@ import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import apps
 import cleanup
 
 MAX_DAYS = 366
@@ -155,6 +157,11 @@ def build(cfg: dict, days: int = 30, today: date | None = None) -> dict:
                                "WHERE result='deleted' AND ts >= ?", (since,)):
                 deleted.append({"ts": r["ts"], "name": os.path.basename(r["path"]), "path": r["path"],
                                 "size": r["size"], "category": r["category"], "mode": r["mode"]})
+        changed_apps = []
+        if _has(c, "apps_history"):
+            changed_apps = [dict(r) for r in c.execute(
+                "SELECT ts, event, name, publisher, kind, old_version, new_version FROM apps_history "
+                "WHERE ts >= ? ORDER BY id", (since,))]
         touches = [dict(r) for r in c.execute(
             "SELECT day, path, folder, name, kind FROM journal_touch WHERE day >= ? AND day <= ?",
             (since, today.isoformat()))]
@@ -167,9 +174,11 @@ def build(cfg: dict, days: int = 30, today: date | None = None) -> dict:
     by_day: dict = {}
 
     def day_of(d: str) -> dict:
-        return by_day.setdefault(d, {"date": d, "arrived": [], "filed": [], "undone": [], "deleted": [], "worked": {}})
+        return by_day.setdefault(d, {"date": d, "arrived": [], "filed": [], "undone": [], "deleted": [], "apps": [],
+                                     "worked": {}})
 
-    for kind, rows in (("arrived", arrived), ("filed", filed), ("undone", undone), ("deleted", deleted)):
+    for kind, rows in (("arrived", arrived), ("filed", filed), ("undone", undone), ("deleted", deleted),
+                       ("apps", changed_apps)):
         for r in rows:
             day_of(r["ts"][:10])[kind].append({**r, "time": r["ts"][11:16]})
     for t in touches:
@@ -179,10 +188,10 @@ def build(cfg: dict, days: int = 30, today: date | None = None) -> dict:
 
     out_days, folders = [], {}
     totals = {"arrived": 0, "filed": 0, "auto_filed": 0, "undone": 0, "deleted": 0, "deleted_bytes": 0,
-              "worked_files": 0, "active_days": 0}
+              "worked_files": 0, "apps": 0, "active_days": 0}
     for d in sorted(by_day, reverse=True):
         e = by_day[d]
-        for k in ("arrived", "filed", "undone", "deleted"):
+        for k in ("arrived", "filed", "undone", "deleted", "apps"):
             e[k].sort(key=lambda r: r["ts"], reverse=True)
         worked = [{"folder": f, "count": len(v), "files": sorted(v, key=lambda x: x["name"].lower())[:PER_DAY]}
                   for f, v in e["worked"].items()]
@@ -190,7 +199,8 @@ def build(cfg: dict, days: int = 30, today: date | None = None) -> dict:
         counts = {"arrived": len(e["arrived"]), "filed": len(e["filed"]),
                   "auto_filed": sum(1 for f in e["filed"] if f["how"] == "auto"), "undone": len(e["undone"]),
                   "deleted": len(e["deleted"]), "deleted_bytes": sum(x["size"] or 0 for x in e["deleted"]),
-                  "worked_files": sum(w["count"] for w in worked), "worked_folders": len(worked)}
+                  "worked_files": sum(w["count"] for w in worked), "worked_folders": len(worked),
+                  "apps": len(e["apps"])}
         for k in totals:
             totals[k] += counts.get(k, 0)
         totals["active_days"] += 1
@@ -206,7 +216,8 @@ def build(cfg: dict, days: int = 30, today: date | None = None) -> dict:
         dt = date.fromisoformat(d)
         out_days.append({"date": d, "weekday": dt.strftime("%A"), "counts": counts,
                          "arrived": e["arrived"][:PER_DAY], "filed": e["filed"][:PER_DAY],
-                         "undone": e["undone"][:PER_DAY], "deleted": e["deleted"][:PER_DAY], "worked": worked})
+                         "undone": e["undone"][:PER_DAY], "deleted": e["deleted"][:PER_DAY], "apps": e["apps"][:PER_DAY],
+                         "worked": worked})
     by_folder = [{"folder": g["folder"] or "(top of your folders)", "filed": g["filed"], "worked": g["worked"],
                   "days": len(g["days"])} for g in folders.values()]
     by_folder.sort(key=lambda g: (-(g["filed"] + g["worked"]), g["folder"]))
@@ -222,6 +233,7 @@ def as_text(rep: dict) -> str:
     lines = [f"Work journal {rep['from']} to {rep['to']}",
              f"{t['arrived']} arrived, {t['filed']} filed ({t['auto_filed']} automatically), {t['deleted']} deleted "
              f"({cleanup.human(t['deleted_bytes'])}), {t['worked_files']} documents added or changed, "
+             + (f"{t['apps']} application change{'' if t['apps'] == 1 else 's'}, " if t["apps"] else "") +
              f"{t['active_days']} active day{'' if t['active_days'] == 1 else 's'}", ""]
     if rep["folders"]:
         lines.append("By folder:")
@@ -243,6 +255,8 @@ def as_text(rep: dict) -> str:
         if c["arrived"]:
             names = ", ".join(a["name"] for a in d["arrived"][:5]) + (f" and {c['arrived'] - 5} more" if c["arrived"] > 5 else "")
             lines.append(f"  Arrived in Downloads ({c['arrived']}): {names}")
+        for a in d["apps"]:
+            lines.append("  " + apps.change_text(a))
         if c["deleted"]:
             lines.append(f"  Deleted {c['deleted']} file{'' if c['deleted'] == 1 else 's'} ({cleanup.human(c['deleted_bytes'])})")
         lines.append("")

@@ -62,6 +62,7 @@ function Journal() {
             <Stat label="Documents added or changed" value={d.totals.worked_files.toLocaleString()} />
             <Stat label="Active days" value={d.totals.active_days.toLocaleString()} />
           </Card>
+          {(d.totals.apps ?? 0) > 0 && <p className="-mt-3 text-sm text-muted-foreground tabular">{d.totals.apps} application {d.totals.apps === 1 ? "change" : "changes"}</p>}
           {d.folders.length > 0 && (
             <Card className="overflow-x-auto p-5">
               <h3 className="mb-3 text-sm font-medium">By folder</h3>
@@ -163,6 +164,19 @@ function DayCard({ day }: { day: JournalDay }) {
         <Section title="Undone">
           {day.undone.map((u, i) => (
             <div key={i} className="flex items-center gap-2"><Time t={u.time} /><Mono className="min-w-0 truncate text-xs">{u.name}</Mono><span className="text-xs text-muted-foreground">moved back to Downloads</span></div>
+          ))}
+        </Section>
+      )}
+      {(day.apps ?? []).length > 0 && (
+        <Section title="Applications">
+          {(day.apps ?? []).map((a, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Time t={a.time} />
+              <Badge variant={a.event === "installed" ? "success" : a.event === "updated" ? "info" : "muted"}>{a.event === "installed" ? "Installed" : a.event === "updated" ? "Updated" : "Removed"}</Badge>
+              <span className="min-w-0 truncate">
+                {a.event === "updated" ? <>{a.name}: <span className="tabular">{a.old_version} → {a.new_version}</span></> : <>{a.name} <span className="tabular">{a.event === "installed" ? a.new_version : a.old_version}</span></>}
+              </span>
+            </div>
           ))}
         </Section>
       )}

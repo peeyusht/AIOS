@@ -10,6 +10,9 @@ PARA folders. READ-ONLY: nothing is moved, renamed or deleted from here (deletin
               fingerprint of the picture, not by name.
   installers  programs and installers, and whether Windows accepts the publisher's signature on them.
 
+A fifth list, the applications installed on this PC, is made by apps.py after each scan and shown on the
+same page; an installer here that belongs to one of them says which version is installed.
+
 What is opened: a picture (to fingerprint it) and an installer (Windows reads it to check the signature).
 Documents and images of firmware/VMs are never opened: names, sizes and dates only. Cloud-only placeholders
 are skipped everywhere. Fingerprints and signature results are kept per file (path, size, modified time) in
@@ -50,6 +53,7 @@ DEFAULTS = {
     "scan_hours": 24,          # the running agent rescans this often (0 = only when you click Scan)
     "image_distance": 8,       # of 256 fingerprint bits; how different two pictures may be and still match
     "check_signatures": True,  # ask Windows about the publisher signature of programs and installers
+    "applications": True,      # list the applications installed on this PC and what changed (apps.py)
 }
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
 OFFICE_EXT = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".xlsm", ".xlsb", ".ppt", ".pptx", ".odt", ".ods",
@@ -278,8 +282,10 @@ $ErrorActionPreference = 'SilentlyContinue'
 $paths = [Console]::In.ReadToEnd() | ConvertFrom-Json
 $out = foreach ($p in @($paths)) {
   $s = Get-AuthenticodeSignature -LiteralPath $p
+  $v = (Get-Item -LiteralPath $p).VersionInfo
   [pscustomobject]@{ path = $p; status = "$($s.Status)"; subject = "$($s.SignerCertificate.Subject)";
-                     expires = if ($s.SignerCertificate) { $s.SignerCertificate.NotAfter.ToString('yyyy-MM-dd') } else { '' } }
+                     expires = if ($s.SignerCertificate) { $s.SignerCertificate.NotAfter.ToString('yyyy-MM-dd') } else { '' };
+                     product = "$($v.ProductName)".Trim(); version = "$($v.ProductVersion)".Trim() }
 }
 ConvertTo-Json -InputObject @($out) -Compress
 """
@@ -301,7 +307,8 @@ def _powershell() -> str:
 
 
 def check_signatures(paths: list) -> dict:
-    """{path: {'status', 'subject', 'expires'}} from Windows (Get-AuthenticodeSignature). {} if unavailable.
+    """{path: {'status', 'subject', 'expires', 'product', 'version'}} from Windows (Get-AuthenticodeSignature,
+    and the name and version the program states about itself). {} if unavailable.
     The paths go in on standard input as JSON, never on the command line."""
     if os.name != "nt" or not paths:
         return {}
@@ -320,6 +327,15 @@ def publisher(subject: str) -> str:
     """'CN=Fortinet Technologies (Canada) ULC, O=...' -> 'Fortinet Technologies (Canada) ULC'."""
     m = re.search(r'(?:^|,\s*)CN=("([^"]+)"|[^,]+)', subject or "")
     return (m.group(2) or m.group(1)).strip() if m else ""
+
+
+def program_version(stated: str | None, name: str) -> str:
+    """The version a program states about itself, else the one in its file name (an .msi states none)."""
+    m = re.search(r"\d+(?:\.\d+)+", stated or "")
+    if m:
+        return m.group(0)
+    m = VERSION_RX.search(os.path.splitext(name)[0])
+    return m.group(1) if m else ""
 
 
 def signature_view(status: str, subject: str = "") -> dict:
@@ -398,7 +414,7 @@ def scan(cfg: dict, progress=None, log=None, save: bool = True) -> dict:
         progs = [f for f in files if cleanup.full_ext(f["name"]) in PROGRAM_EXT and not f["cloud"]]
         installers = []
         if s["check_signatures"] and progs:
-            need = [f for f in progs if cache.get(f, "signature") is None]
+            need = [f for f in progs if "product" not in (cache.get(f, "signature") or {})]
             if need:
                 say(f"Checking the publisher of {len(need)} program{'s' if len(need) != 1 else ''}")
                 got = check_signatures([f["path"] for f in need])
@@ -406,14 +422,17 @@ def scan(cfg: dict, progress=None, log=None, save: bool = True) -> dict:
                     if f["path"] in got:
                         x = got[f["path"]]
                         cache.put(f, "signature", {"status": x.get("status") or "", "subject": x.get("subject") or "",
-                                                   "expires": x.get("expires") or ""})
+                                                   "expires": x.get("expires") or "",
+                                                   "product": x.get("product") or "",
+                                                   "version": x.get("version") or ""})
             import origin
             for f in progs:
                 sig = cache.get(f, "signature") or {}
                 site = origin.read(f["path"]) or {}
                 installers.append({**meta(f), **signature_view(sig.get("status"), sig.get("subject", "")), "status": sig.get("status") or "",
                                    "publisher": publisher(sig.get("subject", "")), "expires": sig.get("expires") or "",
-                                   "host": site.get("host")})
+                                   "host": site.get("host"), "product": sig.get("product") or "",
+                                   "version": program_version(sig.get("version"), f["name"])})
             order = {"tampered": 0, "unsigned": 1, "untrusted": 2, "unknown": 3, "signed": 4}
             installers.sort(key=lambda x: (order.get(x["level"], 3), x["source"] != "inbox", x["name"].lower()))
     finally:
@@ -502,13 +521,18 @@ def view(cfg: dict) -> dict:
     """The last report minus what you dismissed, with the counts the page shows."""
     s = settings(cfg)
     empty = {k: [] for k in KINDS}
-    base = {"enabled": s["enabled"], "runner": Runner.state, "settings": {"scan_hours": s["scan_hours"]}}
+    import apps
+    installed = apps.view(cfg) if s["enabled"] and s["applications"] else None
+    base = {"enabled": s["enabled"], "runner": Runner.state, "settings": {"scan_hours": s["scan_hours"]},
+            "applications": installed}
     rep = load_report() if s["enabled"] else None
     if not rep:
         return {**base, "scanned_at": None, **empty, "counts": {k: 0 for k in KINDS}, "dismissed": 0,
                 "summary": {"images_bytes": 0, "images_in_downloads_bytes": 0, "filed_is_older": 0, "not_signed": 0}}
     gone = _dismissed(cfg["database"])
     out = {k: [e for e in rep.get(k, []) if (k, key_of(k, e)) not in gone] for k in KINDS}
+    if installed:
+        out["installers"] = apps.match_installers(out["installers"], installed["apps"])
     hidden = sum(len(rep.get(k, [])) - len(out[k]) for k in KINDS)
     return {**base, "scanned_at": rep.get("scanned_at"), "seconds": rep.get("seconds"), "files": rep.get("files"),
             "signatures_checked": rep.get("signatures_checked", False), **out,
@@ -538,6 +562,10 @@ class Runner:
         def work():
             try:
                 scan(cfg, progress=lambda m: cls.state.update(progress=m), log=log)
+                if settings(cfg)["applications"]:
+                    import apps
+                    cls.state.update(progress="Listing the applications on this PC")
+                    apps.scan(cfg, log=log)
             except Exception as e:  # never take the agent down
                 cls.state["error"] = str(e)[:300]
                 if log:

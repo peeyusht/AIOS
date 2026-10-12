@@ -49,6 +49,7 @@ FIELDS = [
     ("library.enabled", "bool", None, None),
     ("library.scan_hours", "int", 0, 720),
     ("library.check_signatures", "bool", None, None),
+    ("library.applications", "bool", None, None),
     ("watch.enabled", "bool", None, None),
     ("watch.soon_days", "int", 1, 365),
     ("watch.keep_expired_days", "int", 0, 3650),
@@ -81,7 +82,7 @@ COMMENTS = {
     "search": "Search index (Search page). Changing the model rebuilds the index.",
     "autofile": "Phase 3: file automatically into folders your Inbox decisions have proven. Off until you switch it on.",
     "ocr": "Read scanned PDFs, images and screenshot-only Word files with Windows' built-in OCR.",
-    "library": "Library page: firmware and VM images, document versions, look-alike pictures, program signatures. Read-only.",
+    "library": "Library page: firmware and VM images, document versions, look-alike pictures, program signatures, installed applications. Read-only.",
     "watch": "Document watch (Watch page): dates that are coming up in your documents, and sensitive files in Downloads.",
 }
 

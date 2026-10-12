@@ -1,5 +1,5 @@
 /* Entirely fictional demo data with in-memory mutations, used when no agent token is present. */
-import type { JournalDay, JournalResponse, WatchDate, WatchSensitive, LibraryChain, LibraryInstaller, LibraryPictureGroup, LibraryProduct, LibraryPicture,
+import type { AppChange, InstalledApp, LibraryApplications, JournalDay, JournalResponse, WatchDate, WatchSensitive, LibraryChain, LibraryInstaller, LibraryPictureGroup, LibraryProduct, LibraryPicture,
   AutofileResponse,
   CleanupHistoryRow,
   CleanupItem,
@@ -182,7 +182,7 @@ const settingsRaw: Raw = {
   autofile: { enabled: false, min_decisions: 20, min_rate: 0.95, window: 30, min_score: 0.9, delay_minutes: 30 },
   ocr: { enabled: true, max_pdf_pages: 20, min_image_kb: 50 },
   watch: { enabled: true, soon_days: 30, keep_expired_days: 60 },
-  library: { enabled: true, scan_hours: 24, image_distance: 8, check_signatures: true },
+  library: { enabled: true, scan_hours: 24, image_distance: 8, check_signatures: true, applications: true },
   ui: { port: 8765 },
   telemetry_note: "kept untouched",
 };
@@ -422,10 +422,51 @@ const libPictures: LibraryPictureGroup[] = [
 ];
 const libInstallers: LibraryInstaller[] = [
   { ...lf("inbox", "", "ContosoSync-Setup-4.2.exe"), size: 84 * MB, modified: ago(3 * 1440), level: "signed", text: "Signed by Contoso Software Ltd and the signature is valid.", status: "Valid", publisher: "Contoso Software Ltd", expires: "2028-03-01", host: "downloads.contoso.example" },
+  { ...lf("inbox", "", "kettle-archive-2301-x64.exe"), size: 1.5 * MB, modified: ago(6 * 1440), level: "signed", text: "Signed by Kettle Software and the signature is valid.", status: "Valid", publisher: "Kettle Software", expires: "2027-11-30", host: "downloads.kettle.example", product: "Kettle Archive", version: "23.01", installed_name: "Kettle Archive 24.08 (x64)", installed_version: "24.08", file_is: "older" },
   { ...lf("inbox", "", "chart-tool-portable.exe"), size: 12 * MB, modified: ago(15 * 1440), level: "unsigned", text: "Not signed, so Windows cannot say who made it.", status: "NotSigned", publisher: "", expires: "", host: "files.example.net" },
   { ...lf("para", "3-Resources/Tools", "northwind-agent-installer.msi"), size: 33 * MB, modified: ago(80 * 1440), level: "tampered", text: "The file was changed after it was signed.", status: "HashMismatch", publisher: "Northwind Networks", expires: "2027-06-30", host: null },
   { ...lf("inbox", "", "driver-pack.zip"), size: 210 * MB, modified: ago(22 * 1440), level: "unknown", text: "Could not check this file.", status: "UnknownError", publisher: "", expires: "", host: null },
 ];
+const app = (name: string, version: string, publisher: string, kind: "desktop" | "packaged", scope: "machine" | "user", arch: string, installed: string, date_is: "installed" | "changed", mb: number | null, from_store = false): InstalledApp => {
+  const key = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  return { id: key, key, name, version, publisher, kind, from_store, scope, arch, installed, date_is, size: mb == null ? null : Math.round(mb * MB),
+    location: kind === "desktop" ? `C:\\Program Files${arch === "32-bit" ? " (x86)" : ""}\\${name.split(" ")[0]}` : null };
+};
+const libApps: InstalledApp[] = [
+  app("Brightpad Notes", "4.12.1", "Brightpad Labs", "desktop", "machine", "64-bit", "2026-08-14", "installed", 212),
+  app("Kettle Archive 24.08 (x64)", "24.08", "Kettle Software", "desktop", "machine", "64-bit", "2026-01-10", "installed", 6),
+  app("Northwind VPN Client", "7.4.3.4726", "Northwind Networks Inc", "desktop", "machine", "64-bit", "2026-03-26", "installed", 310),
+  app("Quillmark PDF Reader", "26.002.21931", "Quillmark", "desktop", "machine", "64-bit", "2026-09-20", "installed", 1480),
+  app("Larkspur Browser (x64 en-US)", "158.0", "Larkspur Foundation", "desktop", "machine", "64-bit", "2026-10-09", "changed", null),
+  app("Tessellate Containers", "4.94.0", "Tessellate Inc.", "desktop", "machine", "64-bit", "2026-10-09", "changed", 2890),
+  app("Pine Runtime 3.12.4 (64-bit)", "3.12.4150.0", "Pine Project", "desktop", "user", "", "2026-02-02", "installed", 142),
+  app("Pine Runtime 3.13.0 (64-bit)", "3.13.150.0", "Pine Project", "desktop", "user", "", "2026-09-30", "installed", 150),
+  app("Harbor Remote", "9.0.14", "Harbor Software GmbH", "desktop", "machine", "32-bit", "2026-06-26", "changed", null),
+  app("Old Label Printer Suite", "", "", "desktop", "machine", "32-bit", "2022-08-05", "changed", null),
+  app("Sketch Pad", "2.1.0.0", "Vendor Ltd", "packaged", "user", "64-bit", "2026-07-01", "changed", null, true),
+  app("Calculator", "11.2607.0.0", "Contoso Corporation", "packaged", "user", "64-bit", "2026-09-12", "changed", null, true),
+  app("Field Notes Sideloaded", "1.0.3.0", "", "packaged", "user", "", "2026-05-20", "changed", null),
+].sort((a, b) => a.name.localeCompare(b.name));
+const chg = (days: number, event: AppChange["event"], name: string, old_version: string, new_version: string, publisher = "", kind: AppChange["kind"] = "desktop"): AppChange =>
+  ({ ts: ago(days * 1440 + 90), event, key: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"), name, publisher, kind, old_version, new_version });
+const libChanges = (): AppChange[] => [
+  chg(2, "updated", "Larkspur Browser (x64 en-US)", "157.0", "158.0", "Larkspur Foundation"),
+  chg(2, "updated", "Tessellate Containers", "4.93.1", "4.94.0", "Tessellate Inc."),
+  chg(12, "installed", "Pine Runtime 3.13.0 (64-bit)", "", "3.13.150.0", "Pine Project"),
+  chg(20, "removed", "Gridline Spreadsheet Viewer", "2.3", ""),
+  chg(22, "updated", "Quillmark PDF Reader", "26.001.20110", "26.002.21931", "Quillmark"),
+];
+function libApplications(): LibraryApplications {
+  const sized = libApps.filter((a) => a.size != null);
+  return {
+    scanned_at: libScanned, apps: libApps, changes: libChanges(), changes_days: 90, history_since: ago(60 * 1440),
+    desktop_read: true, packaged_read: true,
+    counts: { desktop: libApps.filter((a) => a.kind === "desktop").length, packaged: libApps.filter((a) => a.kind === "packaged").length,
+      store: libApps.filter((a) => a.from_store).length, no_version: libApps.filter((a) => !a.version).length,
+      date_is_a_guess: libApps.filter((a) => a.kind === "desktop" && a.date_is === "changed").length },
+    total_bytes: sized.reduce((s, a) => s + (a.size ?? 0), 0), sized: sized.length,
+  };
+}
 const libHidden = new Set<string>();
 const libRunner = { running: false, started: null as string | null, progress: null as string | null, error: null as string | null, finished: ago(180) as string | null };
 let libScanned: string | null = ago(180);
@@ -438,6 +479,7 @@ function jDay(back: number, spec: {
   undone?: [string, string, string][];
   deleted?: [string, string, number][];
   worked?: [string, [string, "added" | "changed"][], number?][];
+  apps?: [string, AppChange["event"], string, string, string][];
 }): JournalDay {
   const d = new Date(); d.setDate(d.getDate() - back);
   const date = iso(d).slice(0, 10);
@@ -447,10 +489,11 @@ function jDay(back: number, spec: {
   const undone = (spec.undone ?? []).map(([t, n, f]) => ({ ts: ts(t), time: t, name: n, path: `${DL}\\${n}`, size: MB, folder: f, how: "inbox" as const }));
   const deleted = (spec.deleted ?? []).map(([t, n, mb]) => ({ ts: ts(t), time: t, name: n, path: `${DL}\\${n}`, size: Math.round(mb * MB), category: "installer", mode: "recycle" }));
   const worked = (spec.worked ?? []).map(([f, files, extra]) => ({ folder: f, count: files.length + (extra ?? 0), files: files.map(([n, kind]) => ({ name: n, path: `${PARA}\\${f.replace(/\//g, "\\")}\\${n}`, kind })) }));
+  const apps = (spec.apps ?? []).map(([t, event, name, old_version, new_version]) => ({ ts: ts(t), time: t, event, key: name, name, publisher: "", kind: "desktop" as const, old_version, new_version }));
   const wf = worked.reduce((a, w) => a + w.count, 0);
   return {
-    date, weekday: WD[d.getDay()] ?? "", arrived, filed, undone, deleted, worked,
-    counts: { arrived: arrived.length, filed: filed.length, auto_filed: filed.filter((f) => f.how === "auto").length, undone: undone.length, deleted: deleted.length, deleted_bytes: deleted.reduce((a, x) => a + (x.size ?? 0), 0), worked_files: wf, worked_folders: worked.length },
+    date, weekday: WD[d.getDay()] ?? "", arrived, filed, undone, deleted, worked, apps,
+    counts: { arrived: arrived.length, filed: filed.length, auto_filed: filed.filter((f) => f.how === "auto").length, undone: undone.length, deleted: deleted.length, deleted_bytes: deleted.reduce((a, x) => a + (x.size ?? 0), 0), worked_files: wf, worked_folders: worked.length, apps: apps.length },
   };
 }
 const bigDel: [string, string, number][] = Array.from({ length: 21 }, (_, i) => [`14:${String(10 + i).padStart(2, "0")}`, i === 0 ? "vm-image-old.iso" : `setup-tool-${i}.exe`, i === 0 ? 18000 : 6.5 * 1024 / 20 + i * 3]);
@@ -465,6 +508,7 @@ const journalDays: JournalDay[] = [
     filed: [["09:10", "globex-closeout.pdf", "4-Archives/Globex-Completed", "hand", false], ["13:50", "meeting.ics", "2-Areas/Finance", "inbox", true]],
     undone: [["13:55", "meeting.ics", "2-Areas/Finance"]],
   }),
+  jDay(2, { apps: [["08:14", "updated", "Larkspur Browser (x64 en-US)", "157.0", "158.0"], ["08:15", "updated", "Tessellate Containers", "4.93.1", "4.94.0"]] }),
   jDay(3, {
     arrived: [["10:00", "contoso-quote.pdf", 0.6, 0, "3-Resources/Vendor-Research", false]],
     filed: [["10:15", "contoso-quote.pdf", "3-Resources/Vendor-Research", "inbox", false]],
@@ -478,6 +522,7 @@ const journalDays: JournalDay[] = [
     arrived: [["09:30", "acme-invoice-0042.pdf", 0.3, 0, "2-Areas/Finance", false], ["12:10", "northwind-agent-installer.msi", 33, 0, "3-Resources/Tools", false]],
     filed: [["09:35", "acme-invoice-0042.pdf", "2-Areas/Finance", "auto", false], ["12:20", "northwind-agent-installer.msi", "3-Resources/Tools", "hand", false]],
   }),
+  jDay(12, { apps: [["17:40", "installed", "Pine Runtime 3.13.0 (64-bit)", "", "3.13.150.0"]] }),
   jDay(15, {
     arrived: [["14:00", "globex-final-report.pdf", 4, 0, "4-Archives/Globex-Completed", false]],
     filed: [["14:05", "globex-final-report.pdf", "4-Archives/Globex-Completed", "inbox", false]],
@@ -492,7 +537,7 @@ function journalFor(days: number): JournalResponse {
   const to = new Date(), from = new Date(); from.setDate(from.getDate() - (days - 1));
   const fromS = iso(from).slice(0, 10), toS = iso(to).slice(0, 10);
   const ds = journalDays.filter((d) => d.date >= fromS);
-  const sum = (k: keyof JournalDay["counts"]) => ds.reduce((a, d) => a + d.counts[k], 0);
+  const sum = (k: keyof JournalDay["counts"]) => ds.reduce((a, d) => a + (d.counts[k] ?? 0), 0);
   const fm = new Map<string, { folder: string; filed: number; worked: number; days: Set<string> }>();
   const fe = (f: string) => fm.get(f) ?? (fm.set(f, { folder: f, filed: 0, worked: 0, days: new Set() }), fm.get(f)!);
   for (const d of ds) {
@@ -506,12 +551,13 @@ function journalFor(days: number): JournalResponse {
     ...d.filed.map((f) => `  ${f.time} filed ${f.name} -> ${f.folder}${f.undone ? " (undone)" : ""}`),
     ...d.undone.map((u) => `  ${u.time} undone ${u.name}`),
     ...(d.counts.deleted ? [`  Deleted ${d.counts.deleted} files to the Recycle Bin`] : []),
+    ...(d.apps ?? []).map((a) => `  ${a.time} ${a.event} ${a.name} ${a.event === "updated" ? `${a.old_version} -> ${a.new_version}` : a.new_version || a.old_version}`),
     ...(d.counts.arrived ? [`  ${d.counts.arrived} files arrived in Downloads`] : []),
     "",
   ])].join("\n");
   return {
     days_asked: days, from: fromS, to: toS,
-    totals: { arrived: sum("arrived"), filed: sum("filed"), auto_filed: sum("auto_filed"), undone: sum("undone"), deleted: sum("deleted"), deleted_bytes: sum("deleted_bytes"), worked_files: sum("worked_files"), active_days: ds.length },
+    totals: { arrived: sum("arrived"), filed: sum("filed"), auto_filed: sum("auto_filed"), undone: sum("undone"), deleted: sum("deleted"), deleted_bytes: sum("deleted_bytes"), worked_files: sum("worked_files"), active_days: ds.length, apps: sum("apps") },
     folders, days: ds, text,
   };
 }
@@ -527,6 +573,7 @@ const get: Record<string, Handler> = {
       enabled: ls.enabled !== false, runner: { ...libRunner }, settings: { scan_hours: ls.scan_hours ?? 24 },
       scanned_at: libScanned, seconds: 42, files: 18_204, signatures_checked: ls.check_signatures !== false,
       images, versions, similar, installers,
+      applications: ls.applications === false ? null : libApplications(),
       counts: { images: images.length, versions: versions.length, similar: similar.length, installers: installers.length },
       dismissed: libHidden.size,
       summary: {
