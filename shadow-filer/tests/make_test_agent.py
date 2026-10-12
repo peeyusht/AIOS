@@ -100,6 +100,50 @@ try:
     im.save(para / "3-Resources/Manuals" / "team-photo.png")
 except ImportError:
     pass
+# Preview panel: a real PDF (two pages), a locked PDF and a real Word file, so the document view has something to draw
+try:
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    def pdf(path, lines, password=None):
+        wr = PdfWriter()
+        for n, line in enumerate(lines, 1):
+            page = wr.add_blank_page(width=595, height=842)
+            font = DictionaryObject({NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type1"),
+                                     NameObject("/BaseFont"): NameObject("/Helvetica")})
+            page[NameObject("/Resources")] = DictionaryObject(
+                {NameObject("/Font"): DictionaryObject({NameObject("/F1"): wr._add_object(font)})})
+            st = DecodedStreamObject()
+            st.set_data(f"BT /F1 20 Tf 60 760 Td ({line}) Tj 0 -40 Td /F1 12 Tf (Page {n} of {len(lines)}) Tj ET".encode())
+            page[NameObject("/Contents")] = wr._add_object(st)
+        if password:
+            wr.encrypt(user_password=password, owner_password=password + "-owner", algorithm="AES-256")
+        with open(path, "wb") as f:
+            wr.write(f)
+
+    pdf(inbox / "Acme site survey.pdf", ["Acme rollout: site survey, Leeds branch", "Findings: cabling ready, rack space for two switches"])
+    pdf(inbox / "Payroll summary (protected).pdf", ["Not for the agent"], password="made-up-password")
+except ImportError:
+    pass
+try:
+    import docx
+    d = docx.Document()
+    d.add_heading("Acme rollout: kickoff minutes", 1)
+    d.add_paragraph("Attendees: project lead, site lead, network engineer. All names in this file are made up.")
+    d.add_heading("Decisions", 2)
+    for line in ("Wave 12 moves to the first week of November.", "Cutover rehearsal is repeated before each wave.",
+                 "The weekly status report goes out on Fridays."):
+        d.add_paragraph(line, style="List Bullet")
+    t = d.add_table(rows=1, cols=3)
+    t.style = "Table Grid"
+    for c, h in zip(t.rows[0].cells, ("Action", "Owner", "Due")):
+        c.text = h
+    for row in (("Order switches for wave 12", "Site lead", "20 Oct"), ("Book the rehearsal window", "Project lead", "24 Oct")):
+        for c, v in zip(t.add_row().cells, row):
+            c.text = v
+    d.save(str(inbox / "Acme kickoff minutes.docx"))
+except ImportError:
+    pass
 old = time.time() - 40 * 86400   # Cleanup skips files changed in the last 10 minutes
 for p in list(inbox.rglob("*")) + list(para.rglob("*")):
     if p.is_file():

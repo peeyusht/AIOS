@@ -252,11 +252,16 @@ The Watch page reads the text the search index already holds; it opens no file a
 Both are in Settings › Document watch (on/off, days ahead, how long passed dates stay listed).
 
 ## Preview before filing
-**Preview** on an Inbox file (and on a search result) opens a side panel with the document's text as the agent
-read it, so you can check what a file is before filing it. It uses what the search index already holds, so no
-file is opened again; scans say they were read by OCR, long documents show their start, and files with no
-text (archives, images of firmware, password-protected PDFs) say why. **Open** in the panel launches the file
-in its normal app when you need the real layout.
+**Preview** on an Inbox file (and on a search result) opens a side panel that shows the document so you can
+check what it is before filing it.
+- **Document**: a PDF in your browser's own viewer (pages, zoom, search), a Word .docx drawn page by page,
+  or a picture. Nothing in a document can run or be clicked through: Word files are drawn in a sealed frame.
+- **Text**: the text the agent read from the file (also for Excel, PowerPoint, old .doc files and scans read
+  by OCR), with Copy. Long documents show their start.
+- **Open** launches the file in its normal app; **Show** opens its folder.
+Password-protected PDFs are not shown here (the agent never opens them): use Open. Files that exist only in
+the cloud are not fetched. The panel gets a file through a one-time address that works for five minutes, on
+this computer only.
 
 ## Work journal
 Activity › Journal is a dated record, newest day first: what arrived in Downloads, what was filed where (through

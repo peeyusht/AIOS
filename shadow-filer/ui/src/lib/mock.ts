@@ -757,6 +757,7 @@ const post: Record<string, Handler> = {
   "/api/search/open": () => ({ ok: true }),
   "/api/search/reveal": () => ({ ok: true }),
   "/api/search/preview": (_q, b) => mockPreview(String(b?.path ?? "")),
+  "/api/file/ticket": (_q, b) => mockFileTicket(String(b?.path ?? "")),
   "/api/search/rebuild": () => { searchState.running = true; searchState.done = 0; searchState.todo = 18_422; return { ok: true, message: "Rebuilding the index." }; },
   "/api/cleanup/scan": () => {
     if (cleanupState.running) return { ok: false, message: "A scan is already running." };
@@ -824,7 +825,7 @@ export async function mockFetch(method: "GET" | "POST", url: string, body?: Raw)
   const u = new URL(url, "http://mock.local");
   const h = (method === "GET" ? get : post)[u.pathname];
   if (!h) throw new MockHttpError(404);
-  return JSON.parse(JSON.stringify(h(u.searchParams, body ?? {})));
+  return JSON.parse(JSON.stringify(await h(u.searchParams, body ?? {})));
 }
 
 /* ---------- File preview (fictional text) ---------- */
@@ -863,9 +864,10 @@ const LONG_TEXT = Array.from({ length: 30 }, (_, i) =>
 function mockPreview(path: string) {
   const name = path.split(/[\\/]/).pop() ?? path;
   const ext = (name.split(".").pop() ?? "").toLowerCase();
-  const base = { ok: true, path, name, ext, size: 240_000 + name.length * 7_000, modified: ago(name.length * 40), read_at: ago(name.length * 30), truncated: false, openable: true, note: "" };
+  const view = ext === "pdf" ? "pdf" : ext === "docx" ? "docx" : ["png", "jpg", "jpeg", "gif", "webp"].includes(ext) ? "image" : null;
+  const base = { ok: true, path, name, ext, view, size: 240_000 + name.length * 7_000, modified: ago(name.length * 40), read_at: ago(name.length * 30), truncated: false, openable: true, note: "" };
   const withText = (text: string, extra: Record<string, unknown> = {}) => ({ ...base, status: "ok", text, chars: text.length, ...extra });
-  if (/payslip/i.test(name)) return { ...base, status: "locked", text: "", chars: 0, note: "Password-protected: the agent does not open it." };
+  if (/payslip/i.test(name)) return { ...base, view: null, status: "locked", text: "", chars: 0, note: "Password-protected: the agent does not open it." };
   if (/globex_closing_report/i.test(name)) {
     const text = LONG_TEXT.slice(0, 4000);
     return { ...base, status: "ok", text, chars: 48_512, truncated: true };
@@ -876,4 +878,46 @@ function mockPreview(path: string) {
     return { ...base, status: "name_only", text: "", chars: 0, openable: false, read_at: null, note: "Not a kind of file the agent reads (or too big): only its name is known." };
   if (/northwind|nw_/i.test(name) || ext === "docx") return withText(AUDIT_TEXT);
   return withText(SOW_TEXT);
+}
+
+// Small, self-contained fictional assets: no file or network access in demo mode.
+const DEMO_PDF_STREAM = "BT /F1 20 Tf 50 750 Td (Demo document \\(fictional\\)) Tj ET";
+const DEMO_PDF_OBJECTS = [
+  "<< /Type /Catalog /Pages 2 0 R >>",
+  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+  "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  `<< /Length ${DEMO_PDF_STREAM.length} >>\nstream\n${DEMO_PDF_STREAM}\nendstream`,
+];
+function demoPdf() {
+  let text = "%PDF-1.4\n";
+  const offsets = [0];
+  DEMO_PDF_OBJECTS.forEach((object, i) => { offsets.push(text.length); text += `${i + 1} 0 obj\n${object}\nendobj\n`; });
+  const xref = text.length;
+  text += `xref\n0 6\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return new Blob([text], { type: "application/pdf" });
+}
+async function mockFileTicket(path: string) {
+  const preview = mockPreview(path);
+  if (preview.status === "locked") return { ok: false, message: "Password-protected: the agent does not open it. Use Open." };
+  if (preview.view === "docx") return { ok: false, message: "Word files are drawn from the real file; the demo has none. Switch to Text." };
+  if (!preview.view) return { ok: false, message: "Only the text is available for this file." };
+  let blob = demoPdf();
+  if (preview.view === "image") {
+    let picture: Blob | null = null;
+    if (typeof document !== "undefined") {
+      const canvas = document.createElement("canvas");
+      canvas.width = 640; canvas.height = 480;
+      const context = canvas.getContext("2d");
+      if (context) {
+        context.fillStyle = "#e5e7eb"; context.fillRect(0, 0, 640, 480);
+        context.fillStyle = "#4b5563"; context.font = "28px sans-serif"; context.textAlign = "center";
+        context.fillText("Demo picture", 320, 240);
+        picture = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+      }
+    }
+    const fallback = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=";
+    blob = picture ?? new Blob([Uint8Array.from(atob(fallback), (c) => c.charCodeAt(0))], { type: "image/png" });
+  }
+  return { ok: true, kind: preview.view, size: blob.size, expires_in: 300, url: URL.createObjectURL(blob) };
 }

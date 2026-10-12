@@ -411,8 +411,13 @@ export interface JournalResponse {
 
 export interface PreviewResponse {
   ok: boolean; message?: string;
+  view: "pdf" | "docx" | "image" | null;
   path: string; name: string; ext?: string; size?: number;
   status: "ok" | "ocr" | "locked" | "name_only" | "no_text" | "ocr_empty" | "pending";
   modified?: string; read_at?: string | null;
   text: string; chars: number; truncated: boolean; openable: boolean; note: string;
+}
+
+export interface FileTicket {
+  ok: boolean; message?: string; url: string; kind: "pdf" | "docx" | "image"; size: number; expires_in: number;
 }
