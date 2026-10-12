@@ -1,7 +1,8 @@
 # Architecture: from one PC to a managed fleet
 
-Status on 12 Oct 2026: the single-PC product is built (`shadow-filer/`). Phase 1 of the central server is
-built (`server/`, and `shadow-filer/fleet.py` on the agent). Phases 2 to 6 are planned, not started.
+Status on 12 Oct 2026: the single-PC product is built (`shadow-filer/`). Phases 1 and 2 of the central
+server are built (`server/`, and `shadow-filer/fleet.py` on the agent). Phases 3 to 6 are planned, not
+started.
 
 ## What the product is
 
@@ -37,9 +38,13 @@ home routers and office firewalls with nothing to configure.
 | Console | `127.0.0.1:8765` | web console on the server; the local one stays |
 | Update / Stop service / Firewall on | local click, local guard rules | server queues a command; the agent re-checks it against its own lists and runs it |
 
-The matching, compliance and end-of-life code (`cve.py`, `compliance.py`, `eol.py`) is plain Python over
-dictionaries with no dependence on Windows, which is why the server is Python: that code moves across almost
-unchanged in phase 2.
+The matching and end-of-life code (`cve.py`, `eol.py`) is plain Python with no dependence on Windows, which
+is why the server is Python: the server image copies those two files from the agent unchanged, so there is
+one set of matching rules. The thresholds, the five control areas and the declared questions come from the
+agent's `compliance.py` in the same way. The checks themselves are written a second time for the server
+(`server/app/judge.py`), because the server sees less than the PC does: counts and true/false, never an
+account name or a path. Its evidence says "1 account does not require a password"; the PC's own console
+says which.
 
 ## Components
 
@@ -50,11 +55,20 @@ and a check-in loop. From phase 4 it runs as a Windows service with a signed ins
 `/api/v1/checkin`), console (`/api/v1/devices`, ...), and health. Stateless; any number can run behind the
 proxy.
 
-**Worker** (phase 2). Downloads the CVE, known-exploited and end-of-life lists daily, re-judges devices when
-a list or an inventory changes, writes one compliance line per device per day.
+**Worker** (`server/app/worker.py`). Downloads the CVE, known-exploited and end-of-life lists daily into a
+SQLite file on its own volume (the same file format the agent keeps), and judges a device again when its
+facts changed, a list changed, or the day changed; it writes the judgement and one compliance line per
+device per day. It is the only container that goes online, and only for those public downloads. It asks
+the database which devices are waiting through one function that answers with ids only, then works inside
+one organisation at a time under the same row-level security as the API. During the first download
+(about 9 minutes) devices are judged on their settings alone and judged again when the lists are there.
 
-**Web console.** Phase 1: one fleet page served by the API. Phase 2: the existing React pages
-(`shadow-filer/ui/`) reading the server's API, with fleet pages above the per-device ones.
+**Web console.** Built from the same source tree as the PC's console (`shadow-filer/ui`, entry
+`src/fleet`), so it shares its components and styles, and served by the API. Pages: Overview (how many
+devices pass each control area, which checks fail where, flaws used in real attacks, 90 days of history),
+Devices, one device (Compliance, Security, Programs, Network, Reported), Software (which program is on
+which devices, in which versions), Evidence (the report as text, the organisation's declarations, the
+record). It can accept a failing check with a reason and record a declaration; it cannot change a PC.
 
 **Reverse proxy.** TLS, request size limits, rate limits. Caddy in the compose file from phase 6; in phase 1
 the API listens on localhost only.
@@ -74,14 +88,28 @@ Phase 1 tables (`server/schema.sql`):
 | `snapshots` | what a device reported, per kind (`device`, `apps`, `services`, `network`, `posture`), kept only when it changed |
 | `audit_log` | enrolments, key use, later every command and sign-in |
 
-Later phases add: `users`, `roles`, `sessions` (3); `cve`, `aff`, `kev`, `eol_product` as shared reference
-data, `findings`, `compliance_history`, `declarations`, `exceptions` (2); `commands`, `command_results` (5).
+Phase 2 tables:
+
+| Table | Holds |
+|---|---|
+| `judgements` | the latest judgement of each device: flaws, end of support, the checks, a summary |
+| `compliance_history` | one line per device per day with each check's result |
+| `declarations` | what the organisation states about things no program can measure |
+| `exceptions` | a failing check accepted on one device, with the reason and who |
+| `reference_status` | how fresh the public lists are (shared; no customer data) |
+
+The lists themselves (`cve`, `aff`, `kev`, `eol_product`) are not in PostgreSQL: they are public, the same
+for everyone, and stay in the worker's SQLite file so the agent's matching code reads them unchanged.
+
+Later phases add: `users`, `roles`, `sessions` (3); `commands`, `command_results` (5).
 
 **Separation between customers** is enforced by the database, not only by the application. Every table with
 customer data has an `org_id` and row-level security with `FORCE ROW LEVEL SECURITY`; the API connects as a
 role that cannot bypass it and sets the organisation for each transaction. The only code that can look across
-organisations is three `SECURITY DEFINER` functions that turn a presented key or token into an organisation
-(`auth_device`, `auth_admin`, `redeem_token`). A bug in a query therefore returns nothing instead of another
+organisations is four `SECURITY DEFINER` functions: three turn a presented key or token into an organisation
+(`auth_device`, `auth_admin`, `redeem_token`) and one tells the worker which devices are waiting, by id
+(`judge_queue`). The worker has its own database role, which cannot read keys, tokens or the audit log;
+the API's role cannot create a judgement. A bug in a query therefore returns nothing instead of another
 customer's data. `server/tests/test_server.py` proves it by querying one organisation's devices as another.
 
 ## Identity and trust
@@ -137,7 +165,7 @@ result is in the audit log. The local console remains the place an owner can ref
 | Phase | Delivers | Status |
 |---|---|---|
 | 1. Pipeline proof | server, database, enrolment, the user-mode agent uploading inventory, a fleet device list | built |
-| 2. Central judging | CVE, end-of-life and compliance on the server; per-device pages and a fleet dashboard; the evidence report per device and per organisation | not started |
+| 2. Central judging | CVE, end-of-life and compliance on the server; per-device pages and a fleet dashboard; the evidence report per device and per organisation | built |
 | 3. Organisations and roles | sign-in with multi-factor, owner / admin / auditor roles, share link | not started |
 | 4. Service agent and installer | runs as a service, signed, self-updating, per-user helper, device key pair | not started |
 | 5. Remote actions | signed command queue, audit, approvals | not started |
@@ -158,10 +186,11 @@ the report is worth paying for.
 ## Containers
 
 Every server part is a container, built and run with Docker Compose (`server/docker-compose.yml`): `db`,
-`init` (one-off database setup), `api`, and on demand `manage` (admin commands) and `test`. Later phases add
-`worker` (2), and `proxy` (6) as further services in the same file; the React console is built into the
-API image or its own static container (2). The same compose file runs on a developer PC and on the rented
-server.
+`init` (one-off database setup), `api` (with the console built into its image), `worker`, and on demand
+`manage` (admin commands) and `test`. Phase 6 adds `proxy` as a further service in the same file. The same
+compose file runs on a developer PC and on the rented server. The image is built from the repository root,
+because it takes three modules and the console's source from the agent; `/.dockerignore` lets in exactly
+those, so nothing personal from the agent's folder can reach an image.
 
 The agent is the one part that is not a container and cannot be. Its job is to read the PC it runs on:
 the registry, the services, the firewall, the installed programs. A Linux container on Windows runs in a
@@ -169,6 +198,6 @@ virtual machine and sees none of that; a Windows container sees its own registry
 host's. The agent's front end, however, can be built in a container (`shadow-filer/docker-compose.yml`,
 service `ui-build`), so a build machine needs only Docker.
 
-## Running phase 1
+## Running it
 
 See `server/README.md`.

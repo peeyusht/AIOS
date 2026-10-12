@@ -2,7 +2,7 @@
 Administration from the command line, as the database owner. Phase 1 has no sign-up page: organisations,
 admin keys and enrolment tokens are made here. Each secret is printed once and only its hash is stored.
 
-  python -m app.manage init                          create or update the tables, set fleet_app's password
+  python -m app.manage init                          create or update the tables, set the two application roles' passwords
   python -m app.manage org "Acme Ltd"                create an organisation
   python -m app.manage admin-key "Acme Ltd"          a console key for it
   python -m app.manage token "Acme Ltd" [--uses 5] [--days 7]     an enrolment token for its PCs
@@ -34,6 +34,8 @@ def init(c, app_password: str | None = None) -> None:
     c.execute(SCHEMA.read_text(encoding="utf-8"))
     pw = app_password or os.environ.get("FLEET_APP_PASSWORD") or "fleet_app"
     c.execute(sql.SQL("ALTER ROLE fleet_app PASSWORD {}").format(sql.Literal(pw)))
+    wpw = os.environ.get("FLEET_WORKER_PASSWORD") or "fleet_worker"
+    c.execute(sql.SQL("ALTER ROLE fleet_worker PASSWORD {}").format(sql.Literal(wpw)))
 
 
 def org_id(c, name: str):

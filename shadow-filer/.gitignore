@@ -22,3 +22,5 @@ config.yaml.bak
 # Local backups made during updates
 backup-*/
 *.download
+# The fleet console when built on the PC (the server image builds its own)
+ui/dist-fleet/

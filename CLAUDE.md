@@ -6,8 +6,13 @@ Ollama). Wants direct, skeptical engineering; push back when something is wrong.
 
 ## What's here
 Two things. `shadow-filer/` is the agent and local console on one PC (below). `server/` is the central
-fleet server, phase 1 of `docs/architecture.md` (read that first for anything about several PCs): FastAPI +
-PostgreSQL, with enrolment, check-in and a fleet page. The user wants everything on the server side built
+fleet server, phases 1 and 2 of `docs/architecture.md` (read that first for anything about several PCs):
+FastAPI + PostgreSQL, with enrolment and check-in, a worker that keeps the CVE and end-of-life lists and
+judges every device (flaws, end of support, the compliance checks), and a web console. The server image is
+built from the repository root because it shares `cve.py`, `eol.py`, `compliance.py` and the console's
+source (`shadow-filer/ui`, second entry `src/fleet`) with the agent; `/.dockerignore` lets in those and
+nothing else. A change to those three agent modules is therefore also a change to the server: run both
+test suites. The user wants everything on the server side built
 and run in containers (12 Oct 2026): `docker compose up -d --build` in `server/`, admin commands with
 `docker compose run --rm manage ...`, tests with `docker compose run --rm test`; no Python environment on
 the host for the server. New server parts (worker, proxy, console) are added as services in that compose
@@ -114,7 +119,14 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - On the server (`server/`): separation between organisations is row-level security in PostgreSQL, forced,
   with the API connected as `fleet_app` (no bypass). Every new table with customer data needs `org_id`, the
   policy, and a line in the isolation test. Secrets are stored as hashes only. No endpoint may send a
-  command to a device before phase 5 is designed and agreed.
+  command to a device before phase 5 is designed and agreed. The worker connects as `fleet_worker`, under
+  the same row-level security: its one door across organisations is `judge_queue()`, which gives ids only.
+  It may read and write nothing about keys, tokens or the audit log, and only it may create a judgement.
+  It is the only container that goes online, and only for the same three public downloads as the agent
+  (NVD, CISA, endoflife.date): never add a request that carries anything about a customer or a device.
+  The server judges only what `fleet.payload()` sends (counts and true/false), so its evidence says how
+  many, never who; do not widen the payload to make a server page nicer without asking. Declarations are
+  always shown as declared; an accepted exception keeps its failing mark; never a certificate or a score.
 - `compliance.py` reads and judges; it changes nothing on the PC and sends nothing. It writes only its own
   tables (`compliance_history`, `compliance_declared`, `compliance_accepted`). Things it cannot measure are
   declarations by the owner and must always be shown as declared, never as measured or passed. An accepted
@@ -279,8 +291,14 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   40 services, 17 settings). The server keeps a kind only when its content changed; at first the network
   kind changed on every check-in, because of a timestamp, then short-lived UDP ports (40 of 58 UDP listeners
   were in the dynamic range), then discovery ports (mDNS 5353 coming and going). With those left out,
-  repeated check-ins store nothing. Server tests: 4, including reads and writes across organisations
+  repeated check-ins store nothing. Server tests: 7, including reads and writes across organisations
   refused in SQL.
+- Fleet, phase 2 (12 Oct 2026): the worker's first download of the lists took about 9 minutes in the
+  container (385,946 CVEs, 1,739 known exploited, 436 end-of-life products); judging this PC then takes
+  0.6 s. The server's result for this PC equals the agent's own on the same day: 36 of 85 programs
+  recognised, 14 with CVEs, 334 CVEs, 1 known exploited, 19 critical, Chrome's line ended, 1 of 5 control
+  areas passing with 6 failing checks. The winget id, which the agent uses as one way to confirm a vendor
+  and which is not sent, made no difference here. The built console is one 450 KB script (140 KB gzipped).
 - Services (`services.py`, 1.7 s): 313 services, 40 outside the Windows folder (24 running, 36 as SYSTEM), 3
   listen from the network; 14 belong to an installed application by install folder or product name, 1 more by
   first word plus identical version (the MongoDB server).
@@ -315,12 +333,19 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   catalogue, not programs winget cannot identify), and nothing is updated for the user. Packaged apps have no
   size and no true install date (the package folder's creation day is shown). Changes are only known from
   the first scan on (12 Oct 2026) and only as of the day a scan noticed them.
-- Fleet server: phase 1 only. It runs on localhost with default passwords and no TLS, so only this PC can
-  enrol; it shows what devices report and judges nothing. Next is phase 2 (CVE, end-of-life and compliance
-  on the server, the React console reading it). No cloud server has been rented.
+- Fleet server: phases 1 and 2. It runs on localhost with default passwords and no TLS, so only this PC
+  can enrol, and it has only ever held one device: the fleet views (several devices per check, versions of
+  one program across PCs) have run on made-up data in the tests only. Console access is one shared key per
+  organisation (phase 3: named users, roles). The server cannot tell "no newer versions" from "the PC's
+  check for newer versions is off" (shown as a note), counts Administrators-group members including groups
+  and disabled accounts, and does not see a browser's disabled update service: each needs a field added to
+  `fleet.payload()`, which needs the user's yes. There is no Hide for a wrong CVE match on the server, no
+  way to remove a device from the console, and no PDF: the report is text, a device page prints. The
+  console was built locally in the Lovable style, not in Lovable. No cloud server has been rented.
 - Compliance is for one PC. Not checked: multi-factor login, backups and the router
-  (declared). "Windows is up to date" means an update within 35 days, not "no newer build exists". A fleet
-  version (system-service agent, central console, roles) is the planned next step and is not started.
+  (declared). "Windows is up to date" means an update within 35 days, not "no newer build exists". The
+  14 days and the CVSS 7 line agree with several published summaries of the scheme (looked up 12 Oct 2026);
+  the official NCSC text was not read, and the 15-minute lock and 35 days are our own choices.
 - Network: view only except for switching Windows Firewall on (through `remedy.py`); a network's
   Public/Private mark, rules and shares cannot be changed from the page. The firewall button has run on demo
   data only: on 12 Oct 2026 the user's firewall was still off on all profiles and switching it on was left to them. No names for devices (no vendor lookup, no reverse DNS) and no per-connection traffic amounts.
