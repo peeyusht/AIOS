@@ -182,7 +182,7 @@ const settingsRaw: Raw = {
   autofile: { enabled: false, min_decisions: 20, min_rate: 0.95, window: 30, min_score: 0.9, delay_minutes: 30 },
   ocr: { enabled: true, max_pdf_pages: 20, min_image_kb: 50 },
   watch: { enabled: true, soon_days: 30, keep_expired_days: 60 },
-  library: { enabled: true, scan_hours: 24, image_distance: 8, check_signatures: true, applications: true, check_updates: true, update_hours: 24, vulnerabilities: true, cve_hours: 24 },
+  library: { enabled: true, scan_hours: 24, image_distance: 8, check_signatures: true, applications: true, check_updates: true, update_hours: 24, vulnerabilities: true, cve_hours: 24, remediate: true },
   ui: { port: 8765 },
   telemetry_note: "kept untouched",
 };
@@ -466,7 +466,7 @@ let libUpdChecked = ago(5 * 60);
 function libApplications(): LibraryApplications {
   const ls = settingsRaw.library ?? {};
   const on = !!ls.check_updates;
-  const apps = libApps.map((a) => { const u = on ? libAvail[a.name] : undefined; return { ...a, available: u?.[0] ?? null, update_id: u?.[1] ?? null }; });
+  const apps = libApps.map((a) => { const u = on ? libAvail[a.name] : undefined; return { ...a, available: u?.[0] ?? null, update_id: u?.[1] ?? null, update: u ? { id: u[1], to: u[0], kind: "latest" as const, latest: u[0], blocked: null } : null }; });
   const sized = libApps.filter((a) => a.size != null);
   return {
     scanned_at: libScanned, apps, changes: libChanges(), changes_days: 90, history_since: ago(60 * 1440),
@@ -619,12 +619,13 @@ const secServices: SecService[] = [
   svc("BrightSync", "Brightpad Sync", "C:\\Program Files\\Brightpad\\sync.exe", true, "user", [[9000, false]], secApps[3]!),
 ];
 const secHidden = new Set<string>();
+const remedyJob = { running: false, action: null as string | null, name: null as string | null, target: null as string | null, started: null as string | null, finished: null as string | null, ok: null as boolean | null, message: null as string | null };
 let secScanned = ago(95);
 function securityAnswer(brief: boolean): SecurityResponse {
   const ls = settingsRaw.library ?? {};
-  const base = { enabled: ls.vulnerabilities !== false, runner: { ...libRunner }, settings: { cve_hours: Number(ls.cve_hours ?? 24), check_updates: !!ls.check_updates } };
+  const base = { enabled: ls.vulnerabilities !== false, runner: { ...libRunner }, settings: { cve_hours: Number(ls.cve_hours ?? 24), check_updates: !!ls.check_updates, remediate: !!ls.remediate } };
   if (!base.enabled) return base;
-  const apps = secApps.filter((a) => !secHidden.has("app|" + a.key));
+  const apps = secApps.filter((a) => !secHidden.has("app|" + a.key)).map((a) => ({ ...a, update: a.available && a.update_id ? { id: a.update_id, to: a.available, kind: "latest" as const, latest: a.available, blocked: null } : null }));
   const quiet = new Set(secApps.filter((a) => secHidden.has("app|" + a.key)).map((a) => a.id));
   const services = secServices.filter((s) => !secHidden.has("service|" + s.id)).map((s) => (s.app_id && quiet.has(s.app_id) ? { ...s, cves: [], unversioned: 0 } : s));
   const hit = apps.filter((a) => a.cves.length > 0), all = hit.flatMap((a) => a.cves);
@@ -641,6 +642,7 @@ function securityAnswer(brief: boolean): SecurityResponse {
 
 const get: Record<string, Handler> = {
   "/api/security": (q) => securityAnswer(q.get("brief") === "1"),
+  "/api/remedy": () => ({ enabled: !!(settingsRaw.library ?? {}).remediate, job: { ...remedyJob }, history: [] }),
   "/api/journal": (q) => journalFor(Math.max(1, Number(q.get("days")) || 30)),
   "/api/library": () => {
     const ls = settingsRaw.library ?? { enabled: true, scan_hours: 24 };
@@ -652,6 +654,7 @@ const get: Record<string, Handler> = {
       scanned_at: libScanned, seconds: 42, files: 18_204, signatures_checked: ls.check_signatures !== false,
       images, versions, similar, installers,
       applications: ls.applications === false ? null : libApplications(),
+      remediate: ls.applications !== false && !!ls.remediate,
       counts: { images: images.length, versions: versions.length, similar: similar.length, installers: installers.length },
       dismissed: libHidden.size,
       summary: {
@@ -839,6 +842,21 @@ const post: Record<string, Handler> = {
     return { ok: true };
   },
   "/api/security/restore": () => { secHidden.clear(); return { ok: true }; },
+  "/api/remedy/update": (_q, b) => {
+    if (remedyJob.running) return { ok: false, message: "Another update or stop is still running." };
+    const a = libApps.find((x) => x.id === b.id) ?? secApps.find((x) => x.id === b.id);
+    const to = a ? (libAvail[a.name]?.[0] ?? (a as SecApp).available ?? "") : "";
+    Object.assign(remedyJob, { running: true, action: "update", name: a?.name ?? "the application", target: to, ok: null, message: null });
+    setTimeout(() => Object.assign(remedyJob, { running: false, ok: true, message: `Updated ${a?.name ?? "the application"} from ${a?.version ?? "?"} to ${to}.` }), 3000);
+    return { ok: true, started: true };
+  },
+  "/api/remedy/stop-service": (_q, b) => {
+    if (remedyJob.running) return { ok: false, message: "Another update or stop is still running." };
+    const s = secServices.find((x) => x.id === b.id);
+    Object.assign(remedyJob, { running: true, action: "stop", name: s?.name ?? "the service", target: String(b.id), ok: null, message: null });
+    setTimeout(() => { if (s) s.running = false; Object.assign(remedyJob, { running: false, ok: true, message: "Stopped. Windows starts it again at the next boot if it is set to start automatically." }); }, 2500);
+    return { ok: true, started: true };
+  },
   "/api/library/scan": () => {
     if (libRunner.running) return { ok: false, message: "A scan is already running." };
     Object.assign(libRunner, { running: true, started: iso(now()), progress: "Looking at pictures: 40 of 120", error: null });

@@ -385,6 +385,8 @@ export interface InstalledApp {
   installed: string | null; date_is: "installed" | "changed"; size: number | null; location: string | null;
   /** Newer version winget lists, or null (absent on older agents). */
   available?: string | null; update_id?: string | null;
+  /** What the Update button would do, or why not (absent on older agents). */
+  update?: UpdatePlan | null;
 }
 export interface AppUpdates {
   enabled: boolean; hours: number; checked_at: string | null; listed_at: string | null; ok: boolean; error: string | null; count: number;
@@ -404,6 +406,8 @@ export interface LibraryApplications {
 }
 export interface LibraryResponse {
   applications: LibraryApplications | null;
+  /** Update from the console is switched on in Settings. */
+  remediate?: boolean;
   enabled: boolean;
   runner: { running: boolean; started: string | null; progress: string | null; error: string | null; finished: string | null };
   settings: { scan_hours: number };
@@ -451,7 +455,7 @@ export interface FileTicket {
 export interface SecCve { id: string; published: string; score: number | null; severity: string; summary: string; fixed_in: string | null; kev: boolean; kev_added: string | null; ransomware: boolean; }
 export interface SecApp {
   id: string; key: string; name: string; version: string; judged_version: string; publisher: string; kind: "desktop" | "packaged";
-  available: string | null; update_id: string | null; products: string[]; cves: SecCve[]; unversioned: number;
+  available: string | null; update_id: string | null; update?: UpdatePlan | null; products: string[]; cves: SecCve[]; unversioned: number;
 }
 export interface SecService {
   id: string; name: string; service: string; running: boolean; start: string; account: "system" | "limited" | "user";
@@ -465,10 +469,18 @@ export interface SecuritySummary {
 export interface SecurityResponse {
   enabled: boolean;
   runner: { running: boolean; started: string | null; progress: string | null; error: string | null; finished: string | null };
-  settings: { cve_hours: number; check_updates: boolean };
+  settings: { cve_hours: number; check_updates: boolean; remediate?: boolean };
   scanned_at?: string | null; services_read?: boolean; installed?: number; recognised?: number;
   summary?: SecuritySummary;
   database?: { synced_at: string | null; tried_at: string | null; complete: boolean; cves: number; kev: number; bytes: number; error: string | null };
   hidden?: number;
   apps?: SecApp[]; services?: SecService[];
+}
+
+/* --- Remediation: update an application, stop a service --- */
+export interface UpdatePlan { id: string; to: string; kind: "latest" | "same_line"; latest: string; blocked: string | null; }
+export interface RemedyJob { running: boolean; action: "update" | "stop" | null; name: string | null; target: string | null; started: string | null; finished: string | null; ok: boolean | null; message: string | null; }
+export interface RemedyResponse {
+  enabled: boolean; job: RemedyJob;
+  history: { ts: string; action: "update" | "stop"; name: string; target: string; before: string; after: string; ok: number; message: string }[];
 }

@@ -58,6 +58,7 @@ DEFAULTS = {
     "update_hours": 24,        # how often the running agent asks again
     "vulnerabilities": False,  # ONLINE: keep a local copy of the public CVE lists and compare what is installed (cve.py)
     "cve_hours": 24,           # how often the local CVE copy is refreshed
+    "remediate": False,        # allow Update (winget) and Stop service from the console, one click each (remedy.py)
 }
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
 OFFICE_EXT = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".xlsm", ".xlsb", ".ppt", ".pptx", ".odt", ".ods",
@@ -532,7 +533,7 @@ def view(cfg: dict) -> dict:
     if installed:
         installed = apps.with_updates(cfg, installed, s["check_updates"], s["update_hours"])
     base = {"enabled": s["enabled"], "runner": Runner.state, "settings": {"scan_hours": s["scan_hours"]},
-            "applications": installed}
+            "applications": installed, "remediate": bool(installed) and s["remediate"]}
     rep = load_report() if s["enabled"] else None
     if not rep:
         return {**base, "scanned_at": None, **empty, "counts": {k: 0 for k in KINDS}, "dismissed": 0,

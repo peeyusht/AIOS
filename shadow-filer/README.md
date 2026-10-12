@@ -301,6 +301,14 @@ sent anywhere. It reports only what it is sure of: the product name must match a
 agree and your version must be inside the affected range, so a program it does not mention is unknown, not
 safe. Nothing is updated or stopped for you.
 
+**Update and Stop service** (Settings › Security › "Allow Update and Stop service from the console", off
+until you switch it on): an Update button on Library › Applications and on the Security page runs winget for
+that one application after you confirm; confirming accepts the publisher's licence terms. Where the latest
+version is a major-version jump (MongoDB 7.0 to 9.0), the newest version of the line you have is offered
+instead, or nothing. A Stop button on Security › Services stops one running service; it is not disabled and
+starts again at the next restart if set to start automatically. Windows still asks for permission when
+needed. Every update and stop is recorded.
+
 A scan runs once a day (Settings › Library) or when you click Scan now; the first one takes a few seconds.
 **Hide** removes an entry from the list (not from disk); **Show** opens its folder.
 

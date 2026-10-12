@@ -369,6 +369,63 @@ def read_updates() -> dict:
     return {"ok": True, "error": None, "rows": rows}
 
 
+def read_versions(package_id: str) -> list:
+    """Every version winget's catalogue has of one package, newest first. [] when it cannot be asked."""
+    import shutil
+    exe = shutil.which("winget") or os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WindowsApps",
+                                                 "winget.exe")
+    if os.name != "nt" or not os.path.exists(exe) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+_-]{1,120}", package_id or ""):
+        return []
+    try:
+        r = subprocess.run([exe, "show", "--id", package_id, "--exact", "--versions", "--source", "winget",
+                            "--disable-interactivity"], capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=120, creationflags=CREATE_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    lines = [ln.split("\r")[-1].strip() for ln in (r.stdout or "").splitlines()]
+    cut = next((i for i, ln in enumerate(lines) if re.fullmatch(r"-{3,}", ln)), None)
+    return [] if cut is None else [ln for ln in lines[cut + 1:] if re.match(r"\d", ln)]
+
+
+RAPID_MAJOR = 50      # browsers count 157, 158, 159: there the first number is not a "major version"
+
+
+def major_jump(installed: str, available: str) -> bool:
+    """Does the first number of the version change? '7.0.5' -> '9.0.2' yes; '22.12.0' -> '22.23.2' no."""
+    a, b = version_tuple(installed), version_tuple(available)
+    return bool(a and b) and a[0] != b[0] and max(a[0], b[0]) < RAPID_MAJOR
+
+
+def same_line(installed: str, versions: list) -> str | None:
+    """The newest version that stays on the line you are on: the same first two numbers if that line has
+    something newer ('7.0.5' -> '7.0.28'), else the same first number. None when there is nothing."""
+    mine = version_tuple(installed)
+    if not mine:
+        return None
+    newer = [v for v in versions if version_tuple(v) > mine and version_tuple(v)[0] == mine[0]]
+    close = [v for v in newer if version_tuple(v)[:2] == mine[:2]]
+    pick = close or newer
+    return max(pick, key=version_tuple) if pick else None
+
+
+def update_plan(app: dict, row: dict | None) -> dict | None:
+    """What the Update button would do for this application, or why it will not."""
+    if not row:
+        return None
+    import remedy
+    installed = row["version"] if version_tuple(row.get("version")) and not row["version"].startswith("<") else app["version"]
+    plan = {"id": row["id"], "to": row["available"], "kind": "latest", "latest": row["available"], "blocked": None}
+    if remedy.own_python(row["id"]):
+        plan["blocked"] = "The agent itself runs on this Python. Update it yourself while the agent is stopped."
+    elif major_jump(installed, row["available"]):
+        if row.get("same_line"):
+            plan.update(to=row["same_line"], kind="same_line")
+        else:
+            plan["blocked"] = (f"{row['available']} is a major-version jump from {installed}, which can break data or "
+                               "settings. It is not done from here; the copied command still works if you want it.")
+    return plan
+
+
 def _updates(c) -> dict | None:
     r = c.execute("SELECT value FROM apps_state WHERE k='updates'").fetchone()
     try:
@@ -377,9 +434,15 @@ def _updates(c) -> dict | None:
         return None
 
 
-def check_updates(cfg: dict, read=read_updates, now: datetime | None = None, log=None) -> dict:
-    """Ask once and keep the answer. A failed check keeps the previous list, and says so."""
+def check_updates(cfg: dict, read=read_updates, now: datetime | None = None, log=None, versions=None) -> dict:
+    """Ask once and keep the answer. A failed check keeps the previous list, and says so. Where the latest
+    version is a major-version jump, winget is also asked which versions exist, to find the newest one on the
+    line that is installed."""
     got = read()
+    versions = versions or (read_versions if read is read_updates else (lambda _id: []))
+    for r in got["rows"] if got["ok"] else []:
+        if major_jump(r["version"], r["available"]):
+            r["same_line"] = same_line(r["version"], versions(r["id"]))
     c = _conn(cfg["database"])
     try:
         prev = _updates(c) or {}
@@ -451,8 +514,9 @@ def with_updates(cfg: dict, v: dict, enabled: bool, hours: int) -> dict:
     for a in v["apps"]:
         r = rows.get(a["id"])
         ok = bool(r) and r["app_version"] == a["version"]
-        apps.append({**a, "available": r["available"] if ok else None, "update_id": r["id"] if ok else None})
-    loose = [{k: r[k] for k in ("name", "id", "version", "available")} for r in (u or {}).get("rows", [])
+        apps.append({**a, "available": r["available"] if ok else None, "update_id": r["id"] if ok else None,
+                     "update": update_plan(a, r) if ok else None})
+    loose =[{k: r[k] for k in ("name", "id", "version", "available")} for r in (u or {}).get("rows", [])
              if not r.get("app_id")]
     return {**v, "apps": apps,
             "updates": {"enabled": enabled, "hours": hours, "checked_at": (u or {}).get("checked_at"),

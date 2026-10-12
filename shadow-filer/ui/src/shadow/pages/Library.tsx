@@ -10,6 +10,7 @@ import { usePoll } from "@/lib/hooks";
 import { bytes, dateTime, when } from "@/lib/format";
 import type { AppChange, InstalledApp, LibraryApplications, LibraryInstaller, LibraryKind, LibraryResponse, LibrarySrc } from "@/lib/types";
 import { Input } from "@/components/ui/input";
+import { RemedyBar, UpdateButton } from "../remedy";
 import { Card, EmptyState, ListSkeleton, LoadError, Notice, PageHeader, Segmented, Spin, act } from "../ui";
 
 const LEVEL: Record<LibraryInstaller["level"], { label: string; v: "success" | "warning" | "danger" | "muted" }> = {
@@ -88,6 +89,7 @@ export function LibraryPage() {
           Turn it on in <a href="#/settings" className="text-primary underline-offset-4 hover:underline">Settings › Library</a>.
         </EmptyState>
       )}
+      {d && d.enabled && d.remediate && <RemedyBar onDone={() => void q.reload()} />}
       {d && d.enabled && d.runner.error && <Notice tone="danger" className="mb-4">{d.runner.error}</Notice>}
       {d && d.enabled && !d.scanned_at && !isRunning && (
         <EmptyState icon={<LibraryBig />} title="No scan yet"><div className="mt-3">{scanBtn}</div></EmptyState>
@@ -104,7 +106,7 @@ export function LibraryPage() {
           <TabsContent value="versions"><Versions d={d} reveal={reveal} hide={hide} /></TabsContent>
           <TabsContent value="similar"><Pictures d={d} reveal={reveal} hide={hide} /></TabsContent>
           <TabsContent value="installers"><Installers d={d} reveal={reveal} hide={hide} /></TabsContent>
-          <TabsContent value="applications"><Applications a={d.applications ?? null} checkNow={checkUpdates} isRunning={isRunning} /></TabsContent>
+          <TabsContent value="applications"><Applications a={d.applications ?? null} checkNow={checkUpdates} isRunning={isRunning} remediate={!!d.remediate} /></TabsContent>
         </Tabs>
       )}
       {d && d.dismissed > 0 && (
@@ -342,7 +344,7 @@ const CopyCmd = ({ id }: { id: string | null | undefined }) => id ? (
   <Button variant="ghost" size="icon" className="size-7 [&_svg]:size-3.5" aria-label="Copy the update command" title={`winget upgrade --id ${id}`} onClick={() => copyUpgrade(id)}><Copy /></Button>
 ) : null;
 
-function Applications({ a, checkNow, isRunning }: { a: LibraryApplications | null; checkNow: () => void; isRunning: boolean }) {
+function Applications({ a, checkNow, isRunning, remediate }: { a: LibraryApplications | null; checkNow: () => void; isRunning: boolean; remediate: boolean }) {
   const [text, setText] = useState("");
   const [show, setShow] = useState<"desktop" | "packaged" | "all" | "updates">("desktop");
   const [sort, setSort] = useState<{ k: SortKey; asc: boolean }>({ k: "name", asc: true });
@@ -448,7 +450,7 @@ function Applications({ a, checkNow, isRunning }: { a: LibraryApplications | nul
                   {upd && (
                     <td className="whitespace-nowrap px-2 py-1.5">
                       {x.available
-                        ? <span className="inline-flex items-center gap-1"><Badge variant="info" className="tabular">{x.available}</Badge><CopyCmd id={x.update_id} /></span>
+                        ? <span className="inline-flex items-center gap-1"><Badge variant="info" className="tabular">{x.available}</Badge><CopyCmd id={x.update_id} />{remediate && <UpdateButton app={x} />}</span>
                         : <span className="text-muted-foreground">—</span>}
                     </td>
                   )}

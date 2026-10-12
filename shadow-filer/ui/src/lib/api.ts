@@ -2,7 +2,7 @@
 import { adaptCleanup, adaptHistory, adaptLog, adaptMoves, adaptPredictions, adaptSearchStatus, adaptSystem } from "./adapt";
 import type {
   AutofileResponse, Decision, LibraryKind, LibraryResponse, FsCheck, FsDirs, InboxResponse, JournalResponse, OkResponse,
-  FileTicket, PreviewResponse, Raw, SaveResponse, SearchResponse, SecurityResponse, SettingsResponse, Stats, Status, WatchResponse,
+  FileTicket, PreviewResponse, Raw, SaveResponse, RemedyResponse, SearchResponse, SecurityResponse, SettingsResponse, Stats, Status, WatchResponse,
 } from "./types";
 
 function readToken(): string | null {
@@ -136,6 +136,9 @@ export const api = {
   securityHide: (kind: "app" | "service", key: string, undo = false) =>
     p("/api/security/hide", undo ? { kind, key, undo: true } : { kind, key }),
   securityRestore: () => p("/api/security/restore", {}),
+  remedy: () => g<RemedyResponse>("/api/remedy"),
+  remedyUpdate: (id: string) => p("/api/remedy/update", { id, terms_accepted: true }),
+  remedyStop: (id: string) => p("/api/remedy/stop-service", { id }),
   journal: (days = 30) => g<JournalResponse>("/api/journal?days=" + days),
   system: (refresh = false) => g<Raw>("/api/system" + (refresh ? "?refresh=1" : "")).then(adaptSystem),
 };

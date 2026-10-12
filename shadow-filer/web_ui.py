@@ -509,13 +509,17 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/library":
                 import library
                 return self._send(200, library.view(cfg))
+            if u.path == "/api/remedy":
+                import remedy
+                return self._send(200, remedy.view(cfg))
             if u.path == "/api/security":
                 import cve, library
                 s = library.settings(cfg)
                 on = s["enabled"] and s["applications"] and s["vulnerabilities"]
                 # a copy, taken before the lists are read: "finished" must never arrive with the lists from before
                 base = {"enabled": on, "runner": dict(library.Runner.state),
-                        "settings": {"cve_hours": s["cve_hours"], "check_updates": s["check_updates"]}}
+                        "settings": {"cve_hours": s["cve_hours"], "check_updates": s["check_updates"],
+                                     "remediate": bool(on and s["remediate"])}}
                 if not on:
                     return self._send(200, base)
                 return self._send(200, {**base, **cve.view(cfg, brief=q.get("brief") == "1")})
@@ -633,6 +637,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._library_post(u.path, body)
         if u.path.startswith("/api/security/"):
             return self._security_post(u.path, body)
+        if u.path in ("/api/remedy/update", "/api/remedy/stop-service"):
+            # the two calls that change the PC. The page sends only WHICH listed entry; what is run for it
+            # (package, version, service name) comes from the agent's own lists in remedy.py
+            import remedy
+            if u.path == "/api/remedy/update":
+                res = remedy.start_update(cfg_now(), str(body.get("id", "")), body.get("terms_accepted") is True, Ctx.log)
+            else:
+                res = remedy.start_stop(cfg_now(), str(body.get("id", "")), Ctx.log)
+            return self._send(200 if res["ok"] else 400, res)
         if u.path == "/api/ocr/selftest":
             import ocr
             if os.name != "nt":
