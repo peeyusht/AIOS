@@ -155,6 +155,20 @@ the report is worth paying for.
 4. **Stack:** Python, FastAPI, PostgreSQL.
 5. **The local console stays** on each PC, as the fallback and the place an owner approves actions.
 
+## Containers
+
+Every server part is a container, built and run with Docker Compose (`server/docker-compose.yml`): `db`,
+`init` (one-off database setup), `api`, and on demand `manage` (admin commands) and `test`. Later phases add
+`worker` (2), and `proxy` (6) as further services in the same file; the React console is built into the
+API image or its own static container (2). The same compose file runs on a developer PC and on the rented
+server.
+
+The agent is the one part that is not a container and cannot be. Its job is to read the PC it runs on:
+the registry, the services, the firewall, the installed programs. A Linux container on Windows runs in a
+virtual machine and sees none of that; a Windows container sees its own registry and services, not the
+host's. The agent's front end, however, can be built in a container (`shadow-filer/docker-compose.yml`,
+service `ui-build`), so a build machine needs only Docker.
+
 ## Running phase 1
 
 See `server/README.md`.

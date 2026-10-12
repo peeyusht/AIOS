@@ -7,8 +7,12 @@ Ollama). Wants direct, skeptical engineering; push back when something is wrong.
 ## What's here
 Two things. `shadow-filer/` is the agent and local console on one PC (below). `server/` is the central
 fleet server, phase 1 of `docs/architecture.md` (read that first for anything about several PCs): FastAPI +
-PostgreSQL in Docker Compose, with enrolment, check-in and a fleet page; `server/README.md` says how to run
-and test it. The product direction (decided 12 Oct 2026): evidence for cyber insurance and Cyber Essentials
+PostgreSQL, with enrolment, check-in and a fleet page. The user wants everything on the server side built
+and run in containers (12 Oct 2026): `docker compose up -d --build` in `server/`, admin commands with
+`docker compose run --rm manage ...`, tests with `docker compose run --rm test`; no Python environment on
+the host for the server. New server parts (worker, proxy, console) are added as services in that compose
+file. The agent is the exception and cannot be a container: it must read the PC's own registry, services
+and firewall. `server/README.md` has the details. The product direction (decided 12 Oct 2026): evidence for cyber insurance and Cyber Essentials
 for small organisations; not EDR.
 
 `shadow-filer/`: a local AI file assistant. Runs from **this folder** (`D:\Projects\AIOS\shadow-filer`) as a
@@ -161,7 +165,9 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   credits). Design changes go there, then the Lovable-owned files are copied into `ui/` unchanged (see
   `ui/README.md`); on 12 Oct 2026 the user asked for the Security page to be designed locally in the same
   style instead, so check `ui/README.md` for local changes before any copy from Lovable; small wiring fixes can be made locally but must be sent back to Lovable or they are lost on
-  the next copy. Build: `cd ui; npm run build` → `ui_dist/` (hashed asset names; no agent restart). Lovable only
+  the next copy. Build: `cd ui; npm run build` → `ui_dist/` (hashed asset names; no agent restart), or in a
+  container with no Node.js on the PC: `docker compose run --rm ui-build` in `shadow-filer/` (same output,
+  checked identical on 12 Oct 2026). Lovable only
   ever sees fictional demo data (`src/lib/mock.ts`): never send it real file names or screenshots of real data.
   When the agent's API changes shape, update `ui/src/lib/adapt.ts` and tell Lovable the new shape.
 - Restart the agent after Python changes: console Settings › Restart agent, or POST `/api/restart` with the
