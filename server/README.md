@@ -3,26 +3,38 @@
 The central server from `docs/architecture.md`: PCs enrol and report what is installed; an administrator
 sees the list of devices. No judging of flaws or compliance yet (phase 2), no remote actions (phase 5).
 
-## Run it on this machine
+Everything here runs in containers and is started with Docker Compose. Nothing needs to be installed on the
+machine except Docker.
+
+| Container | What it is | Runs |
+|---|---|---|
+| `db` | PostgreSQL 17, data in the `fleet-db` volume | always |
+| `init` | creates or updates the tables, sets the application role's password | once at start, then exits |
+| `api` | the API and the fleet page | always |
+| `manage` | admin commands | on demand |
+| `test` | the server's tests | on demand |
+
+## Run it
 ```
 cd server
 docker compose up -d --build        # PostgreSQL on 127.0.0.1:5433, the API and fleet page on 127.0.0.1:8770
+docker compose ps
 ```
-Both are reachable from this machine only. `docker compose down` stops them and keeps the data;
+Both ports are reachable from this machine only. `docker compose down` stops everything and keeps the data;
 `docker compose down -v` also deletes the database.
 
 ## First organisation, key and token
-Run these with the server's Python environment (`python -m venv .venv`, then
-`.venv\Scripts\python -m pip install -r requirements.txt httpx`):
 ```
-.venv\Scripts\python -m app.manage org "Acme Ltd"
-.venv\Scripts\python -m app.manage admin-key "Acme Ltd"          # console key, shown once
-.venv\Scripts\python -m app.manage token "Acme Ltd" --uses 5     # enrolment token, shown once
+docker compose run --rm manage org "Acme Ltd"
+docker compose run --rm manage admin-key "Acme Ltd"          # console key, shown once
+docker compose run --rm manage token "Acme Ltd" --uses 5     # enrolment token, shown once
+docker compose run --rm manage list
 ```
 Open http://127.0.0.1:8770 and paste the console key.
 
 ## Enrol a PC
-On the PC, in `shadow-filer`:
+The agent is the one part that is not a container and cannot be: it has to read the PC's own registry,
+services, firewall and installed programs, and a container sees only its own. On the PC, in `shadow-filer`:
 ```
 .venv\Scripts\python shadow_agent.py fleet show                  # exactly what would be sent
 .venv\Scripts\python shadow_agent.py fleet enrol http://127.0.0.1:8770 <token>
@@ -31,15 +43,15 @@ On the PC, in `shadow-filer`:
 .venv\Scripts\python shadow_agent.py fleet leave                 # stop reporting and forget the key
 ```
 The agent refuses a plain `http://` server unless it is localhost. A PC on another machine needs the server
-behind HTTPS (phase 6 adds the proxy to the compose file).
+behind HTTPS (phase 6 adds the proxy container).
 
 ## Tests
 ```
-.venv\Scripts\python -m unittest discover -s tests
+docker compose run --rm test
 ```
-They need the compose PostgreSQL running, create a throwaway database in it and drop it afterwards, and are
-skipped when it is not there. The important ones try to read and write one organisation's rows as another,
-through the API and directly in SQL as the application's database role.
+They create a database of their own in the `db` container and drop it afterwards. The important ones try to
+read and write one organisation's rows as another, through the API and directly in SQL as the application's
+database role.
 
 ## What protects what
 - **Between organisations:** row-level security in the database, forced, with the API connected as a role
@@ -47,7 +59,9 @@ through the API and directly in SQL as the application's database role.
   functions that turn a presented secret into an organisation.
 - **Secrets:** tokens and keys are random; only their SHA-256 is stored. Each is printed once.
 - **Requests:** 5 MB limit, only the five known kinds of report, strict response headers.
+- **Containers:** the API runs as an unprivileged user; the image that serves requests carries no test code.
 
 ## Not for production yet
-Default passwords in `docker-compose.yml` (set `POSTGRES_PASSWORD` and `FLEET_APP_PASSWORD`), no TLS, no rate
-limiting, no backups, console access by a shared key instead of named users. These are phases 3 and 6.
+Default passwords (set `POSTGRES_PASSWORD` and `FLEET_APP_PASSWORD` in a `.env` file next to
+`docker-compose.yml`), no TLS, no rate limiting, no backups, console access by a shared key instead of named
+users. These are phases 3 and 6.

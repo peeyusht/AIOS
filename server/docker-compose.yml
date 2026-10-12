@@ -1,6 +1,17 @@
-# Fleet server, phase 1: PostgreSQL and the API, both reachable from this machine only (127.0.0.1).
-# For anything beyond a developer PC put a TLS reverse proxy in front and change both passwords (see README).
+# Fleet server: every part runs in a container and is started with Docker Compose.
+#
+#   docker compose up -d --build                      database, one-off setup, API + fleet page
+#   docker compose run --rm manage org "Acme Ltd"     admin commands (organisations, keys, tokens)
+#   docker compose run --rm test                      the server's tests, against a throwaway database
+#
+# Both published ports are bound to 127.0.0.1: reachable from this machine only. For anything beyond a
+# developer PC put a TLS reverse proxy in front and set both passwords (see README).
 name: aios-fleet
+
+x-app: &app
+  build: {context: ., target: app}
+  image: aios-fleet-app
+
 services:
   db:
     image: postgres:17
@@ -14,22 +25,52 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    restart: unless-stopped
+
+  # Creates or updates the tables and sets the application role's password, then exits.
   init:
-    build: .
+    <<: *app
     command: ["python", "-m", "app.manage", "init"]
     environment:
       DATABASE_URL_OWNER: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/fleet
       FLEET_APP_PASSWORD: ${FLEET_APP_PASSWORD:-fleet_app}
     depends_on:
       db: {condition: service_healthy}
+
   api:
-    build: .
+    <<: *app
     environment:
       DATABASE_URL: postgresql://fleet_app:${FLEET_APP_PASSWORD:-fleet_app}@db:5432/fleet
-      DATABASE_URL_OWNER: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/fleet
     ports: ["127.0.0.1:8770:8770"]
     depends_on:
       init: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8770/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
+
+  # Admin commands, run on demand:  docker compose run --rm manage token "Acme Ltd" --uses 5
+  manage:
+    <<: *app
+    profiles: ["tools"]
+    entrypoint: ["python", "-m", "app.manage"]
+    environment:
+      DATABASE_URL_OWNER: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/fleet
+    depends_on:
+      db: {condition: service_healthy}
+
+  # The tests, run on demand. They create a database of their own in the same server and drop it afterwards.
+  test:
+    build: {context: ., target: test}
+    image: aios-fleet-test
+    profiles: ["tools"]
+    environment:
+      TEST_DATABASE_URL_OWNER: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
+      FLEET_APP_PASSWORD: ${FLEET_APP_PASSWORD:-fleet_app}
+    depends_on:
+      init: {condition: service_completed_successfully}
+
 volumes:
   fleet-db:

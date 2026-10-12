@@ -1,0 +1,18 @@
+# Building the console's front end in a container (no Node.js needed on the PC):
+#
+#   docker compose run --rm ui-build        type-checks, then writes ui_dist/ (the agent serves it as is)
+#
+# The agent itself is NOT here and cannot be: it has to read this PC's registry, services, firewall and
+# installed programs, and a container sees only its own. It runs on Windows (install_task.ps1).
+name: aios-agent-tools
+services:
+  ui-build:
+    image: node:22-slim
+    working_dir: /work/ui
+    volumes:
+      - ./ui:/work/ui
+      - ./ui_dist:/work/ui_dist
+      - ui-node-modules:/work/ui/node_modules      # Linux packages kept apart from the PC's own node_modules
+    command: ["sh", "-c", "npm ci --no-audit --no-fund && npm run build"]
+volumes:
+  ui-node-modules:
