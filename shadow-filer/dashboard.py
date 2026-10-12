@@ -116,6 +116,17 @@ def _agent(status: dict, search: dict | None) -> dict:
              "last_sweep": s.get("last_sweep"), "locked": (s.get("by_status") or {}).get("locked", 0)}}
 
 
+def _network() -> dict:
+    """What the Network page last found. Read in the background, never while the dashboard waits; findings
+    only, no addresses."""
+    import network
+    network.refresh_soon()
+    v = network.peek()
+    if not v or not v.get("read_at"):
+        return {"read_at": None, "findings": [], "counts": {}}
+    return {"read_at": v["read_at"], "findings": [f for f in v["findings"] if f["level"] != "info"], "counts": v["counts"]}
+
+
 def _remedy(cfg: dict) -> dict:
     import remedy
     v = remedy.view(cfg)
@@ -131,12 +142,16 @@ def attention(d: dict) -> list:
         out.append({"level": level, "text": text, "to": to})
 
     ag, sec, wa, ib, ap, st, cl = (d.get(k) or {} for k in ("agent", "security", "watch", "inbox", "apps", "storage", "cleanup"))
+    net = [f for f in (d.get("network") or {}).get("findings") or []]
     if ag.get("problem"):
         add("danger", f"The agent reports a problem: {ag['problem']}", "/settings")
     elif ag and not ag.get("watching", True):
         add("danger", "The agent is not watching your Downloads folder.", "/settings")
     if ag and not ag.get("model_ok", True):
         add("warning", "The filing model is not available: suggestions fall back to rules and similar documents.", "/settings")
+    for f in net:
+        if f["level"] == "danger":
+            add("danger", f["text"], "/network")
     sm = sec.get("summary") or {}
     if sm.get("kev"):
         n = sm["kev"]
@@ -147,6 +162,9 @@ def attention(d: dict) -> list:
             add("danger", f"{hit[0]['name']} has known flaws and accepts connections from the network.", "/security")
     if sm.get("critical"):
         add("warning", f"{sm['critical']} critical {'flaw' if sm['critical'] == 1 else 'flaws'} in {sm.get('apps_affected', 0)} installed programs.", "/security")
+    for f in net:
+        if f["level"] == "warning":
+            add("warning", f["text"], "/network")
     soon = (wa.get("counts") or {}).get("soon", 0)
     if soon:
         nxt = (wa.get("next") or [{}])[0]
@@ -181,6 +199,7 @@ def build(cfg: dict, status: dict | None = None, inbox_files: list | None = None
          "apps": _part(lambda: _apps(cfg, s, today)),
          "activity": _part(lambda: _activity(cfg, today)),
          "storage": _part(lambda: _storage(cfg)),
+         "network": _part(_network),
          "remedy": _part(lambda: _remedy(cfg))}
     d["attention"] = attention(d)
     return d

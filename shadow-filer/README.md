@@ -277,6 +277,15 @@ waiting), the key numbers with a link to the page that deals with each, the last
 vulnerable programs, recent application changes, storage and the agent's own state. It only reads what the
 other pages already know.
 
+## Network
+How this PC is connected and what it exposes: every interface with its addresses, gateway and DNS; the
+routing table; Windows Firewall per profile and whether the network is marked Public or Private; folders
+shared from this PC; every listening port with the program behind it and whether other devices can reach it;
+the connections open right now per program; the other devices Windows knows on the local network; DNS, proxy
+and the hosts file. Findings (a firewall that is off, a shared folder) are listed first and also appear on the
+Dashboard. It is view only and passive: Windows is asked what it already knows, the network is not scanned,
+and none of it is stored. From the command line: `shadow_agent.py network`.
+
 ## Library
 The Library page lists what you already hold. It is read-only: nothing is moved, renamed or deleted from it.
 - **Images**: firmware, OS and VM images grouped by product, with the versions you have, their size and where

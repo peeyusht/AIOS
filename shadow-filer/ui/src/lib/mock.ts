@@ -1,6 +1,6 @@
 /* Entirely fictional demo data with in-memory mutations, used when no agent token is present. */
 import type { SecApp, SecCve, SecService, SecurityResponse, AppChange, InstalledApp, LibraryApplications, JournalDay, JournalResponse, WatchDate, WatchSensitive, LibraryChain, LibraryInstaller, LibraryPictureGroup, LibraryProduct, LibraryPicture,
-  AutofileResponse, DashboardResponse,
+  AutofileResponse, DashboardResponse, NetAdapter, NetListener, NetRoute, NetworkResponse,
   CleanupHistoryRow,
   CleanupItem,
   CleanupResponse,
@@ -683,8 +683,70 @@ function mockDashboard(): DashboardResponse {
   };
 }
 
+function mockNetwork(): NetworkResponse {
+  const v4 = (address: string, prefix: number, origin = "dhcp") => ({ address, prefix, family: "IPv4" as const, origin, scope: "local network" as const });
+  const v6 = (address: string) => ({ address, prefix: 64, family: "IPv6" as const, origin: "wellknown", scope: "local network" as const });
+  const ad = (index: number, name: string, kind: NetAdapter["kind"], up: boolean, speed: number, o: Partial<NetAdapter> = {}): NetAdapter => ({
+    index, name, description: `${name} adapter`, kind, up, status: up ? "Up" : "Disconnected", speed, mac: `AA-BB-CC-00-11-${20 + index}`,
+    addresses: [], gateways: [], dns: [], dhcp: true, metric: null, mtu: 1500, network: null, category: null, internet: false, wifi: null, ...o });
+  const adapters = [
+    ad(5, "Ethernet", "ethernet", true, 1e9, { addresses: [v4("192.168.50.23", 24), v6("fe80::a1b2:c3d4:e5f6:1")], gateways: ["192.168.50.1"], dns: ["192.168.50.1", "9.9.9.9"], metric: 25, network: "Home network", category: "private", internet: true }),
+    ad(9, "Wi-Fi", "wifi", true, 866e6, { addresses: [v4("192.168.50.41", 24)], gateways: ["192.168.50.1"], dns: ["192.168.50.1"], metric: 40, network: "Home network", category: "private", internet: true,
+      wifi: { ssid: "Larkspur-5G", signal: "82%", authentication: "WPA3-Personal", radio_type: "802.11ax", channel: "44", band: "5 GHz" } }),
+    ad(12, "vEthernet (Lab switch)", "virtual", true, 10e9, { addresses: [v4("172.24.16.1", 20, "manual")], dhcp: false, metric: 5000 }),
+    ad(14, "Northwind VPN", "vpn", false, 0),
+    ad(16, "Bluetooth Network Connection", "bluetooth", false, 0),
+  ];
+  const rt = (destination: string, next: string, iface: string, metric: number, kind: NetRoute["kind"], family: "IPv4" | "IPv6" = "IPv4", protocol = "Local"): NetRoute =>
+    ({ destination, next, on_link: next === "", interface: iface, metric, family, protocol, kind });
+  const routes = [
+    rt("0.0.0.0/0", "192.168.50.1", "Ethernet", 0, "default", "IPv4", "NetMgmt"), rt("0.0.0.0/0", "192.168.50.1", "Wi-Fi", 0, "default", "IPv4", "NetMgmt"),
+    rt("10.20.0.0/16", "192.168.50.254", "Ethernet", 1, "network", "IPv4", "NetMgmt"), rt("172.24.16.0/20", "", "vEthernet (Lab switch)", 256, "network"),
+    rt("192.168.50.0/24", "", "Ethernet", 256, "network"), rt("192.168.50.0/24", "", "Wi-Fi", 256, "network"), rt("192.168.50.23/32", "", "Ethernet", 256, "host"),
+    rt("127.0.0.0/8", "", "Loopback", 256, "loopback"), rt("224.0.0.0/4", "", "Ethernet", 256, "multicast"), rt("224.0.0.0/4", "", "Wi-Fi", 256, "multicast"),
+    rt("::/0", "fe80::1", "Ethernet", 256, "default", "IPv6", "RouterDiscovery"), rt("fe80::/64", "", "Ethernet", 256, "link", "IPv6"), rt("fe80::/64", "", "Wi-Fi", 256, "link", "IPv6"),
+    rt("ff00::/8", "", "Ethernet", 256, "multicast", "IPv6"),
+  ];
+  const ls = (proto: "TCP" | "UDP", port: number, process: string, reach: "network" | "this PC", windows = false): NetListener =>
+    ({ proto, port, process, path: windows ? "C:\\Windows\\System32\\svchost.exe" : `C:\\Program Files\\${process}\\${process}.exe`, pid: 1000 + port, addresses: reach === "network" ? ["0.0.0.0", "::"] : ["127.0.0.1"], reach, windows });
+  const listening = [ls("TCP", 27017, "tessellate-engine", "network"), ls("TCP", 7070, "harbor-remote", "network"), ls("UDP", 5353, "larkspur", "network"),
+    ls("TCP", 445, "System", "network", true), ls("TCP", 135, "svchost", "network", true), ls("UDP", 5355, "svchost", "network", true),
+    ls("TCP", 8765, "pythonw", "this PC"), ls("TCP", 11434, "demo-model", "this PC"), ls("TCP", 5432, "pinedb", "this PC")];
+  const rm = (address: string, port: number, count: number, scope = "internet") => ({ address, port, count, scope });
+  const connections = [
+    { process: "larkspur", count: 14, internet: 13, local: 1, remotes: [rm("198.51.100.24", 443, 6), rm("198.51.100.77", 443, 5), rm("192.0.2.10", 443, 2), rm("192.168.50.60", 8009, 1, "local network")] },
+    { process: "brightpad-sync", count: 4, internet: 4, local: 0, remotes: [rm("192.0.2.44", 443, 4)] },
+    { process: "System", count: 2, internet: 0, local: 2, remotes: [rm("192.168.50.12", 445, 2, "local network")] },
+    { process: "harbor-remote", count: 1, internet: 1, local: 0, remotes: [rm("203.0.113.5", 443, 1)] },
+  ];
+  const dv = (address: string, n: number, state: string, iface = "Ethernet", gateway = false) => ({ address, mac: `11-22-33-44-55-0${n}`, state, interface: iface, gateway, family: "IPv4" as const });
+  const devices = [dv("192.168.50.1", 1, "reachable", "Ethernet", true), dv("192.168.50.12", 2, "reachable"), dv("192.168.50.60", 3, "stale"), dv("192.168.50.77", 4, "stale"), dv("192.168.50.90", 5, "reachable", "Wi-Fi")];
+  const shares = [{ name: "Scans", path: "D:\\Scans", description: "", builtin: false, printer: false },
+    ...["C$", "D$", "ADMIN$", "IPC$"].map((name) => ({ name, path: name === "IPC$" ? "" : name === "ADMIN$" ? "C:\\Windows" : `${name[0]}:\\`, description: "Default share", builtin: true, printer: false }))];
+  const hosts = [{ address: "10.20.0.5", names: ["intranet.example", "wiki.example"] }, { address: "127.0.0.1", names: ["demo.localhost"] }];
+  return {
+    read_at: iso(now()), seconds: 4.8, computer: "DEMO-PC", adapters, routes,
+    firewall: [{ name: "Domain", enabled: true, inbound: "Block", outbound: "Allow" }, { name: "Private", enabled: false, inbound: "NotConfigured", outbound: "NotConfigured" }, { name: "Public", enabled: true, inbound: "Block", outbound: "Allow" }],
+    other_firewalls: [], shares, listening, connections, devices,
+    dns: { servers: ["192.168.50.1", "9.9.9.9"], suffixes: ["home.example"] },
+    proxy: { enabled: false, server: "", script: "", bypass: "" }, hosts,
+    findings: [
+      { level: "danger", text: "Windows Firewall is off for the Private profile, including the one the network you are on uses, and no other firewall is registered with Windows: nothing filters incoming connections.", tab: "exposure" },
+      { level: "warning", text: "1 folder is shared from this PC: Scans.", tab: "exposure" },
+      { level: "info", text: "2 interfaces offer a way to the internet; Ethernet is one of them. The lowest total metric wins.", tab: "routes" },
+      { level: "info", text: "2 TCP ports opened by programs that are not part of Windows accept connections from the network (harbor-remote, tessellate-engine).", tab: "exposure" },
+      { level: "info", text: "The network you are on is marked Private: this PC can be found by other devices on it. Right at home or in the office, not on a network you do not trust.", tab: "exposure" },
+      { level: "info", text: "The hosts file overrides 3 names.", tab: "dns" },
+    ],
+    counts: { adapters_up: adapters.filter((a) => a.up).length, adapters: adapters.length, routes: routes.length, listening: listening.length,
+      listening_network: listening.filter((l) => l.reach === "network").length, listening_network_other: listening.filter((l) => l.reach === "network" && !l.windows).length,
+      connections: connections.reduce((s, g) => s + g.count, 0), programs_connected: connections.length, devices: devices.length, shares: 1, hosts: 3 },
+  };
+}
+
 const get: Record<string, Handler> = {
   "/api/dashboard": () => mockDashboard(),
+  "/api/network": () => mockNetwork(),
   "/api/security": (q) => securityAnswer(q.get("brief") === "1"),
   "/api/remedy": () => ({ enabled: !!(settingsRaw.library ?? {}).remediate, job: { ...remedyJob }, history: [] }),
   "/api/journal": (q) => journalFor(Math.max(1, Number(q.get("days")) || 30)),

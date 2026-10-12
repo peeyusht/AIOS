@@ -10,7 +10,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - Watches `%USERPROFILE%\Downloads`; PARA tree is `D:\Organized` (37 destinations at depth 2).
 - Ollama: `qwen3:4b` (filing guesses), `nomic-embed-text` (search + suggestions).
 - Console: **Dashboard** (home: what needs attention, key numbers, the week), **Inbox** (Waiting / Recent moves / Auto-filing), **Search**, **Cleanup**, **Watch** (Dates /
-  Sensitive files), **Security** (Programs / Services), **Library** (Images / Versions / Pictures / Installers / Applications), **Activity** (Journal / Accuracy /
+  Sensitive files), **Security** (Programs / Services), **Network** (Interfaces / Routes / Exposure / Connections / Devices / DNS & proxy), **Library** (Images / Versions / Pictures / Installers / Applications), **Activity** (Journal / Accuracy /
   Predictions / Log), **Settings** (form + System + Advanced YAML). Designed in Lovable.
 
 | File | Role |
@@ -25,6 +25,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 | `apps.py` | Applications (Library › Applications): programs installed on this PC with version, publisher, install date, size; what was installed, updated or removed between scans (`apps_history`). Reads the registry and the packaged-app list; read-only. Optional, off by default: asks `winget` which have a newer version (the one online step) |
 | `services.py` | Windows services that are not part of Windows: program, account, running or not, ports listened on (and whether from the network), the installed application each belongs to. Read-only, local |
 | `cve.py` | Known vulnerabilities: a local copy of the public CVE lists (`cve.db`, NVD yearly files + CISA's known-exploited list) and which installed programs and services they name, by strict name and version matching. Optional, off by default; downloads are the online step, the comparison is local |
+| `network.py` | Network page (`/api/network`): interfaces and addresses, routing table, DNS/proxy/hosts, Windows Firewall and the Public/Private mark, shared folders, listening ports with their programs, open connections, the neighbour table, and findings. Read-only, passive, in memory only |
 | `remedy.py` | The only code that changes installed software or a service: Update one application (winget) and Stop one service, each one click, confirmed, logged in `remedy_log`. Off by default |
 | `dashboard.py` | Dashboard (`/api/dashboard`): one summary put together from what the other modules already keep, plus the "needs attention" lines. Read-only, asks nothing new of Windows or the internet; a part that fails is replaced by `{error}` |
 | `journal.py` | Phase 7: work journal (Activity › Journal): per day, what arrived, was filed, was deleted, and which folders had documents added or changed. Built from existing tables + file dates; writes only its own `journal_touch` table |
@@ -84,6 +85,11 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   (it is asked per package, which tells it what is installed), don't pass `--accept-source-agreements` /
   `--accept-source-agreements`, and never run an upgrade or install from `apps.py`: that is `remedy.py`'s
   job alone. Ask before any other online step.
+- `network.py` is read-only and passive: one fixed PowerShell call, no arguments. It never scans the network
+  ("devices" is Windows' own neighbour table, not a sweep), never looks up the public address (that would go
+  online) and changes nothing. Its picture lives in memory only (30 s cache): remote addresses of open
+  connections and the MAC/IP addresses of nearby devices are never written to a database, a report file or
+  the log (the log gets counts). The dashboard takes only its findings, read in the background.
 - `remedy.py` is the only code that changes installed software or a running service, and only while
   `library.remediate` is on (off by default; allowed by the user on 12 Oct 2026). Don't relax any of this
   without asking: one application or one service per click, never "all"; the page sends only WHICH listed
@@ -125,7 +131,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - Restart the agent after Python changes: console Settings › Restart agent, or POST `/api/restart` with the
   `X-Shadow-Token` from the page's `<meta name="shadow-token">`. Static UI files need no restart.
 - Re-register the task (paths/flags changed): `powershell -ExecutionPolicy Bypass -File .\install_task.ps1`.
-- Useful CLI: `shadow_agent.py check | report | cleanup | search "<q>" | sysinfo | apps [--store] [--updates] | vulns [--sync] [--all]`.
+- Useful CLI: `shadow_agent.py check | report | cleanup | search "<q>" | sysinfo | apps [--store] [--updates] | vulns [--sync] [--all] | network`.
 - Self-tests worth running after related changes: Settings › OCR › Test OCR (`/api/ocr/selftest`); Recycle Bin
   self-test `/api/cleanup/selftest` (creates and recycles a tiny file in the agent folder).
 - Tests: `.venv\Scripts\python -m unittest discover -s tests` (stdlib unittest, temp folders only). Run them
@@ -203,6 +209,13 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   not "safe", unknown. A commit id as a range bound had made Ollama a hit. The one known-exploited hit is
   real: the MongoDB 7.0.5 server (CVE-2025-14847, fixed in 7.0.28), running as a service and listening on
   port 27017 from the network.
+- Network (`network.py`, 12 Oct 2026): a read takes about 5 s (the Net* cmdlets cost 0.6-1 s each; asking
+  Windows for each process separately had made it 10.5 s). 10 adapters (5 up: 1 Ethernet, 4 virtual), 82
+  routes (1 IPv4 default), 100 listening ports of which 80 reachable from the network (34 by programs that
+  are not part of Windows, 10 of them TCP), 54 connections by 12 programs, 12 devices in the neighbour table
+  after dropping broadcast, multicast and dead entries (194 raw), 4 built-in shares and no user shares, 3 hosts
+  entries. Finding: Windows Firewall is OFF on all three profiles with no other firewall registered with
+  Windows (confirmed with `netsh advfirewall` and the active policy store); the network is marked Public.
 - Services (`services.py`, 1.7 s): 313 services, 40 outside the Windows folder (24 running, 36 as SYSTEM), 3
   listen from the network; 14 belong to an installed application by install folder or product name, 1 more by
   first word plus identical version (the MongoDB server).
@@ -237,6 +250,8 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   catalogue, not programs winget cannot identify), and nothing is updated for the user. Packaged apps have no
   size and no true install date (the package folder's creation day is shown). Changes are only known from
   the first scan on (12 Oct 2026) and only as of the day a scan noticed them.
+- Network: view only; nothing can be changed from the page (not the firewall, not a network's Public/Private
+  mark). No names for devices (no vendor lookup, no reverse DNS) and no per-connection traffic amounts.
 - Dashboard: the first call after a restart takes about 6 s (system summary and Watch are built then), later
   ones 0.1 s; free disk space on it can be up to an hour old. Sensitive files are a count there, never what
   was found.
