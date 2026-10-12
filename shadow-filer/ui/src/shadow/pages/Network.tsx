@@ -9,6 +9,7 @@ import { usePoll } from "@/lib/hooks";
 import { when } from "@/lib/format";
 import type { NetAdapter, NetRoute, NetworkResponse } from "@/lib/types";
 import { Card, EmptyState, ListSkeleton, LoadError, Mono, Notice, PageHeader, Segmented, Spin, Stat, Tip } from "../ui";
+import { FirewallButton, RemedyBar } from "../remedy";
 
 type Tab = "interfaces" | "routes" | "exposure" | "connections" | "devices" | "dns";
 
@@ -43,12 +44,13 @@ export function NetworkPage() {
     <>
       <PageHeader
         title="Network"
-        sub="How this PC is connected and what it exposes. Read from Windows on this PC; nothing is scanned or changed."
+        sub="How this PC is connected and what it exposes. Read from Windows on this PC; nothing is scanned, and nothing is changed unless you click it."
         actions={<>
           {d?.read_at && <span className="text-xs text-muted-foreground tabular">Read {when(d.read_at)}{d.seconds != null && ` · ${d.seconds} s`}</span>}
           <Button variant="outline" size="sm" onClick={refresh} disabled={refreshing}>{refreshing ? <Spin /> : <RefreshCw />}Refresh</Button>
         </>}
       />
+      {d?.remediate && <RemedyBar onDone={() => void refresh()} />}
       {q.error && <div className="mb-4"><LoadError error={q.error} onRetry={q.reload} /></div>}
       {!d ? (!q.error && <ListSkeleton rows={5} />) : !d.read_at ? (
         <LoadError error={new Error(d.error ?? "The network could not be read.")} onRetry={refresh} />
@@ -85,7 +87,7 @@ export function NetworkPage() {
             </TabsList>
             <TabsContent value="interfaces"><Interfaces d={d} /></TabsContent>
             <TabsContent value="routes"><Routes d={d} /></TabsContent>
-            <TabsContent value="exposure"><Exposure d={d} /></TabsContent>
+            <TabsContent value="exposure"><Exposure d={d} remediate={!!d.remediate} /></TabsContent>
             <TabsContent value="connections"><Connections d={d} /></TabsContent>
             <TabsContent value="devices"><Devices d={d} /></TabsContent>
             <TabsContent value="dns"><Dns d={d} /></TabsContent>
@@ -212,7 +214,7 @@ function Routes({ d }: { d: NetworkResponse }) {
 }
 
 /* ---------- Exposure ---------- */
-function Exposure({ d }: { d: NetworkResponse }) {
+function Exposure({ d, remediate }: { d: NetworkResponse; remediate: boolean }) {
   const [f, setF] = useState<"other" | "network" | "all">("other");
   const [builtinOpen, setBuiltin] = useState(false);
   const active = new Set(d.adapters.filter((a) => a.up && a.category).map((a) => CAT[a.category!]));
@@ -222,7 +224,10 @@ function Exposure({ d }: { d: NetworkResponse }) {
   return (
     <div className="space-y-8">
       <section>
-        <h2 className="mb-3 text-sm font-semibold">Firewall</h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold">Firewall</h2>
+          {remediate && d.firewall.filter((p) => !p.enabled).length > 1 && <FirewallButton profile="all" primary />}
+        </div>
         <div className="grid grid-cols-1 gap-3 min-[1000px]:grid-cols-3">
           {d.firewall.map((p) => (
             <Card key={p.name} className={cn("p-4", !p.enabled && "border-destructive/40 bg-danger-soft")}>
@@ -230,6 +235,9 @@ function Exposure({ d }: { d: NetworkResponse }) {
                 <span className="font-medium">{p.name}</span>
                 <Badge variant={p.enabled ? "success" : "danger"}>{p.enabled ? "On" : "Off"}</Badge>
                 {active.has(p.name) && <Badge variant="info">Your network</Badge>}
+                {remediate && !p.enabled && ["Domain", "Private", "Public"].includes(p.name) && (
+                  <span className="ml-auto"><FirewallButton profile={p.name as "Domain" | "Private" | "Public"} /></span>
+                )}
               </div>
               <p className="mt-2 text-xs text-muted-foreground">incoming: {p.inbound.toLowerCase()} · outgoing: {p.outbound.toLowerCase()}</p>
             </Card>

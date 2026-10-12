@@ -517,7 +517,9 @@ class Handler(BaseHTTPRequestHandler):
                                                        idx.stats() if idx else {"disabled": True}))
             if u.path == "/api/network":
                 import network
-                return self._send(200, network.view(force=q.get("refresh") == "1", log=Ctx.log))
+                import remedy
+                return self._send(200, {**network.view(force=q.get("refresh") == "1", log=Ctx.log),
+                                        "remediate": remedy.enabled(cfg)})
             if u.path == "/api/remedy":
                 import remedy
                 return self._send(200, remedy.view(cfg))
@@ -646,12 +648,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._library_post(u.path, body)
         if u.path.startswith("/api/security/"):
             return self._security_post(u.path, body)
-        if u.path in ("/api/remedy/update", "/api/remedy/stop-service"):
-            # the two calls that change the PC. The page sends only WHICH listed entry; what is run for it
+        if u.path in ("/api/remedy/update", "/api/remedy/stop-service", "/api/remedy/firewall-on"):
+            # the calls that change the PC. The page sends only WHICH listed entry; what is run for it
             # (package, version, service name) comes from the agent's own lists in remedy.py
             import remedy
             if u.path == "/api/remedy/update":
                 res = remedy.start_update(cfg_now(), str(body.get("id", "")), body.get("terms_accepted") is True, Ctx.log)
+            elif u.path == "/api/remedy/firewall-on":       # on only: there is no call that switches it off
+                res = remedy.start_firewall_on(cfg_now(), str(body.get("profile", "")), Ctx.log)
             else:
                 res = remedy.start_stop(cfg_now(), str(body.get("id", "")), Ctx.log)
             return self._send(200 if res["ok"] else 400, res)

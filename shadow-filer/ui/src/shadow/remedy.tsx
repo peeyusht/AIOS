@@ -3,7 +3,7 @@
    three places, so it cannot be missed wherever the page is scrolled to: the button that was clicked, a
    toast, and a bar that stays at the top of the window. */
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Download, Square, X } from "lucide-react";
+import { Download, ShieldCheck, Square, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -39,7 +39,7 @@ async function tick() {
 }
 function watch() { if (!timer) timer = setTimeout(tick, 300); }
 
-function started(id: string, text: string, action: "update" | "stop", name: string, target: string | null) {
+function started(id: string, text: string, action: "update" | "stop" | "firewall", name: string, target: string | null) {
   set({ mine: id, result: null, job: { ...EMPTY, running: true, action, name, target } });
   toastId = toast.loading(text, { description: "Windows may ask for permission on your desktop. This can take a few minutes.", duration: Infinity });
   watch();
@@ -62,7 +62,8 @@ export function RemedyBar({ onDone }: { onDone: () => void }) {
     return (
       <div className="sticky top-14 z-10 mb-4" role="status" aria-live="polite">
         <Notice icon={<Spin />} className="bg-card shadow-md">
-          {job.action === "stop" ? <>Stopping <b>{job.name ?? "the service"}</b>…</>
+          {job.action === "firewall" ? <>Switching <b>Windows Firewall</b> on{job.target ? <> for {job.target}</> : null}…</>
+            : job.action === "stop" ? <>Stopping <b>{job.name ?? "the service"}</b>…</>
             : job.name ? <>Updating <b>{job.name}</b>{job.target ? <> to {job.target}</> : null}…</> : <>Starting…</>}
           <span className="block text-muted-foreground">
             {job.message ?? "Windows may ask for permission on your desktop. This can take a few minutes."}
@@ -112,6 +113,32 @@ export function UpdateButton({ app }: { app: { id: string; name: string; version
         <p>The agent runs <Mono className="text-xs">winget upgrade --id {u.id}{u.kind === "same_line" ? ` --version ${u.to}` : ""}</Mono>, which downloads the installer from the publisher and runs it.</p>
         <p>Close the program first if it is open. Windows may ask for permission on your desktop; declining stops the update.</p>
         <p>By continuing you accept the publisher's licence terms for this update.</p>
+      </Confirm>
+    </>
+  );
+}
+
+/** Switch Windows Firewall on, for one profile or all. There is no "off": the agent cannot do that. */
+export function FirewallButton({ profile, primary }: { profile: "all" | "Domain" | "Private" | "Public"; primary?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const s = useStore();
+  const id = "firewall:" + profile;
+  const busy = !!s.job?.running, mine = busy && s.mine === id;
+  const what = profile === "all" ? "all profiles" : `the ${profile} profile`;
+  const go = async () => {
+    setOpen(false);
+    if (await act(() => api.remedyFirewallOn(profile))) started(id, `Switching Windows Firewall on for ${what}…`, "firewall", "Windows Firewall", what);
+  };
+  return (
+    <>
+      <Button variant={primary ? "default" : "outline"} size="sm" disabled={busy} onClick={() => setOpen(true)}
+        title={busy && !mine ? "Another update or stop is still running" : undefined}>
+        {mine ? <><Spin /> Switching on…</> : <><ShieldCheck /> {profile === "all" ? "Turn all on" : "Turn on"}</>}
+      </Button>
+      <Confirm open={open} onOpenChange={setOpen} title={`Turn Windows Firewall on for ${what}?`} confirmLabel="Turn on" onConfirm={go}>
+        <p>Windows then blocks connections coming in from other devices unless a rule allows them. Programs that already have a rule keep working.</p>
+        <p>A program on this PC that others connect to and that has no rule (a database, a file share, a remote-desktop tool) may stop being reachable until you allow it in Windows Security › Firewall.</p>
+        <p>Windows will ask for permission on your desktop. Switching the firewall off again is done in Windows Security, not from here.</p>
       </Confirm>
     </>
   );

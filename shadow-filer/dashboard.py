@@ -117,14 +117,23 @@ def _agent(status: dict, search: dict | None) -> dict:
 
 
 def _network() -> dict:
-    """What the Network page last found. Read in the background, never while the dashboard waits; findings
-    only, no addresses."""
+    """What the Network page last found: the firewall, the connected interfaces, the counts and the serious
+    findings. Read in the background, never while the dashboard waits. No remote addresses, no devices."""
     import network
     network.refresh_soon()
     v = network.peek()
     if not v or not v.get("read_at"):
-        return {"read_at": None, "findings": [], "counts": {}}
-    return {"read_at": v["read_at"], "findings": [f for f in v["findings"] if f["level"] != "info"], "counts": v["counts"]}
+        return {"read_at": None, "findings": [], "counts": {}, "firewall": None, "interfaces": []}
+    off = [f["name"] for f in v["firewall"] if not f.get("enabled")]
+    state = None if not v["firewall"] else "on" if not off else "off" if len(off) == len(v["firewall"]) else "partly"
+    real = [a for a in v["adapters"] if a["up"] and a["kind"] in ("ethernet", "wifi", "vpn")]
+    return {"read_at": v["read_at"], "findings": [f for f in v["findings"] if f["level"] != "info"], "counts": v["counts"],
+            "firewall": {"state": state, "off": off, "other": v.get("other_firewalls") or []},
+            "virtual_up": sum(1 for a in v["adapters"] if a["up"]) - len(real),
+            "interfaces": [{"name": a["name"], "kind": a["kind"], "speed": a["speed"],
+                            "address": next((x["address"] for x in a["addresses"] if x["family"] == "IPv4"), None),
+                            "gateway": (a["gateways"] or [None])[0], "network": a["network"], "category": a["category"],
+                            "internet": a["internet"], "ssid": (a.get("wifi") or {}).get("ssid")} for a in real[:TOP]]}
 
 
 def _remedy(cfg: dict) -> dict:

@@ -46,7 +46,9 @@ own `#/inbox`-style routing, so it runs unchanged as a static page.
    Security section in `Settings.tsx`, `security*` calls in `api.ts`, the `Sec*` types in `types.ts` and the
    fictional security demo data and routes in `mock.ts`; and for Update / Stop service: `src/shadow/remedy.tsx`
    (bar, buttons, dialogs), its use in `Library.tsx` and `Security.tsx`, the `library.remediate` switch in
-   `Settings.tsx`, `remedy*` calls, `UpdatePlan`/`Remedy*` types and mock routes.
+   `Settings.tsx`, `remedy*` calls, `UpdatePlan`/`Remedy*` types and mock routes. Also local, on top of Lovable's
+   own pages: the Turn on buttons and the result bar in `Network.tsx` (and `FirewallButton` in `remedy.tsx`), and
+   the Network panel in `Dashboard.tsx`.
 
 ## Rules the UI must keep
 - No external requests (fonts, CDNs, images, analytics): the agent's CSP is `default-src 'self'`.

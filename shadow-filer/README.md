@@ -283,7 +283,9 @@ routing table; Windows Firewall per profile and whether the network is marked Pu
 shared from this PC; every listening port with the program behind it and whether other devices can reach it;
 the connections open right now per program; the other devices Windows knows on the local network; DNS, proxy
 and the hosts file. Findings (a firewall that is off, a shared folder) are listed first and also appear on the
-Dashboard. It is view only and passive: Windows is asked what it already knows, the network is not scanned,
+Dashboard. With "Allow Update and Stop service from the console" on, the Exposure tab can switch Windows
+Firewall on (never off) for one profile or all, after a confirmation and the Windows permission prompt.
+Otherwise it is view only, and always passive: Windows is asked what it already knows, the network is not scanned,
 and none of it is stored. From the command line: `shadow_agent.py network`.
 
 ## Library

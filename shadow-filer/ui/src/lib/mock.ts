@@ -676,6 +676,11 @@ function mockDashboard(): DashboardResponse {
     ] },
     activity: { days: activity, totals: { arrived: sum("arrived"), filed: sum("filed"), deleted: sum("deleted"), worked_files: sum("worked_files"), apps: sum("apps"), auto_filed: 2, deleted_bytes: 6.8 * GB, active_days: 6 } },
     storage: { collected: ago(5), volumes: [{ letter: "C:", label: "", bytes: 500 * GB, free: 62 * GB }, { letter: "D:", label: "Data", bytes: 1024 * GB, free: 633 * GB }] },
+    network: { read_at: ago(3), findings: [], counts: { listening_network_other: 3, listening_network: 6, connections: 21, programs_connected: 4, devices: 5 },
+      firewall: { state: "partly", off: ["Private"], other: [] }, virtual_up: 1, interfaces: [
+        { name: "Ethernet", kind: "ethernet", speed: 1e9, address: "192.168.50.23", gateway: "192.168.50.1", network: "Home network", category: "private", internet: true, ssid: null },
+        { name: "Wi-Fi", kind: "wifi", speed: 866e6, address: "192.168.50.41", gateway: "192.168.50.1", network: "Home network", category: "private", internet: true, ssid: "Larkspur-5G" },
+      ] },
     remedy: { enabled: true, running: false, recent: [
       { ts: ago(40), action: "update", name: "Harbor Remote", target: "9.8.1", ok: 1, message: "Updated Harbor Remote from 9.0.14 to 9.8.1." },
       { ts: ago(1440), action: "update", name: "Kettle Archive", target: "25.01", ok: 0, message: "Not updated: You declined the Windows permission prompt. The installer needs administrator rights." },
@@ -683,7 +688,9 @@ function mockDashboard(): DashboardResponse {
   };
 }
 
+const mockFirewallOn = new Set<string>();
 function mockNetwork(): NetworkResponse {
+  const fwOn = (name: string) => name !== "Private" || mockFirewallOn.has("all") || mockFirewallOn.has("Private");
   const v4 = (address: string, prefix: number, origin = "dhcp") => ({ address, prefix, family: "IPv4" as const, origin, scope: "local network" as const });
   const v6 = (address: string) => ({ address, prefix: 64, family: "IPv6" as const, origin: "wellknown", scope: "local network" as const });
   const ad = (index: number, name: string, kind: NetAdapter["kind"], up: boolean, speed: number, o: Partial<NetAdapter> = {}): NetAdapter => ({
@@ -725,8 +732,8 @@ function mockNetwork(): NetworkResponse {
     ...["C$", "D$", "ADMIN$", "IPC$"].map((name) => ({ name, path: name === "IPC$" ? "" : name === "ADMIN$" ? "C:\\Windows" : `${name[0]}:\\`, description: "Default share", builtin: true, printer: false }))];
   const hosts = [{ address: "10.20.0.5", names: ["intranet.example", "wiki.example"] }, { address: "127.0.0.1", names: ["demo.localhost"] }];
   return {
-    read_at: iso(now()), seconds: 4.8, computer: "DEMO-PC", adapters, routes,
-    firewall: [{ name: "Domain", enabled: true, inbound: "Block", outbound: "Allow" }, { name: "Private", enabled: false, inbound: "NotConfigured", outbound: "NotConfigured" }, { name: "Public", enabled: true, inbound: "Block", outbound: "Allow" }],
+    read_at: iso(now()), seconds: 4.8, computer: "DEMO-PC", adapters, routes, remediate: !!(settingsRaw.library ?? {}).remediate,
+    firewall: [{ name: "Domain", enabled: true, inbound: "Block", outbound: "Allow" }, { name: "Private", enabled: fwOn("Private"), inbound: fwOn("Private") ? "Block" : "NotConfigured", outbound: fwOn("Private") ? "Allow" : "NotConfigured" }, { name: "Public", enabled: true, inbound: "Block", outbound: "Allow" }],
     other_firewalls: [], shares, listening, connections, devices,
     dns: { servers: ["192.168.50.1", "9.9.9.9"], suffixes: ["home.example"] },
     proxy: { enabled: false, server: "", script: "", bypass: "" }, hosts,
@@ -954,6 +961,13 @@ const post: Record<string, Handler> = {
     const to = a ? (libAvail[a.name]?.[0] ?? (a as SecApp).available ?? "") : "";
     Object.assign(remedyJob, { running: true, action: "update", name: a?.name ?? "the application", target: to, ok: null, message: null });
     setTimeout(() => Object.assign(remedyJob, { running: false, ok: true, message: `Updated ${a?.name ?? "the application"} from ${a?.version ?? "?"} to ${to}.` }), 3000);
+    return { ok: true, started: true };
+  },
+  "/api/remedy/firewall-on": (_q, b) => {
+    if (remedyJob.running) return { ok: false, message: "Another update or stop is still running." };
+    const what = b.profile === "all" ? "all profiles" : `the ${b.profile} profile`;
+    Object.assign(remedyJob, { running: true, action: "firewall", name: "Windows Firewall", target: what, ok: null, message: null });
+    setTimeout(() => { mockFirewallOn.add(String(b.profile)); Object.assign(remedyJob, { running: false, ok: true, message: `Windows Firewall is on for ${what}. Programs without an allow rule no longer accept connections from other devices.` }); }, 2500);
     return { ok: true, started: true };
   },
   "/api/remedy/stop-service": (_q, b) => {
