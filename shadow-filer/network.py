@@ -114,7 +114,99 @@ def read_network() -> dict | None:
         raw = json.loads(line[5:]) if line else None
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
-    return raw if isinstance(raw, dict) else None
+    if not isinstance(raw, dict):
+        return None
+    raw["rules"] = read_rules()
+    return raw
+
+
+RULE_KEYS = (r"SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules",
+             r"SOFTWARE\Policies\Microsoft\WindowsFirewall\FirewallRules")
+
+
+def read_rules() -> list | None:
+    """Windows Firewall's rules as Windows stores them (one text line each), straight from the registry:
+    asking the firewall cmdlets for each rule's program and ports takes tens of seconds. None if unreadable."""
+    try:
+        import winreg
+    except ImportError:
+        return None
+    out, opened = [], 0
+    for path in RULE_KEYS:
+        try:
+            k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
+        except OSError:
+            continue
+        opened += 1
+        with k:
+            for i in range(winreg.QueryInfoKey(k)[1]):
+                try:
+                    _, value, _ = winreg.EnumValue(k, i)
+                except OSError:
+                    continue
+                if isinstance(value, str):
+                    out.append(value)
+    return out if opened else None
+
+
+def parse_rule(line: str) -> dict:
+    """'v2.31|Action=Allow|Active=TRUE|Dir=In|Protocol=6|Profile=Public|LPort=7070|App=C:\\x.exe|Name=X|' -> a dict;
+    a field that can repeat (Profile, LPort) becomes a list."""
+    d = {}
+    for part in (line or "").split("|"):
+        k, sep, v = part.partition("=")
+        if sep:
+            d.setdefault(k, []).append(v)
+    return d
+
+
+def rules_view(lines: list | None, exists=os.path.exists) -> dict | None:
+    """The enabled rules that let connections IN, grouped by program, with the ones that deserve a look:
+    a rule that lets any program in on any port, and rules for programs that are no longer there."""
+    if lines is None:
+        return None
+    win = os.path.normcase(os.environ.get("SystemRoot", r"C:\Windows")) + os.sep
+    total = windows = 0
+    progs, wide = {}, []
+    for line in lines:
+        r = parse_rule(line)
+        one = lambda k: (r.get(k) or [""])[0]
+        if one("Action").lower() != "allow" or one("Active").upper() != "TRUE" or one("Dir").lower() != "in":
+            continue
+        total += 1
+        app = os.path.expandvars(one("App"))
+        name = one("Name")
+        if name.startswith("@") or one("EmbedCtxt").startswith("@") or os.path.normcase(app).startswith(win) \
+                or app.lower() == "system" or (not app and one("Svc")) or one("AppPkgId") or one("LUOwn") and not app:
+            windows += 1
+            continue
+        ports = [p for p in r.get("LPort", []) + r.get("LPort2_10", []) if p]
+        profiles = sorted({p for p in r.get("Profile", []) if p}) or ["all"]
+        anywhere = not (r.get("RA4") or r.get("RA6"))
+        if not app:
+            if not ports:                    # no program and no port: everything, from the stated addresses
+                wide.append({"name": name or "(unnamed rule)", "profiles": profiles, "any_address": anywhere})
+                continue
+            app = ""
+        gone = bool(app) and not exists(app)
+        # leftovers of one program in several old folders (each update of a browser part leaves one) are one entry
+        key = ("gone:" + os.path.basename(app).lower()) if gone else (os.path.normcase(app) or "port:" + name)
+        g = progs.setdefault(key, {"program": os.path.basename(app) or name or "(no program)", "path": app, "rules": 0,
+                                   "ports": set(), "any_port": False, "profiles": set(), "any_address": False,
+                                   "missing": gone})
+        g["rules"] += 1
+        g["ports"].update(ports)
+        g["any_port"] = g["any_port"] or not ports
+        g["profiles"].update(profiles)
+        g["any_address"] = g["any_address"] or anywhere
+    out = []
+    for g in progs.values():
+        nums = sorted(g["ports"], key=lambda p: (not p.isdigit(), int(p) if p.isdigit() else 0, p))
+        out.append({**g, "ports": nums[:12], "more_ports": max(0, len(nums) - 12), "profiles": sorted(g["profiles"]),
+                    "public": "all" in g["profiles"] or "Public" in g["profiles"]})
+    out.sort(key=lambda g: (not g["missing"], not (g["public"] and g["any_address"]), g["program"].lower()))
+    return {"total": total, "windows": windows, "programs": out, "wide_open": wide,
+            "missing": sum(1 for g in out if g["missing"])}
 
 
 # --------------------------------------------------------------------------- tidying
@@ -273,6 +365,7 @@ def tidy(raw: dict) -> dict:
     px = raw.get("proxy") or {}
     out = {"read_at": datetime.now().isoformat(timespec="seconds"), "computer": raw.get("computer") or "",
            "adapters": adapters, "routes": rt, "firewall": _list(raw.get("firewall")),
+           "rules": rules_view(raw.get("rules")),
            "other_firewalls": [x for x in _list(raw.get("other_firewalls")) if x],
            "shares": shares, "listening": listening, "connections": connections, "devices": devices,
            "dns": {"suffixes": [s for s in _list(raw.get("suffixes")) if s],
@@ -286,6 +379,7 @@ def tidy(raw: dict) -> dict:
                      "listening_network_other": sum(1 for e in listening if e["reach"] == "network" and not e["windows"]),
                      "connections": sum(g["count"] for g in connections), "programs_connected": len(connections),
                      "devices": len(devices), "shares": sum(1 for s in shares if not s["builtin"]),
+                     "rules": (out["rules"] or {}).get("total"), "rule_programs": len((out["rules"] or {}).get("programs") or []),
                      "hosts": len(hosts)}
     return out
 
@@ -313,6 +407,13 @@ def findings(n: dict) -> list:
     for f in n["firewall"]:
         if f.get("enabled") and (f.get("inbound") or "").lower() == "allow":
             add("warning", f"Windows Firewall lets every incoming connection through on the {f['name']} profile.", "exposure")
+    ru = n.get("rules") or {}
+    if ru.get("wide_open"):
+        add("warning", f"{len(ru['wide_open'])} firewall rule{'s let' if len(ru['wide_open']) != 1 else ' lets'} any program accept "
+                       f"connections on any port ({', '.join(w['name'] for w in ru['wide_open'][:3])}).", "exposure")
+    if ru.get("missing"):
+        add("info", f"{ru['missing']} program{'s' if ru['missing'] != 1 else ''} with a firewall rule {'are' if ru['missing'] != 1 else 'is'} "
+                    "no longer on this PC; the rules are left over.", "exposure")
     user_shares = [s for s in n["shares"] if not s["builtin"] and not s["printer"]]
     if user_shares:
         add("warning", f"{len(user_shares)} folder{'s are' if len(user_shares) != 1 else ' is'} shared from this PC: "

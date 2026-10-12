@@ -295,7 +295,9 @@ protection) each list their checks as passed, failing, worth a look or could not
 found and what to do. Things no program can measure (multi-factor login, backups, a response plan) are your own
 declarations and are shown as such. A failing check can be accepted with a reason; it stays listed. One line is
 kept per day, so past months can be shown, and every update or change made from the console is listed as the
-patch record. Copy as text or print it. It follows the published control areas; it is not a certificate.
+patch record. It also flags programs and Windows releases that are past end of support (from a local copy of
+the public endoflife.date list, downloaded with the CVE list), browsers whose own updating is switched off, and
+firewall rules left over from programs that are gone or that let any program in. Copy as text or print it. It follows the published control areas; it is not a certificate.
 From the command line: `shadow_agent.py compliance`.
 
 ## Library

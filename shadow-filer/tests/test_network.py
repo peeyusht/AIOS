@@ -82,7 +82,7 @@ class TidyTest(unittest.TestCase):
                          [("192.168.2.1", True, "reachable"), ("192.168.2.50", False, "stale")])   # no broadcast, multicast, dead entries
         self.assertEqual(v["counts"], {"adapters_up": 2, "adapters": 3, "routes": 5, "listening": 4, "listening_network": 3,
                                        "listening_network_other": 1, "connections": 3, "programs_connected": 2, "devices": 2,
-                                       "shares": 0, "hosts": 0})
+                                       "shares": 0, "hosts": 0, "rules": None, "rule_programs": 0})
 
     def test_scope(self):
         for a, want in (("127.0.0.1", "this PC"), ("::1", "this PC"), ("0.0.0.0", "all"), ("::", "all"),
@@ -131,6 +131,36 @@ class TidyTest(unittest.TestCase):
         src = Path(network.__file__).read_text(encoding="utf-8")
         self.assertNotIn("sqlite3", src)                     # nothing here is written to a database or a file
         self.assertNotIn("write_text", src)
+
+    def test_firewall_rules(self):
+        base = "v2.31|Action=Allow|Active=TRUE|Dir=In|"
+        lines = [
+            base + "Protocol=6|Profile=Public|LPort=7070|App=C:\\Apps\\harbor.exe|Name=Harbor|",
+            base + "Protocol=17|Profile=Private|LPort=7070|LPort=7071|App=C:\\Apps\\harbor.exe|Name=Harbor UDP|RA4=LocalSubnet|",
+            base + "App=C:\\Old\\v1\\gone.exe|Name=Gone|",
+            base + "App=C:\\Old\\v2\\gone.exe|Name=Gone|",                     # the same leftover in another old folder
+            base + "Name=Let everything in|",                                        # no program, no port
+            base + "Protocol=6|LPort=3389|Name=Remote desktop by hand|",             # a port without a program
+            base + "App=%SystemRoot%\\system32\\svchost.exe|Svc=x|Name=@FirewallAPI.dll,-28502|",
+            "v2.31|Action=Block|Active=TRUE|Dir=In|App=C:\\Apps\\blocked.exe|Name=Blocked|",
+            "v2.31|Action=Allow|Active=FALSE|Dir=In|App=C:\\Apps\\off.exe|Name=Off|",
+            "v2.31|Action=Allow|Active=TRUE|Dir=Out|App=C:\\Apps\\out.exe|Name=Out|",
+        ]
+        self.assertEqual(network.parse_rule(lines[1])["LPort"], ["7070", "7071"])
+        v = network.rules_view(lines, exists=lambda p: "Old" not in p)
+        self.assertEqual((v["total"], v["windows"], v["missing"], [w["name"] for w in v["wide_open"]]), (7, 1, 1, ["Let everything in"]))
+        got = {g["program"]: g for g in v["programs"]}
+        self.assertEqual(sorted(got), ["Remote desktop by hand", "gone.exe", "harbor.exe"])
+        h = got["harbor.exe"]
+        self.assertEqual((h["rules"], h["ports"], h["profiles"], h["any_address"], h["public"], h["missing"]),
+                         (2, ["7070", "7071"], ["Private", "Public"], True, True, False))
+        self.assertEqual((got["gone.exe"]["rules"], got["gone.exe"]["missing"], got["gone.exe"]["any_port"]), (2, True, True))
+        self.assertEqual(v["programs"][0]["program"], "gone.exe")                    # leftovers first
+        self.assertIsNone(network.rules_view(None))
+        n = network.tidy(raw(rules=lines))
+        self.assertIn("1 firewall rule lets any program accept connections on any port (Let everything in).",
+                      [f["text"] for f in n["findings"] if f["level"] == "warning"])
+        self.assertEqual((n["counts"]["rules"], n["counts"]["rule_programs"]), (7, 3))
 
     def test_dashboard_gets_the_serious_findings_only(self):
         off = [{"name": n, "enabled": False, "inbound": "", "outbound": ""} for n in ("Domain", "Private", "Public")]

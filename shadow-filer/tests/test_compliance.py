@@ -34,7 +34,7 @@ def pc(**over):
 def net(**over):
     n = {"read_at": "2026-10-12T09:00:00", "other_firewalls": [],
          "firewall": [{"name": x, "enabled": True, "inbound": "Block", "outbound": "Allow"} for x in ("Domain", "Private", "Public")],
-         "listening": [], "shares": []}
+         "listening": [], "shares": [], "rules": {"total": 12, "windows": 12, "programs": [], "wide_open": [], "missing": 0}}
     n.update(over)
     return n
 
@@ -77,6 +77,31 @@ class ChecksTest(unittest.TestCase):
         self.assertEqual((c["fw.ports"]["status"], c["fw.ports"]["evidence"], c["fw.shares"]["status"], c["fw.shares"]["evidence"]),
                          ("info", ["tessd: TCP 27017"], "warn", ["Scans"]))
         self.assertEqual(compliance.firewall_checks(None)[0]["status"], "unknown")
+        prog = {"program": "tessd.exe", "path": "C:\\T\\tessd.exe", "rules": 2, "ports": ["27017"], "more_ports": 0, "any_port": False,
+                "profiles": ["all"], "any_address": True, "public": True, "missing": False}
+        rules = lambda **o: {"total": 20, "windows": 15, "programs": [prog], "wide_open": [], "missing": 0, **o}
+        c = by_id(compliance.firewall_checks(net(rules=rules())))["fw.rules"]
+        self.assertEqual((c["status"], c["evidence"]), ("info", ["tessd.exe: port 27017; all profiles; from any address"]))   # yours to approve
+        gone = {**prog, "program": "old.exe", "missing": True, "any_port": True, "ports": []}
+        c = by_id(compliance.firewall_checks(net(rules=rules(programs=[gone, prog], missing=1))))["fw.rules"]
+        self.assertEqual((c["status"], c["evidence"][0]), ("warn", "old.exe: any port; all profiles; from any address (program no longer there)"))
+        c = by_id(compliance.firewall_checks(net(rules=rules(wide_open=[{"name": "Allow everything", "profiles": ["all"], "any_address": True}]))))["fw.rules"]
+        self.assertEqual((c["status"], c["evidence"][0]), ("fail", "ANY PROGRAM, ANY PORT: Allow everything"))
+        self.assertEqual(by_id(compliance.firewall_checks(net(rules=None)))["fw.rules"]["status"], "unknown")
+
+    def test_browsers(self):
+        apps = {"apps": [{"name": "Google Chrome"}, {"name": "Microsoft Edge"}, {"name": "Mozilla Firefox (x64 en-US)"}, {"name": "Notes"}]}
+        ok = compliance.browser_checks(pc(), apps)
+        self.assertEqual((ok["status"], ok["detail"]), ("pass", "Automatic updates are not switched off for Google Chrome, Microsoft Edge, Firefox."))
+        bad = compliance.browser_checks(pc(browser_policy={"chrome_default": "0", "firefox_off": "1"},
+                                           update_services=[{"name": "edgeupdate", "start": "Disabled"}, {"name": "edgeupdatem", "start": "Disabled"}]), apps)
+        self.assertEqual((bad["status"], bad["evidence"]), ("fail", [
+            "Google Chrome: updates are switched off by policy", "Firefox: updates are switched off by policy",
+            "Microsoft Edge: its update service is disabled"]))
+        one = compliance.browser_checks(pc(update_services=[{"name": "edgeupdate", "start": "Disabled"}, {"name": "edgeupdatem", "start": "Manual"}]), apps)
+        self.assertEqual(one["status"], "pass")                                    # one of its two services can still run
+        self.assertIsNone(compliance.browser_checks(pc(), {"apps": [{"name": "Notes"}]}))     # no browser: no check
+        self.assertIsNone(compliance.browser_checks(pc(), None))
 
     def test_configuration(self):
         bad = pc(screensaver={"active": "1", "secure": "", "timeout": ""}, autoplay_off=0,
@@ -123,7 +148,7 @@ class ChecksTest(unittest.TestCase):
 class PageTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="sf-test-"))
-        self.cfg = {"database": self.tmp / "t.db"}
+        self.cfg = {"database": self.tmp / "t.db", "cve_database": self.tmp / "cve.db"}     # never this PC's real CVE copy
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)

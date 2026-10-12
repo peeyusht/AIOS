@@ -27,6 +27,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 | `cve.py` | Known vulnerabilities: a local copy of the public CVE lists (`cve.db`, NVD yearly files + CISA's known-exploited list) and which installed programs and services they name, by strict name and version matching. Optional, off by default; downloads are the online step, the comparison is local |
 | `network.py` | Network page (`/api/network`): interfaces and addresses, routing table, DNS/proxy/hosts, Windows Firewall and the Public/Private mark, shared folders, listening ports with their programs, open connections, the neighbour table, and findings. Read-only, passive, in memory only |
 | `compliance.py` | Compliance page (`/api/compliance`): the five Cyber Essentials control areas as pass/fail checks with evidence, from this PC's settings (one read-only PowerShell call) and from network.py, cve.py, apps.py and remedy.py; the owner's declarations and accepted exceptions; one history line a day. Read-only for the PC |
+| `eol.py` | End of support: a local copy of the public endoflife.date list (one 3 MB file, kept in `cve.db`), and which installed programs and which Windows are a release line that no longer gets security updates. Strict whole-name matching; the download is the online step |
 | `remedy.py` | The only code that changes installed software or a service: Update one application (winget), Stop one service, and switch Windows Firewall on, each one click, confirmed, logged in `remedy_log`. Off by default |
 | `dashboard.py` | Dashboard (`/api/dashboard`): one summary put together from what the other modules already keep, plus the "needs attention" lines. Read-only, asks nothing new of Windows or the internet; a part that fails is replaced by `{error}` |
 | `journal.py` | Phase 7: work journal (Activity › Journal): per day, what arrived, was filed, was deleted, and which folders had documents added or changed. Built from existing tables + file dates; writes only its own `journal_touch` table |
@@ -117,6 +118,11 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   list) and nothing else: no query, no parameter, nothing about this PC. The list of installed software is
   never sent anywhere; never replace this with a per-product API lookup without asking. A file that fails
   NVD's checksum changes nothing. `cve.py` and `services.py` list only: nothing is updated, stopped or removed.
+- The third online place is `eol.sync`, only with the CVE copy (`library.vulnerabilities`): one GET of
+  `https://endoflife.date/api/v1/products/full`, nothing about this PC in it (allowed by the user on 12 Oct
+  2026, who chose a local copy over a built-in table). The list has no vendors, so a program matches only
+  when its whole name is the product's name, label or alias, exactly one product has that name, and it is
+  not an operating system ("Grammarly for Windows" had matched Windows).
 - CVE matching is strict on purpose, and each rule below removed measured false alarms. Don't loosen one
   without re-measuring: the product must be the whole display name (minus version, filler and the maker's
   name in front), never a part of it; the vendor must agree with the publisher, the maker's name in front, or
@@ -235,6 +241,15 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   automatic lock found; 28 newer versions. Windows 11 calls itself "Windows 10" in the registry (the build
   number decides); Windows Update's own "last success" date read 2030 and is not used (the newest installed
   hotfix is); `whoami` on PATH can be Git's, so the System32 one is called by its full path.
+- End of support (`eol.py`, 12 Oct 2026): 484 products in the list, 436 kept (devices, services and standards
+  left out), download and load 0.8 s. 7 of the user's 85 programs are in it (Chrome, Firefox, MongoDB, Node.js,
+  three Pythons): 1 ended (Chrome's 154 line, on 6 Oct 2026), 6 supported. Windows 11 Enterprise 26H2 is
+  supported until 9 Oct 2029 (line `11-26h2-e`).
+- Firewall rules (`network.read_rules`, straight from the registry in 4 ms; the cmdlets take tens of
+  seconds): 770 stored, 305 enabled inbound allow rules, 132 Windows' own, the rest cover 53 programs, 13 of
+  them no longer on the PC (56 before folding the same program left behind in several old version folders).
+  36 present programs are allowed from any address on the Public profile. No rule lets any program in on any
+  port. All three browsers update themselves (no policy, update services not disabled).
 - Services (`services.py`, 1.7 s): 313 services, 40 outside the Windows folder (24 running, 36 as SYSTEM), 3
   listen from the network; 14 belong to an installed application by install folder or product name, 1 more by
   first word plus identical version (the MongoDB server).
@@ -269,8 +284,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   catalogue, not programs winget cannot identify), and nothing is updated for the user. Packaged apps have no
   size and no true install date (the package folder's creation day is shown). Changes are only known from
   the first scan on (12 Oct 2026) and only as of the day a scan noticed them.
-- Compliance is for one PC. Not checked: unsupported third-party programs, the browser's own auto-update, the
-  inbound firewall rules one by one (only their number is read), multi-factor login, backups and the router
+- Compliance is for one PC. Not checked: multi-factor login, backups and the router
   (declared). "Windows is up to date" means an update within 35 days, not "no newer build exists". A fleet
   version (system-service agent, central console, roles) is the planned next step and is not started.
 - Network: view only except for switching Windows Firewall on (through `remedy.py`); a network's

@@ -50,7 +50,7 @@ own `#/inbox`-style routing, so it runs unchanged as a static page.
    (bar, buttons, dialogs), its use in `Library.tsx` and `Security.tsx`, the `library.remediate` switch in
    `Settings.tsx`, `remedy*` calls, `UpdatePlan`/`Remedy*` types and mock routes. Also local, on top of Lovable's
    own pages: the Turn on buttons and the result bar in `Network.tsx` (and `FirewallButton` in `remedy.tsx`), and
-   the Network panel in `Dashboard.tsx`.
+   the Network panel in `Dashboard.tsx`; the "Rules that let connections in" block in `Network.tsx`.
 
 ## Rules the UI must keep
 - No external requests (fonts, CDNs, images, analytics): the agent's CSP is `default-src 'self'`.

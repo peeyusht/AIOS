@@ -583,6 +583,9 @@ class Runner:
                         import cve
                         if cves or cve.due(cfg, s["cve_hours"]):
                             cve.sync(cfg, progress=lambda m: cls.state.update(progress=m), log=log)
+                            import eol
+                            cls.state.update(progress="Downloading the end-of-life list")
+                            eol.sync(cfg, log=log)
                         cls.state.update(progress="Comparing with known vulnerabilities")
                         cve.scan(cfg, updates=s["check_updates"], hours=s["update_hours"], log=log)
                 try:      # one line a day in the compliance history, whether or not the page is opened

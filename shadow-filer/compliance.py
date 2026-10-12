@@ -86,7 +86,13 @@ $out = [pscustomobject]@{
   display_off = (Power 'SUB_VIDEO' 'VIDEOIDLE'); sleep_after = (Power 'SUB_SLEEP' 'STANDBYIDLE'); lock_on_wake = (Power 'SUB_NONE' 'CONSOLELOCK');
   autoplay_off = [int](Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers' 'DisableAutoplay');
   autorun_policy = [int](Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer' 'NoDriveTypeAutoRun');
-  inbound_allow_rules = @(Get-NetFirewallRule -Direction Inbound -Action Allow -Enabled True).Count }
+  browser_policy = [pscustomobject]@{
+    chrome_default = "$(Reg 'HKLM:\SOFTWARE\Policies\Google\Update' 'UpdateDefault')";
+    chrome_period = "$(Reg 'HKLM:\SOFTWARE\Policies\Google\Update' 'AutoUpdateCheckPeriodMinutes')";
+    edge_default = "$(Reg 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate' 'UpdateDefault')";
+    firefox_off = "$(Reg 'HKLM:\SOFTWARE\Policies\Mozilla\Firefox' 'DisableAppUpdate')" };
+  update_services = @(Get-CimInstance Win32_Service | Where-Object { $_.Name -match '^(gupdate|GoogleUpdater|edgeupdate|MozillaMaintenance)' } | ForEach-Object {
+    [pscustomobject]@{ name = "$($_.Name)"; start = "$($_.StartMode)" } }) }
 $json = ConvertTo-Json -InputObject $out -Compress -Depth 5
 'JSON:' + [regex]::Replace($json, '[^\x00-\x7F]', { param($m) '\u{0:x4}' -f [int][char]$m.Value })
 """
@@ -173,6 +179,27 @@ def firewall_checks(net: dict | None) -> list:
                       "that are not part of Windows. Each should be one you want reachable." if ports else
                       "No program outside Windows accepts connections from the network.",
                       [f"{e['process']}: TCP {e['port']}" for e in ports[:30]], to="/network"))
+    ru = net.get("rules")
+    if ru is None:
+        out.append(_check("fw.rules", "Every rule that lets connections in is for a program you know", "unknown",
+                          "The firewall rules could not be read.", to="/network"))
+    else:
+        progs, wide = ru["programs"], ru["wide_open"]
+        gone = [g["program"] for g in progs if g["missing"]]
+
+        def line(g):
+            ports = "any port" if g["any_port"] else "port " + ", ".join(g["ports"]) + (f" and {g['more_ports']} more" if g["more_ports"] else "")
+            return (f"{g['program']}: {ports}; {'all profiles' if 'all' in g['profiles'] else ', '.join(g['profiles'])}; "
+                    f"{'from any address' if g['any_address'] else 'from listed addresses only'}" + (" (program no longer there)" if g["missing"] else ""))
+        out.append(_check("fw.rules", "Every rule that lets connections in is for a program you know",
+                          "fail" if wide else "warn" if gone else "info" if progs else "pass",
+                          (f"{len(wide)} rule{'s let' if len(wide) != 1 else ' lets'} any program in on any port: {', '.join(w['name'] for w in wide[:4])}. " if wide else "")
+                          + (f"{len(gone)} rule set{'s are' if len(gone) != 1 else ' is'} left over from programs that are no longer on this PC. " if gone else "")
+                          + f"{ru['total']} rules let connections in: {ru['windows']} are Windows' own, the rest cover {len(progs)} "
+                            f"program{'s' if len(progs) != 1 else ''}. Each should be one you approve of.",
+                          [f"ANY PROGRAM, ANY PORT: {w['name']}" for w in wide] + [line(g) for g in progs[:40]],
+                          "Windows Security > Firewall > Advanced settings > Inbound Rules: delete what you do not need."
+                          if wide or gone else None, "/network"))
     shares = [s for s in net["shares"] if not s["builtin"] and not s["printer"]]
     out.append(_check("fw.shares", "No folders are shared from this PC without a reason",
                       "warn" if shares else "pass",
@@ -235,17 +262,59 @@ def configuration_checks(p: dict) -> list:
     return out
 
 
-def update_checks(p: dict, vul: dict | None, appsv: dict | None, today: date) -> list:
+def browser_checks(p: dict, appsv: dict | None) -> dict | None:
+    """Do the installed browsers update themselves? A browser is the program most exposed to the internet."""
+    if not appsv:
+        return None
+    names = " | ".join(a["name"].lower() for a in appsv.get("apps", []))
+    pol, svc = p.get("browser_policy") or {}, _list(p.get("update_services"))
+    off = lambda rx: (lambda s: bool(s) and all((x.get("start") or "").lower() == "disabled" for x in s))(
+        [x for x in svc if re.match(rx, x.get("name") or "", re.I)])
+    found, bad, doubt = [], [], []
+    if "google chrome" in names:
+        found.append("Google Chrome")
+        if pol.get("chrome_default") == "0" or pol.get("chrome_period") == "0":
+            bad.append("Google Chrome: updates are switched off by policy")
+        elif off(r"gupdate|GoogleUpdater"):
+            doubt.append("Google Chrome: its update service is disabled")
+    if "microsoft edge" in names:
+        found.append("Microsoft Edge")
+        if pol.get("edge_default") == "0":
+            bad.append("Microsoft Edge: updates are switched off by policy")
+        elif off(r"edgeupdate"):
+            doubt.append("Microsoft Edge: its update service is disabled")
+    if "firefox" in names:
+        found.append("Firefox")
+        if pol.get("firefox_off") == "1":
+            bad.append("Firefox: updates are switched off by policy")
+    if not found:
+        return None
+    return _check("upd.browsers", "Browsers update themselves", "fail" if bad else "warn" if doubt else "pass",
+                  (f"{len(bad) + len(doubt)} of {len(found)} installed browsers will not update by itself." if bad or doubt else
+                   f"Automatic updates are not switched off for {', '.join(found)}."), bad + doubt,
+                  "Remove the policy, or set the update service back to automatic." if bad or doubt else None)
+
+
+def update_checks(p: dict, vul: dict | None, appsv: dict | None, today: date, cfg: dict | None = None) -> list:
     out = []
     build = p.get("build") or 0
-    ended = build and (build < 22000 or build == 22000)       # Windows 10 (ended 14 Oct 2025) and Windows 11 21H2
+    win = {"state": "unknown", "line": None, "until": None}
+    if cfg is not None and build:
+        import eol
+        win = eol.windows(cfg, build, p.get("display_version") or "", p.get("edition") or "", today)
+    if win["state"] == "unknown":           # no local end-of-life list, or it does not know this release
+        ended = build and build <= 22000    # Windows 10 (ended 14 Oct 2025) and Windows 11 21H2
+        win = {"state": "ended" if ended else "unlisted", "line": None, "until": None}
+    name = f"{windows_name(p)} (build {build}.{p.get('ubr') or 0})"
     out.append(_check("upd.supported", "Windows is a version that still gets security updates",
-                      "unknown" if not build else "fail" if ended else "pass",
+                      "unknown" if not build else "fail" if win["state"] == "ended" else "warn" if win["state"] == "soon" else "pass",
                       "The Windows version could not be read." if not build else
-                      f"{windows_name(p)} (build {build}.{p.get('ubr') or 0}) no longer gets security updates, unless "
-                      "extended support was bought." if ended else
-                      f"{windows_name(p)}, build {build}.{p.get('ubr') or 0}. Not known to be out of support.",
-                      fix="Upgrade Windows." if ended else None))
+                      f"{name} stopped getting security updates" + (f" on {win['until']}" if win["until"] else "") + ", unless extended support was bought."
+                      if win["state"] == "ended" else
+                      f"{name} gets security updates until {win['until']}: less than {90} days from now." if win["state"] == "soon" else
+                      f"{name} gets security updates until {win['until']}." if win["until"] else
+                      f"{name}. Not known to be out of support.",
+                      fix="Upgrade Windows." if win["state"] in ("ended", "soon") else None))
     age = _days(p.get("last_update"), today)
     lim = THRESHOLDS["windows_update_days"]
     out.append(_check("upd.windows", f"Windows installed an update in the last {lim} days",
@@ -283,6 +352,29 @@ def update_checks(p: dict, vul: dict | None, appsv: dict | None, today: date) ->
         out.append(_check("upd.coverage", "Every installed program can be compared with the list of known flaws", "info",
                           f"{vul.get('recognised', 0)} of {vul.get('installed', 0)} programs match a product in the CVE list. "
                           "The others are not judged: unknown, not safe.", to="/security"))
+    if cfg is not None and appsv:
+        import eol
+        st = eol.status(cfg)
+        if not st["products"]:
+            out.append(_check("upd.unsupported", "Installed programs are versions that still get security updates", "unknown",
+                              "The end-of-life list has not been downloaded. It comes with the vulnerability check (Settings > Security).", to="/security"))
+        else:
+            judged = [x for x in eol.match(cfg, [a for a in appsv.get("apps", []) if a.get("kind") == "desktop"], today) if x["product"]]
+            ended = [x for x in judged if x["state"] == "ended"]
+            soon = [x for x in judged if x["state"] == "soon"]
+            row = lambda x, verb: (f"{x['name']}: the {x['line']} line {verb} {x['until'] or '(no date given)'}"
+                                   + (f"; newest in that line is {x['latest']}" if x.get("latest") and x["state"] != "ended" else ""))
+            out.append(_check("upd.unsupported", "Installed programs are versions that still get security updates",
+                              "fail" if ended else "warn" if soon else "pass",
+                              (f"{len(ended)} program{'s are' if len(ended) != 1 else ' is'} a release line that no longer gets security updates. " if ended else "")
+                              + (f"{len(soon)} more lose{'s' if len(soon) == 1 else ''} support within 90 days. " if soon else "")
+                              + f"{len(judged)} of {sum(1 for a in appsv.get('apps', []) if a.get('kind') == 'desktop')} programs are in the "
+                                "end-of-life list; the others are not judged.",
+                              [row(x, "ended on") for x in ended] + [row(x, "ends on") for x in soon],
+                              "Move to a supported release line of the program." if ended or soon else None, "/library"))
+    b = browser_checks(p, appsv)
+    if b:
+        out.append(b)
     if appsv and appsv.get("updates", {}).get("enabled"):
         n = appsv["updates"]["count"]
         out.append(_check("upd.pending", "Installed programs are on their newest version", "warn" if n else "pass",
@@ -426,7 +518,7 @@ def assess(cfg: dict, raw: dict, net: dict | None, vul: dict | None, appsv: dict
     finally:
         c.close()
     groups = {"firewalls": firewall_checks(net), "configuration": configuration_checks(raw),
-              "updates": update_checks(raw, vul, appsv, today), "access": access_checks(raw), "malware": malware_checks(raw)}
+              "updates": update_checks(raw, vul, appsv, today, cfg), "access": access_checks(raw), "malware": malware_checks(raw)}
     controls = []
     for key, title, about in CONTROLS:
         checks = groups[key]

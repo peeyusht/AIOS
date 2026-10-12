@@ -217,6 +217,10 @@ function Routes({ d }: { d: NetworkResponse }) {
 function Exposure({ d, remediate }: { d: NetworkResponse; remediate: boolean }) {
   const [f, setF] = useState<"other" | "network" | "all">("other");
   const [builtinOpen, setBuiltin] = useState(false);
+  const [allRules, setAllRules] = useState(false);
+  const ru = d.rules ?? null;
+  const look = ru ? ru.programs.filter((g) => g.missing) : [];
+  const ruleRows = ru ? (allRules ? ru.programs : look) : [];
   const active = new Set(d.adapters.filter((a) => a.up && a.category).map((a) => CAT[a.category!]));
   const shares = d.shares.filter((s) => !s.builtin);
   const builtin = d.shares.filter((s) => s.builtin);
@@ -245,6 +249,43 @@ function Exposure({ d, remediate }: { d: NetworkResponse; remediate: boolean }) 
         </div>
         {!!d.other_firewalls?.length && <Notice className="mt-3">Also registered as a firewall: {d.other_firewalls.join(", ")}.</Notice>}
       </section>
+
+      {ru && (
+        <section>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold">Rules that let connections in</h2>
+            <Segmented label="Rules shown" value={allRules ? "all" : "look"} onChange={(v) => setAllRules(v === "all")}
+              options={[{ value: "look", label: `Left over (${look.length})` }, { value: "all", label: `All programs (${ru.programs.length})` }]} />
+          </div>
+          <p className="mb-3 text-sm text-muted-foreground">
+            {ru.total} rules let connections in: {ru.windows} are Windows' own, the rest cover {ru.programs.length} programs.
+            {ru.missing > 0 && <> {ru.missing} of those programs {ru.missing === 1 ? "is" : "are"} no longer on this PC; their rules are left over and can be deleted in Windows Security › Firewall › Advanced settings.</>}
+          </p>
+          {ru.wide_open.length > 0 && (
+            <Notice tone="warn" className="mb-3">
+              {ru.wide_open.length === 1 ? "One rule lets" : `${ru.wide_open.length} rules let`} any program accept connections on any port: {ru.wide_open.map((w) => w.name).join(", ")}.
+            </Notice>
+          )}
+          {ruleRows.length === 0 ? quiet(allRules ? "No rules for programs outside Windows." : "No left-over rules.") : (
+            <Card className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-left text-xs text-muted-foreground"><tr className="border-b">
+                  <th className={th}>Program</th><th className={th}>Ports</th><th className={th}>Profiles</th><th className={th}>From</th><th className={cn(th, "text-right")}>Rules</th>
+                </tr></thead>
+                <tbody>{ruleRows.map((g) => (
+                  <tr key={g.program + g.path + (g.missing ? "!" : "")} className="border-b last:border-b-0">
+                    <td className={td}><span className="flex flex-wrap items-center gap-1.5"><Tip tip={g.path || undefined}><span tabIndex={g.path ? 0 : undefined}>{g.program}</span></Tip>{g.missing && <Badge variant="warning">No longer here</Badge>}</span></td>
+                    <td className={cn(td, "path tabular")}>{g.any_port ? <span className="text-muted-foreground">any</span> : <>{g.ports.join(", ")}{g.more_ports > 0 && ` +${g.more_ports}`}</>}</td>
+                    <td className={td}>{g.profiles.includes("all") ? "All" : g.profiles.join(", ")}</td>
+                    <td className={td}>{g.any_address ? <Badge variant={g.public ? "warning" : "muted"}>Any address</Badge> : <Badge variant="muted">Listed addresses</Badge>}</td>
+                    <td className={cn(td, "text-right tabular")}>{g.rules}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </Card>
+          )}
+        </section>
+      )}
 
       <section>
         <h2 className="mb-3 text-sm font-semibold">Shared folders</h2>
