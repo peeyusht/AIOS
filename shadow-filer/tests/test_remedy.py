@@ -134,11 +134,35 @@ class UpdateTest(Base):
         self.assertEqual(self.ran[0][-2:], ["--version", "7.0.28"])      # never the 9.0.2 winget calls latest
         self.assertEqual(remedy.state["message"], "Updated Mongo from 7.0.5 to 7.0.28.")
 
-    def test_a_failed_or_declined_update_is_reported_as_such(self):
-        self.update("Kettle", run=self.run_ok(code=0x8A150006 - (1 << 32)))
+    def test_an_installer_that_needs_rights_is_tried_once_more_as_administrator(self):
+        # measured: a silent MSI without administrator rights does not ask, it fails (winget 0x8a150030)
+        needs = self.run_ok(code=0x8A150030 - (1 << 32))
+
+        def as_admin(args):
+            self.ran.append(["as admin", *args])
+            self.raw[0] = reg("new", "Kettle Archive", "24.9.0")
+            self.scan()
+            return 0, ""
+        self.update("Kettle", run=needs, elevated=as_admin)
+        self.assertEqual(self.ran, [remedy.winget_args("Kettle.Archive", None),
+                                    ["as admin", *remedy.winget_args("Kettle.Archive", None)]])   # the very same command
+        self.assertEqual((remedy.state["ok"], remedy.state["message"]), (True, "Updated Kettle Archive from 24.1.0 to 24.9.0."))
+        # declining the Windows prompt is a failed update, said plainly
+        self.raw[0] = reg("k", "Kettle Archive", "24.1.0")
+        self.scan()
+        self.update("Kettle", run=needs, elevated=lambda a: (-3, "You declined the Windows permission prompt."))
+        self.assertEqual((remedy.state["ok"], remedy.state["message"]),
+                         (False, "Not updated: You declined the Windows permission prompt. The installer needs administrator rights."))
+        # any other failure is not retried with more rights
+        never = mock.Mock()
+        self.update("Kettle", run=self.run_ok(code=0x8A15002B - (1 << 32)), elevated=never)
+        never.assert_not_called()
+
+    def test_a_failed_update_is_reported_as_such(self):
+        self.update("Kettle", run=self.run_ok(code=0x8A150006 - (1 << 32)), elevated=lambda a: (1603, ""))
         s, h = remedy.state, remedy.history(self.cfg["database"])[0]
         self.assertEqual((s["ok"], h["ok"], h["after"]), (False, 0, "24.1.0"))
-        self.assertIn("did not go through (winget code 0x8a150006). Installer failed with exit code: 1602", s["message"])
+        self.assertIn("did not go through (winget code 0x643).", s["message"])
         self.update("Kettle", run=self.run_ok())            # winget says done, Windows still lists the old one
         self.assertIn("still lists version 24.1.0", remedy.state["message"])
         self.update("Kettle", run=mock.Mock(side_effect=RuntimeError("boom")))
