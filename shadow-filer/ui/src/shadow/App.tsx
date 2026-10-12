@@ -1,6 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
-  Activity as ActivityIcon, LibraryBig, BellRing, Eye, EyeOff, FlaskConical, Inbox as InboxIcon, Moon, RefreshCw, Search as SearchIcon,
+  Activity as ActivityIcon, LayoutDashboard, LibraryBig, BellRing, Eye, EyeOff, FlaskConical, Inbox as InboxIcon, Moon, RefreshCw, Search as SearchIcon,
   Settings as SettingsIcon, ShieldAlert, Sparkles, Sun, Trash2, WifiOff,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
@@ -12,9 +12,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { api, isMock, onConnection } from "@/lib/api";
-import { usePoll, useHashPath, navigationGuard } from "@/lib/hooks";
+import { usePoll, navigationGuard } from "@/lib/hooks";
 import type { Status } from "@/lib/types";
 import { InboxPage } from "./pages/Inbox";
+import { DashboardPage } from "./pages/Dashboard";
 import { SearchPage } from "./pages/Search";
 import { CleanupPage } from "./pages/Cleanup";
 import { WatchPage } from "./pages/Watch";
@@ -47,6 +48,7 @@ function useTheme() {
 }
 
 const NAV = [
+  { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { path: "/inbox", label: "Inbox", icon: InboxIcon },
   { path: "/search", label: "Search", icon: SearchIcon },
   { path: "/cleanup", label: "Cleanup", icon: Trash2 },
@@ -67,9 +69,16 @@ function Logo() {
   );
 }
 
+const subscribeHash = (cb: () => void) => {
+  window.addEventListener("hashchange", cb);
+  return () => window.removeEventListener("hashchange", cb);
+};
+const dashboardHash = () => window.location.hash.replace(/^#/, "") || "/dashboard";
+
 export default function ShadowApp() {
-  const path = useHashPath();
-  const section = "/" + (path.split("/")[1] || "inbox");
+  const path = useSyncExternalStore(subscribeHash, dashboardHash, () => "/dashboard");
+  const requested = "/" + (path.split("/")[1] || "dashboard");
+  const section = NAV.some((item) => item.path === requested) ? requested : "/dashboard";
   const { dark, toggle } = useTheme();
   const mock = isMock();
   const [conn, setConn] = useState({ reachable: true, stale: false });
@@ -103,6 +112,7 @@ export default function ShadowApp() {
   const s = status.data;
   let page: ReactNode;
   switch (section) {
+    case "/inbox": page = <InboxPage />; break;
     case "/search": page = <SearchPage />; break;
     case "/cleanup": page = <CleanupPage />; break;
     case "/watch": page = <WatchPage />; break;
@@ -110,7 +120,7 @@ export default function ShadowApp() {
     case "/library": page = <LibraryPage />; break;
     case "/activity": page = <ActivityPage />; break;
     case "/settings": page = <SettingsPage status={s} />; break;
-    default: page = <InboxPage />;
+    default: page = <DashboardPage />;
   }
 
   return (

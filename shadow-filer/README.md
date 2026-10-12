@@ -271,6 +271,12 @@ record as plain text for a status report or a timesheet. It is put together from
 records plus file dates; no file is opened. A file only remembers its last change, so the agent notes once a
 day which documents were added or changed: the "worked on" list is complete for days the agent was running.
 
+## Dashboard
+The home page: what needs attention first (known-exploited flaws, dates coming up, a nearly full drive, files
+waiting), the key numbers with a link to the page that deals with each, the last seven days, the worst
+vulnerable programs, recent application changes, storage and the agent's own state. It only reads what the
+other pages already know.
+
 ## Library
 The Library page lists what you already hold. It is read-only: nothing is moved, renamed or deleted from it.
 - **Images**: firmware, OS and VM images grouped by product, with the versions you have, their size and where
