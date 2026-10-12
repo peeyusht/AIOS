@@ -474,8 +474,9 @@ def affected(row, version: str) -> str | None:
     return "yes"
 
 
-# One product name often covers several programs: 'canva:canva' is the Android app and the desktop one.
-OTHER_PLATFORM = re.compile(r"\b(android|ios|ipados|iphone|ipad)\b", re.I)
+# One product name often covers several programs: 'canva:canva' is the Android app and the desktop one,
+# and a server's CVE can be about its Linux build only. Dropped unless the text also names Windows.
+OTHER_PLATFORM = re.compile(r"\b(android|ios|ipados|iphone|ipad|linux|macos|mac os x?)\b", re.I)
 THIS_PLATFORM = re.compile(r"\b(windows|desktop)\b", re.I)
 
 
@@ -541,7 +542,7 @@ def scan(cfg: dict, updates: bool = False, hours: int = 24, read_services=None, 
     judged = {a["id"]: a for a in match(cfg, installed)}
     own = match(cfg, [{**s, "name": s["product"] or s["name"]} for s in svcs if not s["app_id"]])
     own = {s["id"]: s for s in own}
-    out_apps = [{k: a.get(k) for k in ("id", "name", "version", "judged_version", "publisher", "kind", "available",
+    out_apps = [{k: a.get(k) for k in ("id", "key", "name", "version", "judged_version", "publisher", "kind", "available",
                                        "update_id", "products", "cves", "unversioned")}
                 for a in judged.values() if a["products"]]
     out_svcs = []
@@ -579,11 +580,50 @@ def summary(rep: dict) -> dict:
             "services_affected": sum(1 for s in rep["services"] if s["cves"])}
 
 
-def view(cfg: dict) -> dict:
-    """The last comparison, its counts, and how fresh the local CVE copy is."""
+HIDE_KINDS = ("app", "service")
+
+
+def _hidden(c) -> set:
+    c.execute("CREATE TABLE IF NOT EXISTS vuln_hidden (kind TEXT, key TEXT, ts TEXT, PRIMARY KEY (kind, key))")
+    return {(r[0], r[1]) for r in c.execute("SELECT kind, key FROM vuln_hidden")}
+
+
+def hide_key(kind: str, entry: dict) -> str:
+    """What 'Hide' remembers: the application's name without its version (so it stays hidden after an
+    update: hiding says 'this match is wrong' or 'I know'), or the service's name."""
+    return (entry.get("key") or entry["id"]) if kind == "app" else entry["id"]
+
+
+def hide(db_path, kind: str, key: str, undo: bool = False) -> None:
+    c = _state(db_path)
+    try:
+        _hidden(c)
+        if undo:
+            c.execute("DELETE FROM vuln_hidden WHERE kind=? AND key=?", (kind, key))
+        else:
+            c.execute("INSERT OR REPLACE INTO vuln_hidden VALUES (?,?,?)",
+                      (kind, key, datetime.now().isoformat(timespec="seconds")))
+        c.commit()
+    finally:
+        c.close()
+
+
+def restore_all(db_path) -> None:
+    c = _state(db_path)
+    try:
+        _hidden(c)
+        c.execute("DELETE FROM vuln_hidden")
+        c.commit()
+    finally:
+        c.close()
+
+
+def report(cfg: dict) -> dict:
+    """The last comparison exactly as it was made (nothing hidden)."""
     c = _state(cfg["database"])
     try:
         r = c.execute("SELECT value FROM vuln_state WHERE k='report'").fetchone()
+        gone = _hidden(c)
     finally:
         c.close()
     try:
@@ -592,7 +632,24 @@ def view(cfg: dict) -> dict:
         rep = None
     rep = rep or {"scanned_at": None, "services_read": False, "installed": 0, "recognised": 0, "apps": [],
                   "services": []}
-    return {**rep, "summary": summary(rep), "database": status(cfg)}
+    return {**rep, "_hidden": gone}
+
+
+def view(cfg: dict, brief: bool = False) -> dict:
+    """The last comparison minus what you hid, its counts, and how fresh the local CVE copy is.
+    `brief` leaves the lists out (the sidebar badge only needs the counts)."""
+    rep = report(cfg)
+    gone = rep.pop("_hidden")
+    apps = [a for a in rep["apps"] if ("app", hide_key("app", a)) not in gone]
+    # an application you hid no longer colours its services either
+    quiet = {a["id"] for a in rep["apps"]} - {a["id"] for a in apps}
+    svcs = [({**s, "cves": [], "unversioned": 0} if s.get("app_id") in quiet else s)
+            for s in rep["services"] if ("service", hide_key("service", s)) not in gone]
+    shown = {**rep, "apps": apps, "services": svcs}
+    out = {"scanned_at": rep["scanned_at"], "services_read": rep["services_read"], "installed": rep["installed"],
+           "recognised": rep["recognised"], "summary": summary(shown), "database": status(cfg),
+           "hidden": (len(rep["apps"]) - len(apps)) + (len(rep["services"]) - len(svcs))}
+    return out if brief else {**out, "apps": apps, "services": svcs}
 
 
 def as_text(v: dict, everything: bool = False) -> str:

@@ -446,3 +446,29 @@ export interface PreviewResponse {
 export interface FileTicket {
   ok: boolean; message?: string; url: string; kind: "pdf" | "docx" | "image"; size: number; expires_in: number;
 }
+
+/* --- Security: known vulnerabilities and third-party Windows services --- */
+export interface SecCve { id: string; published: string; score: number | null; severity: string; summary: string; fixed_in: string | null; kev: boolean; kev_added: string | null; ransomware: boolean; }
+export interface SecApp {
+  id: string; key: string; name: string; version: string; judged_version: string; publisher: string; kind: "desktop" | "packaged";
+  available: string | null; update_id: string | null; products: string[]; cves: SecCve[]; unversioned: number;
+}
+export interface SecService {
+  id: string; name: string; service: string; running: boolean; start: string; account: "system" | "limited" | "user";
+  exe: string; publisher: string; product: string; version: string; app_id: string | null; app_name: string | null;
+  ports: { port: number; network: boolean }[]; exposed: boolean; products: string[]; cves: SecCve[]; unversioned: number;
+}
+export interface SecuritySummary {
+  apps_affected: number; cves: number; kev: number; critical: number; fix_available: number;
+  services: number; services_running: number; services_exposed: number; services_affected: number;
+}
+export interface SecurityResponse {
+  enabled: boolean;
+  runner: { running: boolean; started: string | null; progress: string | null; error: string | null; finished: string | null };
+  settings: { cve_hours: number; check_updates: boolean };
+  scanned_at?: string | null; services_read?: boolean; installed?: number; recognised?: number;
+  summary?: SecuritySummary;
+  database?: { synced_at: string | null; tried_at: string | null; complete: boolean; cves: number; kev: number; bytes: number; error: string | null };
+  hidden?: number;
+  apps?: SecApp[]; services?: SecService[];
+}

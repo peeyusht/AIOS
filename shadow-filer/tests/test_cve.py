@@ -247,6 +247,22 @@ class ScanTest(Base):
                          {"apps_affected": 1, "cves": 2, "kev": 1, "critical": 1, "services": 2,
                           "services_exposed": 1, "services_affected": 2})
         self.assertIn("EXPLOITED", cve.as_text(v))
+        # Hide: remembered by the name without its version, and the hidden program's service goes quiet too
+        key = cve.hide_key("app", v["apps"][0])
+        self.assertEqual(key, "desktop:kettlearchive")
+        cve.hide(self.cfg["database"], "app", key)
+        cve.hide(self.cfg["database"], "service", "HarborSvc")
+        h = cve.view(self.cfg)
+        self.assertEqual((h["apps"], h["hidden"], [(s["id"], len(s["cves"])) for s in h["services"]]),
+                         ([], 2, [("KettleSvc", 0)]))
+        self.assertEqual((h["summary"]["kev"], h["summary"]["apps_affected"], h["summary"]["services_exposed"]), (0, 0, 1))
+        brief = cve.view(self.cfg, brief=True)
+        self.assertEqual(("apps" in brief, "services" in brief, brief["summary"]), (False, False, h["summary"]))
+        self.assertEqual(len(cve.report(self.cfg)["apps"]), 1)                     # the comparison itself is untouched
+        cve.hide(self.cfg["database"], "app", key, undo=True)
+        self.assertEqual(cve.view(self.cfg)["summary"]["kev"], 1)
+        cve.restore_all(self.cfg["database"])
+        self.assertEqual(cve.view(self.cfg)["hidden"], 0)
         self.assertEqual(services.tidy([{"name": "", "exe": "x"}, {"name": "a", "exe": ""}], []), [])
 
     def test_off_by_default(self):

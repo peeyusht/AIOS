@@ -19,7 +19,7 @@ import type { FsDirs, Raw, Rule, SettingsResponse, Status, SystemInfo } from "@/
 import { Bar, Card, Confirm, ListSkeleton, LoadError, Mono, Notice, PageHeader, Spin, act } from "../ui";
 import { FolderPicker } from "./Inbox";
 
-const SECTIONS = ["Folders", "Filing rules", "Model", "Watching", "Cleanup", "Search", "Auto-filing", "OCR", "Document watch", "Library", "Interface", "System", "Advanced"];
+const SECTIONS = ["Folders", "Filing rules", "Model", "Watching", "Cleanup", "Search", "Auto-filing", "OCR", "Document watch", "Library", "Security", "Interface", "System", "Advanced"];
 const sid = (s: string) => "set-" + s.toLowerCase().replace(/[^a-z]+/g, "-");
 
 function getPath(o: Raw, path: string) { return path.split(".").reduce<unknown>((a, k) => (a == null ? undefined : (a as Raw)[k]), o); }
@@ -155,6 +155,10 @@ export function SettingsPage({ status }: { status: Status | null }) {
             <Sw c={ctx} p="library.applications" label="List the applications installed on this PC" hint="Names, versions and publishers from Windows. Nothing goes online and nothing is installed or removed." />
             <Sw c={ctx} p="library.check_updates" label="Check for newer versions (goes online)" hint="Asks winget, Windows' package manager, which installed applications have a newer version. winget downloads its catalogue from Microsoft; nothing is updated for you." />
             {!!ctx.get("library.check_updates") && <Num c={ctx} p="library.update_hours" label="Ask again every" unit="hours" min={1} max={720} />}
+          </Section>
+          <Section title="Security">
+            <Sw c={ctx} p="library.vulnerabilities" label="Look for known vulnerabilities (goes online)" hint="Keeps a copy of the public CVE list on this PC (about 400 MB, from nvd.nist.gov and cisa.gov) and compares your installed programs and services with it here. What you have installed is never sent. Needs the applications list above." />
+            {!!ctx.get("library.vulnerabilities") && <Num c={ctx} p="library.cve_hours" label="Refresh the CVE list every" unit="hours" min={1} max={720} />}
           </Section>
           <Section title="Interface">
             <Num c={ctx} p="ui.port" label="Port" min={1024} max={65535} restart />

@@ -10,7 +10,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - Watches `%USERPROFILE%\Downloads`; PARA tree is `D:\Organized` (37 destinations at depth 2).
 - Ollama: `qwen3:4b` (filing guesses), `nomic-embed-text` (search + suggestions).
 - Console: **Inbox** (home; Waiting / Recent moves / Auto-filing), **Search**, **Cleanup**, **Watch** (Dates /
-  Sensitive files), **Library** (Images / Versions / Pictures / Installers / Applications), **Activity** (Journal / Accuracy /
+  Sensitive files), **Security** (Programs / Services), **Library** (Images / Versions / Pictures / Installers / Applications), **Activity** (Journal / Accuracy /
   Predictions / Log), **Settings** (form + System + Advanced YAML). Designed in Lovable.
 
 | File | Role |
@@ -105,7 +105,8 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - UI: the user prefers to design in Lovable (project
   https://lovable.dev/projects/24a52f89-2976-48ff-9630-4d56617c2f80; each Lovable message spends their
   credits). Design changes go there, then the Lovable-owned files are copied into `ui/` unchanged (see
-  `ui/README.md`); small wiring fixes can be made locally but must be sent back to Lovable or they are lost on
+  `ui/README.md`); on 12 Oct 2026 the user asked for the Security page to be designed locally in the same
+  style instead, so check `ui/README.md` for local changes before any copy from Lovable; small wiring fixes can be made locally but must be sent back to Lovable or they are lost on
   the next copy. Build: `cd ui; npm run build` → `ui_dist/` (hashed asset names; no agent restart). Lovable only
   ever sees fictional demo data (`src/lib/mock.ts`): never send it real file names or screenshots of real data.
   When the agent's API changes shape, update `ui/src/lib/adapt.ts` and tell Lovable the new shape.
@@ -224,9 +225,9 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   catalogue, not programs winget cannot identify), and nothing is updated for the user. Packaged apps have no
   size and no true install date (the package folder's creation day is shown). Changes are only known from
   the first scan on (12 Oct 2026) and only as of the day a scan noticed them.
-- Vulnerabilities: built and scheduled, shown by `shadow_agent.py vulns` and sent in `/api/library`
-  (`vulnerabilities`), but there is no page yet (planned: like Watch, with a sidebar badge and Hide for the
-  wrong matches measured above). Windows itself, Store apps, Microsoft 365/Office (its CVE versions cannot be
+- Vulnerabilities (Security page, `/api/security`, `shadow_agent.py vulns`): Hide is per program (by name
+  without version, so it survives updates) or per service, not per CVE. The page was designed locally, not in
+  Lovable (see `ui/README.md`: local changes waiting). Windows itself, Store apps, Microsoft 365/Office (its CVE versions cannot be
   compared with the installed build) and the 49 programs no product name fits are not judged.
 - The work journal's "worked on" list only sees documents inside the PARA tree, and only on days the agent
   was running (earlier days show a file's last change only). Work done in Downloads or elsewhere is not in it.

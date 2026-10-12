@@ -509,6 +509,16 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/library":
                 import library
                 return self._send(200, library.view(cfg))
+            if u.path == "/api/security":
+                import cve, library
+                s = library.settings(cfg)
+                on = s["enabled"] and s["applications"] and s["vulnerabilities"]
+                # a copy, taken before the lists are read: "finished" must never arrive with the lists from before
+                base = {"enabled": on, "runner": dict(library.Runner.state),
+                        "settings": {"cve_hours": s["cve_hours"], "check_updates": s["check_updates"]}}
+                if not on:
+                    return self._send(200, base)
+                return self._send(200, {**base, **cve.view(cfg, brief=q.get("brief") == "1")})
             if u.path == "/api/destinations":
                 return self._send(200, Ctx.dests.get() if cfg["para_root"].is_dir() else [])
             return self._send(404, {"error": "not found"})
@@ -621,6 +631,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"ok": True})
         if u.path.startswith("/api/library/"):
             return self._library_post(u.path, body)
+        if u.path.startswith("/api/security/"):
+            return self._security_post(u.path, body)
         if u.path == "/api/ocr/selftest":
             import ocr
             if os.name != "nt":
@@ -750,6 +762,34 @@ def _library_post(self, path: str, body: dict):
 
 
 Handler._library_post = _library_post
+
+
+def _security_post(self, path: str, body: dict):
+    """Security page. Nothing here changes the PC: compare again, or hide and show an entry."""
+    import cve
+    import library
+    cfg = Ctx.cfg
+    s = library.settings(cfg)
+    if not (s["enabled"] and s["applications"] and s["vulnerabilities"]):
+        return self._send(400, {"ok": False, "message": "The vulnerability check is switched off in Settings."})
+    if path == "/api/security/check":      # refreshes the local CVE copy (the online step), then compares here
+        started = library.Runner.start(cfg, Ctx.log, cves=True)
+        return self._send(200, {"ok": True, "started": started, "runner": library.Runner.state})
+    if path == "/api/security/restore":
+        cve.restore_all(cfg["database"])
+        return self._send(200, {"ok": True})
+    if path == "/api/security/hide":
+        kind, key = body.get("kind"), str(body.get("key", ""))
+        rep = cve.report(cfg)
+        rows = rep["apps"] if kind == "app" else rep["services"] if kind == "service" else []
+        if not any(cve.hide_key(kind, e) == key for e in rows):     # only what the last comparison listed
+            return self._send(400, {"ok": False, "message": "Unknown entry. Check again."})
+        cve.hide(cfg["database"], kind, key, undo=bool(body.get("undo")))
+        return self._send(200, {"ok": True})
+    return self._send(404, {"error": "not found"})
+
+
+Handler._security_post = _security_post
 
 
 def _search_post(self, path: str, body: dict):
