@@ -558,6 +558,10 @@ def _cleanup_post(self, path: str, body: dict):
         return self._send(200, {"ok": True})
     if path == "/api/cleanup/reveal":
         item = _report_item(str(body.get("path", ""))) or _inbox_file(str(body.get("path", "")))
+        if item is None:   # the preview panel's Show is also used on search results: any file in the index
+            import search_index
+            idx = search_index.get()
+            item = idx.is_indexed(str(body.get("path", ""))) if idx else None
         if item is None:
             return self._send(400, {"ok": False, "message": "Unknown file."})
         if os.name != "nt":
@@ -620,6 +624,16 @@ def _search_post(self, path: str, body: dict):
         idx.rebuild()
         Ctx.log.info("search index: rebuild requested from UI")
         return self._send(200, {"ok": True, "message": "Rebuilding the index in the background."})
+    if path == "/api/search/preview":   # text the index already holds; no file is opened
+        target = str(body.get("path", ""))
+        pv = idx.preview(target)
+        if pv is None:
+            if _inbox_file(target):
+                return self._send(200, {"ok": True, "path": target, "name": os.path.basename(target), "status": "pending",
+                                        "text": "", "chars": 0, "truncated": False, "openable": False,
+                                        "note": "The agent has not read this file yet. Try again in a minute."})
+            return self._send(400, {"ok": False, "message": "Unknown file."})
+        return self._send(200, {"ok": True, **pv})
     if path in ("/api/search/reveal", "/api/search/open"):
         target = str(body.get("path", ""))
         rec = idx.is_indexed(target)  # only files in the index, never arbitrary paths

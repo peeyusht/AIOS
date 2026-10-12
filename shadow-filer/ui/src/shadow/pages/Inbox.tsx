@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import {
   ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, CircleCheck, Copy, FolderPlus, FolderSearch, Inbox as InboxIcon,
   RefreshCw, ShieldCheck, Undo2, Zap,
+  Eye,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,7 @@ import { bytes, dateTime, pct, when, baseName } from "@/lib/format";
 import type { AutofileFolder, Candidate, InboxItem, InboxResponse } from "@/lib/types";
 import { Bar, Card, Confirm, EmptyState, ListSkeleton, LoadError, Mono, Notice, PageHeader, Spin, Tip, act } from "../ui";
 import { emitInboxChanged } from "../App";
+import { FilePreview } from "../FilePreview";
 
 const PAGE = 25;
 
@@ -141,6 +143,7 @@ function cleanupLabel(c: NonNullable<InboxItem["cleanup"]>) {
 function InboxCard({ item, data, autoOn, onGone }: { item: InboxItem; data: InboxResponse; autoOn: boolean; onGone: () => void }) {
   const chips = item.candidates.slice(0, 4);
   const firstOk = chips.find((c) => c.exists)?.folder ?? null;
+  const [preview, setPreview] = useState<string | null>(null);
   const [folder, setFolderRaw] = useState<string | null>(firstOk);
   // Until you pick a folder yourself, the selection follows the first suggestion (which can change when
   // the list refreshes); once you pick, your choice stays.
@@ -210,6 +213,7 @@ function InboxCard({ item, data, autoOn, onGone }: { item: InboxItem; data: Inbo
           <FolderPicker destinations={data.destinations} onPick={choose} />
           <Button variant="ghost" size="sm" onClick={() => setMk((v) => !v)} aria-expanded={mk}><FolderPlus /> New folder…</Button>
           <div className="ml-auto flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setPreview(item.path)}><Eye /> Preview</Button>
             <Button variant="ghost" size="sm" onClick={() => act(() => api.reveal(item.path))}><FolderSearch /> Show</Button>
             <Button variant="ghost" size="sm" onClick={dismiss} disabled={!!busy}>{busy === "dismiss" ? <Spin /> : null} Leave it</Button>
             <Button onClick={file} disabled={!folder || selectedMissing || !!busy} className="max-w-md">
@@ -228,6 +232,7 @@ function InboxCard({ item, data, autoOn, onGone }: { item: InboxItem; data: Inbo
           />
         )}
       </Card>
+      <FilePreview path={preview} onClose={() => setPreview(null)} />
     </li>
   );
 }
