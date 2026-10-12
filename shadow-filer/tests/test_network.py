@@ -84,6 +84,13 @@ class TidyTest(unittest.TestCase):
                                        "listening_network_other": 1, "connections": 3, "programs_connected": 2, "devices": 2,
                                        "shares": 0, "hosts": 0, "rules": None, "rule_programs": 0})
 
+    def test_a_setting_nobody_changed_shows_what_windows_then_does(self):
+        untouched = [{"name": "Public", "enabled": True, "inbound": "NotConfigured", "outbound": "NotConfigured"},
+                     {"name": "Private", "enabled": True, "inbound": "Allow", "outbound": "Block"}]
+        pub, priv = network.tidy(raw(firewall=untouched))["firewall"]
+        self.assertEqual((pub["inbound"], pub["outbound"], pub["inbound_default"]), ("Block", "Allow", True))
+        self.assertEqual((priv["inbound"], priv["outbound"], priv["inbound_default"]), ("Allow", "Block", False))
+
     def test_scope(self):
         for a, want in (("127.0.0.1", "this PC"), ("::1", "this PC"), ("0.0.0.0", "all"), ("::", "all"),
                         ("192.168.1.5", "local network"), ("10.0.0.1", "local network"), ("fe80::1%12", "local network"),
