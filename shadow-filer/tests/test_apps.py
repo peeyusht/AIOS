@@ -265,6 +265,7 @@ class NewerVersionsTest(unittest.TestCase):
         self.assertFalse({"install", "--all", "-r", "--recurse", "--accept-source-agreements",
                           "--accept-package-agreements"} & set(apps.WINGET_ARGS))
         with mock.patch.object(apps, "check_updates") as asked, mock.patch.object(apps, "scan"), \
+                mock.patch("compliance.view"), \
                 mock.patch.object(library, "scan"):
             library.Runner.start({**self.cfg, "library": {}}, updates=True)       # switched off: never asked
             wait_for_scan()

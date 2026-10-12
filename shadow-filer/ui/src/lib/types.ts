@@ -549,3 +549,29 @@ export interface NetworkResponse {
   counts: { adapters_up?: number; adapters?: number; routes?: number; listening?: number; listening_network?: number; listening_network_other?: number;
     connections?: number; programs_connected?: number; devices?: number; shares?: number; hosts?: number };
 }
+
+/* --- Compliance: the five control areas, declarations, history --- */
+export type CheckStatus = "pass" | "fail" | "warn" | "unknown" | "info";
+export type DeclaredAnswer = "yes" | "no" | "na" | null;
+export interface ComplianceCheck {
+  id: string; title: string; status: CheckStatus; detail: string; evidence: string[]; fix: string | null; to: string | null;
+  accepted: { reason: string; ts: string } | null;
+}
+export interface ComplianceControl {
+  key: "firewalls" | "configuration" | "updates" | "access" | "malware";
+  title: string; about: string; status: "pass" | "fail" | "warn" | "unknown";
+  checks: ComplianceCheck[]; counts: { pass: number; fail: number; warn: number; unknown: number }; accepted: number;
+}
+export interface ComplianceResponse {
+  assessed_at: string | null; error?: string;
+  device: { name?: string; manufacturer?: string; model?: string; serial?: string; windows?: string; build?: string; user?: string };
+  controls: ComplianceControl[];
+  declared: { key: string; title: string; about: string; answer: DeclaredAnswer; note: string; ts: string | null }[];
+  thresholds: Record<string, number>;
+  summary: { controls_passing?: number; controls?: number; fail?: number; warn?: number; unknown?: number; passed?: number; accepted?: number;
+    declared_yes?: number; declared_no?: number; declared_open?: number };
+  history: { day: string; controls: Record<string, "pass" | "fail" | "warn" | "unknown">; checks: Record<string, string>;
+    summary: { controls_passing: number; fail: number; warn: number; unknown: number } }[];
+  patch_log: { ts: string; action: "update" | "stop" | "firewall"; name: string; target: string; before: string; after: string; ok: number; message: string }[];
+  text?: string;
+}

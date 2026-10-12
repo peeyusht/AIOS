@@ -515,6 +515,9 @@ class Handler(BaseHTTPRequestHandler):
                 idx = search_index.get()
                 return self._send(200, dashboard.build(cfg, {**Ctx.status, "model": cfg["ollama"]["model"]}, files,
                                                        idx.stats() if idx else {"disabled": True}))
+            if u.path == "/api/compliance":
+                import compliance
+                return self._send(200, compliance.view(cfg, force=q.get("refresh") == "1", log=Ctx.log))
             if u.path == "/api/network":
                 import network
                 import remedy
@@ -648,6 +651,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._library_post(u.path, body)
         if u.path.startswith("/api/security/"):
             return self._security_post(u.path, body)
+        if u.path in ("/api/compliance/declare", "/api/compliance/accept"):
+            # what the owner says about things that cannot be measured, and failing checks accepted with a reason
+            import compliance
+            db = cfg_now()["database"]
+            if u.path == "/api/compliance/declare":
+                ok = compliance.declare(db, str(body.get("key", "")), body.get("answer"), str(body.get("note", "")))
+            else:
+                ok = compliance.accept(db, str(body.get("id", "")), body.get("reason"))
+            return self._send(200 if ok else 400, {"ok": ok, **({} if ok else {"message": "Unknown question or check."})})
         if u.path in ("/api/remedy/update", "/api/remedy/stop-service", "/api/remedy/firewall-on"):
             # the calls that change the PC. The page sends only WHICH listed entry; what is run for it
             # (package, version, service name) comes from the agent's own lists in remedy.py

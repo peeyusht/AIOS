@@ -1,7 +1,7 @@
 /* The single gateway to the Shadow Filer agent. Falls back to in-memory mock data when no token is present. */
 import { adaptCleanup, adaptHistory, adaptLog, adaptMoves, adaptPredictions, adaptSearchStatus, adaptSystem } from "./adapt";
 import type {
-  AutofileResponse, DashboardResponse, Decision, NetworkResponse, LibraryKind, LibraryResponse, FsCheck, FsDirs, InboxResponse, JournalResponse, OkResponse,
+  AutofileResponse, ComplianceResponse, DashboardResponse, DeclaredAnswer, Decision, NetworkResponse, LibraryKind, LibraryResponse, FsCheck, FsDirs, InboxResponse, JournalResponse, OkResponse,
   FileTicket, PreviewResponse, Raw, SaveResponse, RemedyResponse, SearchResponse, SecurityResponse, SettingsResponse, Stats, Status, WatchResponse,
 } from "./types";
 
@@ -86,6 +86,9 @@ const p = <T = OkResponse,>(url: string, body: Raw = {}) => request<T>("POST", u
 
 export const api = {
   dashboard: () => g<DashboardResponse>("/api/dashboard"),
+  compliance: (refresh = false) => g<ComplianceResponse>("/api/compliance" + (refresh ? "?refresh=1" : "")),
+  complianceDeclare: (key: string, answer: DeclaredAnswer, note: string) => p("/api/compliance/declare", { key, answer, note }),
+  complianceAccept: (id: string, reason: string) => p("/api/compliance/accept", { id, reason }),
   network: (refresh = false) => g<NetworkResponse>("/api/network" + (refresh ? "?refresh=1" : "")),
   status: () => g<Status>("/api/status"),
   inbox: (offset = 0, limit = 25) => g<InboxResponse>("/api/inbox" + qs({ offset, limit })),

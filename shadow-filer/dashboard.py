@@ -136,6 +136,15 @@ def _network() -> dict:
                             "internet": a["internet"], "ssid": (a.get("wifi") or {}).get("ssid")} for a in real[:TOP]]}
 
 
+def _compliance(cfg: dict) -> dict:
+    """Today's result of the Compliance page, from its history: nothing is read from Windows here."""
+    import compliance
+    b = compliance.brief(cfg)
+    if not b:
+        return {"day": None, "controls": {}, "summary": {}}
+    return {"day": b["day"], "controls": b["controls"], "summary": b["summary"]}
+
+
 def _remedy(cfg: dict) -> dict:
     import remedy
     v = remedy.view(cfg)
@@ -174,6 +183,11 @@ def attention(d: dict) -> list:
     for f in net:
         if f["level"] == "warning":
             add("warning", f["text"], "/network")
+    co = (d.get("compliance") or {}).get("summary") or {}
+    if co.get("fail"):
+        failing = sum(1 for v in ((d.get("compliance") or {}).get("controls") or {}).values() if v == "fail")
+        add("warning", f"{failing} of 5 security control areas {'has' if failing == 1 else 'have'} a failing check "
+                       f"({co['fail']} check{'s' if co['fail'] != 1 else ''} in all).", "/compliance")
     soon = (wa.get("counts") or {}).get("soon", 0)
     if soon:
         nxt = (wa.get("next") or [{}])[0]
@@ -209,6 +223,7 @@ def build(cfg: dict, status: dict | None = None, inbox_files: list | None = None
          "activity": _part(lambda: _activity(cfg, today)),
          "storage": _part(lambda: _storage(cfg)),
          "network": _part(_network),
+         "compliance": _part(lambda: _compliance(cfg)),
          "remedy": _part(lambda: _remedy(cfg))}
     d["attention"] = attention(d)
     return d

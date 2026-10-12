@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
-  Activity as ActivityIcon, LayoutDashboard, LibraryBig, BellRing, Eye, EyeOff, FlaskConical, Inbox as InboxIcon, Moon, Network as NetworkIcon, RefreshCw, Search as SearchIcon,
+  Activity as ActivityIcon, ClipboardCheck, LayoutDashboard, LibraryBig, BellRing, Eye, EyeOff, FlaskConical, Inbox as InboxIcon, Moon, Network as NetworkIcon, RefreshCw, Search as SearchIcon,
   Settings as SettingsIcon, ShieldAlert, Sparkles, Sun, Trash2, WifiOff,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
@@ -21,6 +21,7 @@ import { CleanupPage } from "./pages/Cleanup";
 import { WatchPage } from "./pages/Watch";
 import { SecurityPage } from "./pages/Security";
 import { NetworkPage } from "./pages/Network";
+import { CompliancePage } from "./pages/Compliance";
 import { LibraryPage } from "./pages/Library";
 import { ActivityPage } from "./pages/Activity";
 import { SettingsPage } from "./pages/Settings";
@@ -56,6 +57,7 @@ const NAV = [
   { path: "/watch", label: "Watch", icon: BellRing },
   { path: "/security", label: "Security", icon: ShieldAlert },
   { path: "/network", label: "Network", icon: NetworkIcon },
+  { path: "/compliance", label: "Compliance", icon: ClipboardCheck },
   { path: "/library", label: "Library", icon: LibraryBig },
   { path: "/activity", label: "Activity", icon: ActivityIcon },
   { path: "/settings", label: "Settings", icon: SettingsIcon },
@@ -120,6 +122,7 @@ export default function ShadowApp() {
     case "/watch": page = <WatchPage />; break;
     case "/security": page = <SecurityPage />; break;
     case "/network": page = <NetworkPage />; break;
+    case "/compliance": page = <CompliancePage />; break;
     case "/library": page = <LibraryPage />; break;
     case "/activity": page = <ActivityPage />; break;
     case "/settings": page = <SettingsPage status={s} />; break;

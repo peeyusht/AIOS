@@ -288,6 +288,16 @@ Firewall on (never off) for one profile or all, after a confirmation and the Win
 Otherwise it is view only, and always passive: Windows is asked what it already knows, the network is not scanned,
 and none of it is stored. From the command line: `shadow_agent.py network`.
 
+## Compliance
+One page of evidence that this PC is in the state an insurer's questionnaire or a Cyber Essentials assessment
+asks for. The five control areas (firewalls, secure configuration, security updates, user access, malware
+protection) each list their checks as passed, failing, worth a look or could not be checked, with what was
+found and what to do. Things no program can measure (multi-factor login, backups, a response plan) are your own
+declarations and are shown as such. A failing check can be accepted with a reason; it stays listed. One line is
+kept per day, so past months can be shown, and every update or change made from the console is listed as the
+patch record. Copy as text or print it. It follows the published control areas; it is not a certificate.
+From the command line: `shadow_agent.py compliance`.
+
 ## Library
 The Library page lists what you already hold. It is read-only: nothing is moved, renamed or deleted from it.
 - **Images**: firmware, OS and VM images grouped by product, with the versions you have, their size and where

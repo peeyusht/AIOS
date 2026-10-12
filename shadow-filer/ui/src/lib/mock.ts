@@ -1,6 +1,6 @@
 /* Entirely fictional demo data with in-memory mutations, used when no agent token is present. */
 import type { SecApp, SecCve, SecService, SecurityResponse, AppChange, InstalledApp, LibraryApplications, JournalDay, JournalResponse, WatchDate, WatchSensitive, LibraryChain, LibraryInstaller, LibraryPictureGroup, LibraryProduct, LibraryPicture,
-  AutofileResponse, DashboardResponse, NetAdapter, NetListener, NetRoute, NetworkResponse,
+  AutofileResponse, CheckStatus, ComplianceCheck, ComplianceControl, ComplianceResponse, DashboardResponse, DeclaredAnswer, NetAdapter, NetListener, NetRoute, NetworkResponse,
   CleanupHistoryRow,
   CleanupItem,
   CleanupResponse,
@@ -751,8 +751,83 @@ function mockNetwork(): NetworkResponse {
   };
 }
 
+const compAccepted = new Map<string, { reason: string; ts: string }>([["fw.shares", { reason: "The scanner saves here; only the office printer can reach it.", ts: ago(6 * 1440) }]]);
+const compDeclared = new Map<string, { answer: DeclaredAnswer; note: string; ts: string }>([
+  ["mfa", { answer: "yes", note: "Authenticator app on all mailboxes", ts: ago(20 * 1440) }], ["backups", { answer: "yes", note: "", ts: ago(20 * 1440) }],
+  ["backup_test", { answer: "no", note: "", ts: ago(20 * 1440) }]]);
+function mockCompliance(): ComplianceResponse {
+  const ck = (id: string, title: string, status: CheckStatus, detail: string, evidence: string[] = [], fix: string | null = null, to: string | null = null): ComplianceCheck =>
+    ({ id, title, status, detail, evidence, fix, to, accepted: (status === "fail" || status === "warn") ? compAccepted.get(id) ?? null : null });
+  const groups: [ComplianceControl["key"], string, string, ComplianceCheck[]][] = [
+    ["firewalls", "Firewalls", "Every device is protected by a firewall, and only what is needed is reachable.", [
+      ck("fw.on", "Windows Firewall is on for every profile", "fail", "Off for Private. No other firewall is registered with Windows.", ["Domain: on, incoming block", "Private: OFF, incoming notconfigured", "Public: on, incoming block"], "Network > Exposure > Turn on.", "/network"),
+      ck("fw.default", "Incoming connections are blocked unless a rule allows them", "pass", "Each profile that is on blocks incoming connections by default.", [], null, "/network"),
+      ck("fw.ports", "Programs that accept connections from the network are known and wanted", "info", "2 TCP ports opened by 2 programs that are not part of Windows. Each should be one you want reachable.", ["tessellate-engine: TCP 27017", "harbor-remote: TCP 7070"], null, "/network"),
+      ck("fw.shares", "No folders are shared from this PC without a reason", "warn", "1 folder is shared.", ["Scans"], null, "/network")]],
+    ["configuration", "Secure configuration", "The PC is set up to reduce what an attacker can use: no open accounts, a lock, nothing that runs by itself.", [
+      ck("cfg.lock", "The PC locks by itself when left alone", "pass", "Found: a screen saver that asks for the password starts after 10 minutes."),
+      ck("cfg.autoplay", "AutoPlay is off, so a plugged-in drive runs nothing by itself", "pass", "AutoPlay is off."),
+      ck("cfg.guest", "The Guest account is disabled", "pass", "Disabled."),
+      ck("cfg.password", "Every account that can sign in needs a password", "pass", "Every enabled account requires a password."),
+      ck("cfg.unused", "No enabled accounts that nobody uses", "warn", "1 enabled account has never signed in.", ["temp-install"]),
+      ck("cfg.encryption", "Drives are encrypted (BitLocker)", "pass", "Encrypted: C:.", ["C: encrypted"])]],
+    ["updates", "Security update management", "Windows and installed programs are supported and patched promptly.", [
+      ck("upd.supported", "Windows is a version that still gets security updates", "pass", "Windows 11 Professional 25H2, build 26200.1234. Not known to be out of support."),
+      ck("upd.windows", "Windows installed an update in the last 35 days", "pass", `Last update KB5000001 on ${ago(11 * 1440).slice(0, 10)}, 11 days ago. Whether a newer one exists is not checked (that would go online).`),
+      ck("upd.automatic", "Windows installs updates by itself", "pass", "Automatic updates are not switched off or paused."),
+      ck("upd.flaws", "No high or critical flaw older than 14 days in installed programs", "fail", "2 programs have high or critical flaws published more than 14 days ago; 1 of the flaws is being used in real attacks.",
+        ["Tessellate Containers 4.94.0: 3 high or critical, oldest 120 days", "Pine Runtime 3.12.4: 2 high or critical, oldest 110 days, fix: update to 3.12.10"], "Security > Programs: Update, or the fix version shown.", "/security"),
+      ck("upd.coverage", "Every installed program can be compared with the list of known flaws", "info", "5 of 10 programs match a product in the CVE list. The others are not judged: unknown, not safe.", [], null, "/security"),
+      ck("upd.pending", "Installed programs are on their newest version", "warn", "4 programs have a newer version available.",
+        ["Brightpad Notes: 4.12.1 -> 4.13.0", "Northwind VPN Client: 7.4.3.4726 -> 7.4.4.4801", "Pine Runtime 3.12.4 (64-bit): 3.12.4150.0 -> 3.12.10", "Sketch Pad: 2.1.0.0 -> 2.2.0.0"], "Library > Applications > Updates.", "/library")]],
+    ["access", "User access control", "Administrator rights are used only when needed.", [
+      ck("acc.daily", "The account used every day is not an administrator", "fail", "alex is a member of the Administrators group. Anything that runs as you can ask for full control of the PC with one click on a prompt.", [],
+        "Create a separate administrator account and make the everyday one a standard user (Settings > Accounts > Other users)."),
+      ck("acc.admins", "Few accounts have administrator rights", "pass", "1 enabled account is in the Administrators group.", ["DEMO-PC\\alex"])]],
+    ["malware", "Malware protection", "Antivirus is on and current.", [
+      ck("mal.present", "Antivirus protection is installed and switched on", "pass", "On: Windows Defender.", ["Windows Defender: on"]),
+      ck("mal.realtime", "Files are checked as they are opened (real-time protection)", "pass", "Microsoft Defender's real-time protection is on."),
+      ck("mal.signatures", "Antivirus definitions are less than 7 days old", "pass", "Microsoft Defender's definitions are 1 day old.")]],
+  ];
+  const roll = (cs: ComplianceCheck[]) => { const s = cs.filter((c) => !c.accepted).map((c) => c.status); return s.includes("fail") ? "fail" : s.includes("warn") ? "warn" : s.includes("unknown") ? "unknown" : "pass"; };
+  const count = (cs: ComplianceCheck[], st: CheckStatus) => cs.filter((c) => c.status === st && !c.accepted).length;
+  const controls: ComplianceControl[] = groups.map(([key, title, about, checks]) => ({ key, title, about, checks, status: roll(checks) as ComplianceControl["status"],
+    counts: { pass: count(checks, "pass"), fail: count(checks, "fail"), warn: count(checks, "warn"), unknown: count(checks, "unknown") }, accepted: checks.filter((c) => c.accepted).length }));
+  const questions: [string, string, string][] = [
+    ["mfa", "Multi-factor login is on for email and cloud services", "Asked by insurers and by Cyber Essentials for cloud services."],
+    ["backups", "Important files are backed up, with one copy offline or unchangeable", "Asked by insurers."],
+    ["backup_test", "A restore from backup was tested in the last 12 months", "Asked by insurers."],
+    ["incident_plan", "There is a written plan for what to do after a break-in", "Asked by insurers."],
+    ["training", "Everyone who uses the PC has had security awareness training", "Asked by insurers."],
+    ["router", "The router's default password was changed and its firmware is current", "Cyber Essentials: boundary firewall."],
+    ["admin_separate", "Administrator accounts are not used for email or browsing", "Cyber Essentials: user access control."]];
+  const declared = questions.map(([key, title, about]) => ({ key, title, about, answer: compDeclared.get(key)?.answer ?? null, note: compDeclared.get(key)?.note ?? "", ts: compDeclared.get(key)?.ts ?? null }));
+  const every = controls.flatMap((c) => c.checks);
+  const history = Array.from({ length: 45 }, (_, i) => {
+    const back = 44 - i;
+    const c = { malware: "pass", firewalls: back <= 9 ? "fail" : "pass", configuration: back > 30 ? "fail" : "warn", updates: back <= 21 && back > 15 ? "pass" : "fail", access: "fail" } as Record<string, "pass" | "fail" | "warn" | "unknown">;
+    const vals = Object.values(c);
+    return { day: ago(back * 1440).slice(0, 10), controls: c, checks: {}, summary: { controls_passing: vals.filter((x) => x === "pass").length, fail: vals.filter((x) => x === "fail").length, warn: vals.filter((x) => x === "warn").length, unknown: 0 } };
+  });
+  const log = (min: number, action: "update" | "stop" | "firewall", name: string, ok: number, message: string) => ({ ts: ago(min), action, name, target: "", before: "", after: "", ok, message });
+  return {
+    assessed_at: iso(now()), device: { name: "DEMO-PC", manufacturer: "Contoso", model: "Tower 5", serial: "SN-48213", windows: "Windows 11 Professional 25H2", build: "26200.1234", user: "alex" },
+    controls, declared, thresholds: { patch_days: 14, windows_update_days: 35, lock_seconds: 900, signature_days: 7, high_score: 7 },
+    summary: { controls_passing: controls.filter((c) => c.status === "pass").length, controls: controls.length, fail: every.filter((c) => c.status === "fail" && !c.accepted).length,
+      warn: every.filter((c) => c.status === "warn" && !c.accepted).length, unknown: every.filter((c) => c.status === "unknown").length, passed: every.filter((c) => c.status === "pass").length,
+      accepted: every.filter((c) => c.accepted).length, declared_yes: declared.filter((x) => x.answer === "yes").length, declared_no: declared.filter((x) => x.answer === "no").length, declared_open: declared.filter((x) => !x.answer).length },
+    history,
+    patch_log: [log(40, "update", "Harbor Remote", 1, "Updated Harbor Remote from 9.0.14 to 9.8.1."),
+      log(1440, "update", "Kettle Archive", 0, "Not updated: You declined the Windows permission prompt. The installer needs administrator rights."),
+      log(9 * 1440, "firewall", "Windows Firewall", 1, "Windows Firewall is on for the Public profile. Programs without an allow rule no longer accept connections from other devices."),
+      log(12 * 1440, "stop", "Larkspur Maintenance Service", 1, "Stopped. Windows starts it again at the next boot if it is set to start automatically.")],
+    text: "Security posture of DEMO-PC (demo data)\n" + controls.map((c) => `${c.title}: ${c.status}`).join("\n") + "\n",
+  };
+}
+
 const get: Record<string, Handler> = {
   "/api/dashboard": () => mockDashboard(),
+  "/api/compliance": () => mockCompliance(),
   "/api/network": () => mockNetwork(),
   "/api/security": (q) => securityAnswer(q.get("brief") === "1"),
   "/api/remedy": () => ({ enabled: !!(settingsRaw.library ?? {}).remediate, job: { ...remedyJob }, history: [] }),
@@ -962,6 +1037,14 @@ const post: Record<string, Handler> = {
     Object.assign(remedyJob, { running: true, action: "update", name: a?.name ?? "the application", target: to, ok: null, message: null });
     setTimeout(() => Object.assign(remedyJob, { running: false, ok: true, message: `Updated ${a?.name ?? "the application"} from ${a?.version ?? "?"} to ${to}.` }), 3000);
     return { ok: true, started: true };
+  },
+  "/api/compliance/accept": (_q, b) => {
+    if (String(b.reason ?? "").trim()) compAccepted.set(String(b.id), { reason: String(b.reason).trim(), ts: iso(now()) }); else compAccepted.delete(String(b.id));
+    return { ok: true };
+  },
+  "/api/compliance/declare": (_q, b) => {
+    if (b.answer == null) compDeclared.delete(String(b.key)); else compDeclared.set(String(b.key), { answer: b.answer as DeclaredAnswer, note: String(b.note ?? ""), ts: iso(now()) });
+    return { ok: true };
   },
   "/api/remedy/firewall-on": (_q, b) => {
     if (remedyJob.running) return { ok: false, message: "Another update or stop is still running." };

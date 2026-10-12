@@ -585,6 +585,13 @@ class Runner:
                             cve.sync(cfg, progress=lambda m: cls.state.update(progress=m), log=log)
                         cls.state.update(progress="Comparing with known vulnerabilities")
                         cve.scan(cfg, updates=s["check_updates"], hours=s["update_hours"], log=log)
+                try:      # one line a day in the compliance history, whether or not the page is opened
+                    import compliance
+                    cls.state.update(progress="Checking this PC's security settings")
+                    compliance.view(cfg, log=log)
+                except Exception as e:
+                    if log:
+                        log.warning("compliance check failed: %s", e)
             except Exception as e:  # never take the agent down
                 cls.state["error"] = str(e)[:300]
                 if log:

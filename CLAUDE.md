@@ -10,7 +10,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - Watches `%USERPROFILE%\Downloads`; PARA tree is `D:\Organized` (37 destinations at depth 2).
 - Ollama: `qwen3:4b` (filing guesses), `nomic-embed-text` (search + suggestions).
 - Console: **Dashboard** (home: what needs attention, key numbers, the week), **Inbox** (Waiting / Recent moves / Auto-filing), **Search**, **Cleanup**, **Watch** (Dates /
-  Sensitive files), **Security** (Programs / Services), **Network** (Interfaces / Routes / Exposure / Connections / Devices / DNS & proxy), **Library** (Images / Versions / Pictures / Installers / Applications), **Activity** (Journal / Accuracy /
+  Sensitive files), **Security** (Programs / Services), **Network** (Interfaces / Routes / Exposure / Connections / Devices / DNS & proxy), **Compliance** (five control areas / declared / history / update log), **Library** (Images / Versions / Pictures / Installers / Applications), **Activity** (Journal / Accuracy /
   Predictions / Log), **Settings** (form + System + Advanced YAML). Designed in Lovable.
 
 | File | Role |
@@ -26,6 +26,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 | `services.py` | Windows services that are not part of Windows: program, account, running or not, ports listened on (and whether from the network), the installed application each belongs to. Read-only, local |
 | `cve.py` | Known vulnerabilities: a local copy of the public CVE lists (`cve.db`, NVD yearly files + CISA's known-exploited list) and which installed programs and services they name, by strict name and version matching. Optional, off by default; downloads are the online step, the comparison is local |
 | `network.py` | Network page (`/api/network`): interfaces and addresses, routing table, DNS/proxy/hosts, Windows Firewall and the Public/Private mark, shared folders, listening ports with their programs, open connections, the neighbour table, and findings. Read-only, passive, in memory only |
+| `compliance.py` | Compliance page (`/api/compliance`): the five Cyber Essentials control areas as pass/fail checks with evidence, from this PC's settings (one read-only PowerShell call) and from network.py, cve.py, apps.py and remedy.py; the owner's declarations and accepted exceptions; one history line a day. Read-only for the PC |
 | `remedy.py` | The only code that changes installed software or a service: Update one application (winget), Stop one service, and switch Windows Firewall on, each one click, confirmed, logged in `remedy_log`. Off by default |
 | `dashboard.py` | Dashboard (`/api/dashboard`): one summary put together from what the other modules already keep, plus the "needs attention" lines. Read-only, asks nothing new of Windows or the internet; a part that fails is replaced by `{error}` |
 | `journal.py` | Phase 7: work journal (Activity › Journal): per day, what arrived, was filed, was deleted, and which folders had documents added or changed. Built from existing tables + file dates; writes only its own `journal_touch` table |
@@ -90,6 +91,14 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   online) and changes nothing. Its picture lives in memory only (30 s cache): remote addresses of open
   connections and the MAC/IP addresses of nearby devices are never written to a database, a report file or
   the log (the log gets counts). The dashboard takes only its findings, read in the background.
+- `compliance.py` reads and judges; it changes nothing on the PC and sends nothing. It writes only its own
+  tables (`compliance_history`, `compliance_declared`, `compliance_accepted`). Things it cannot measure are
+  declarations by the owner and must always be shown as declared, never as measured or passed. An accepted
+  exception needs a reason, keeps its failing mark, and only stops counting against its control area. Never
+  present the result as a certificate or a score. Account names appear on the page, not in the log. The
+  thresholds (`THRESHOLDS`: 14 days for flaws, 35 for Windows updates, 15 minutes for the lock) and the
+  Windows end-of-support rule are from general knowledge of the scheme, not checked against the current
+  official text: check before telling anyone the page proves compliance.
 - `remedy.py` is the only code that changes installed software or a running service, and only while
   `library.remediate` is on (off by default; allowed by the user on 12 Oct 2026). Don't relax any of this
   without asking: one application or one service per click, never "all"; the page sends only WHICH listed
@@ -133,7 +142,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - Restart the agent after Python changes: console Settings › Restart agent, or POST `/api/restart` with the
   `X-Shadow-Token` from the page's `<meta name="shadow-token">`. Static UI files need no restart.
 - Re-register the task (paths/flags changed): `powershell -ExecutionPolicy Bypass -File .\install_task.ps1`.
-- Useful CLI: `shadow_agent.py check | report | cleanup | search "<q>" | sysinfo | apps [--store] [--updates] | vulns [--sync] [--all] | network`.
+- Useful CLI: `shadow_agent.py check | report | cleanup | search "<q>" | sysinfo | apps [--store] [--updates] | vulns [--sync] [--all] | network | compliance`.
 - Self-tests worth running after related changes: Settings › OCR › Test OCR (`/api/ocr/selftest`); Recycle Bin
   self-test `/api/cleanup/selftest` (creates and recycles a tiny file in the agent folder).
 - Tests: `.venv\Scripts\python -m unittest discover -s tests` (stdlib unittest, temp folders only). Run them
@@ -218,6 +227,14 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   after dropping broadcast, multicast and dead entries (194 raw), 4 built-in shares and no user shares, 3 hosts
   entries. Finding: Windows Firewall is OFF on all three profiles with no other firewall registered with
   Windows (confirmed with `netsh advfirewall` and the active policy store); the network is marked Public.
+- Compliance (`compliance.py`, 12 Oct 2026): the settings read takes 3.4 s (0.1 s when cached, 5 min), a
+  forced assessment 7.7 s with the network read. On the user's PC 1 of 5 control areas passes (malware
+  protection): 6 failing checks, 2 to look at, 1 that cannot be judged. Failing: firewall off on all profiles;
+  AutoPlay on; 1 enabled account that does not require a password; C: and D: not encrypted; 10 programs with
+  high or critical flaws older than 14 days; the everyday account is an administrator. To look at: no
+  automatic lock found; 28 newer versions. Windows 11 calls itself "Windows 10" in the registry (the build
+  number decides); Windows Update's own "last success" date read 2030 and is not used (the newest installed
+  hotfix is); `whoami` on PATH can be Git's, so the System32 one is called by its full path.
 - Services (`services.py`, 1.7 s): 313 services, 40 outside the Windows folder (24 running, 36 as SYSTEM), 3
   listen from the network; 14 belong to an installed application by install folder or product name, 1 more by
   first word plus identical version (the MongoDB server).
@@ -252,6 +269,10 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   catalogue, not programs winget cannot identify), and nothing is updated for the user. Packaged apps have no
   size and no true install date (the package folder's creation day is shown). Changes are only known from
   the first scan on (12 Oct 2026) and only as of the day a scan noticed them.
+- Compliance is for one PC. Not checked: unsupported third-party programs, the browser's own auto-update, the
+  inbound firewall rules one by one (only their number is read), multi-factor login, backups and the router
+  (declared). "Windows is up to date" means an update within 35 days, not "no newer build exists". A fleet
+  version (system-service agent, central console, roles) is the planned next step and is not started.
 - Network: view only except for switching Windows Firewall on (through `remedy.py`); a network's
   Public/Private mark, rules and shares cannot be changed from the page. The firewall button has run on demo
   data only: on 12 Oct 2026 the user's firewall was still off on all profiles and switching it on was left to them. No names for devices (no vendor lookup, no reverse DNS) and no per-connection traffic amounts.
