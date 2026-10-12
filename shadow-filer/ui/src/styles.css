@@ -142,3 +142,14 @@
 @keyframes sf-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @utility fade-in { animation: sf-in 180ms ease-out both; }
 @media (prefers-reduced-motion: reduce) { * { animation-duration: 1ms !important; transition-duration: 1ms !important; } }
+
+/* Printing the Compliance page as an evidence document: the page only, everything expanded, no controls. */
+@media print {
+  aside, header, button, input, textarea, [data-print-hide], [data-sonner-toaster] { display: none !important; }
+  [data-print-collapsed] { display: block !important; }
+  [data-print="only"] { display: block !important; }
+  [data-print-card] { box-shadow: none !important; }
+  [data-print-row] { break-inside: avoid; }
+  html, body, main { background: #fff !important; color: #000 !important; }
+  main { max-width: none !important; padding: 0 !important; }
+}

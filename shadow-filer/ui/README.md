@@ -33,7 +33,9 @@ own `#/inbox`-style routing, so it runs unchanged as a static page.
    those shapes). When a page shows wrong or missing real data, fix the mapping there.
 3. `npm run build`, then open every page against the running agent and look at the browser console.
 4. Any fix made locally must be sent back to Lovable as an exact change, or the next copy loses it.
-   Last copied Lovable commit: `7f23999` (Network page; its `Network.tsx` was copied whole, the nav entry, route, `api.network` and the
+   Last copied Lovable commit: `bf7330f` (Compliance page; its `Compliance.tsx` was copied whole, the nav entry,
+   route, `api.compliance*`, the `Compliance*` types, the print rules at the end of `styles.css` and the demo data
+   were written locally, not copied). Before that `7f23999` (Network page; its `Network.tsx` was copied whole, the nav entry, route, `api.network` and the
    `Net*` types were added by hand, and the demo data for it in `mock.ts` was written locally, not copied).
    Before that `575597f` (Dashboard page, first in the sidebar and the landing page). Its `Dashboard.tsx` was copied
    whole; its changes to `App.tsx`, `api.ts`, `types.ts` and `mock.ts` were merged by hand, because those

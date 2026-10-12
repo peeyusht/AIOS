@@ -24,6 +24,7 @@ Commands:
   python shadow_agent.py reconcile           match pending predictions against PARA now
   python shadow_agent.py report [--csv out]  accuracy report
   python shadow_agent.py sysinfo [--json]    hardware, OS, storage, GPUs and what Ollama is doing
+  python shadow_agent.py compliance          the five security control areas, pass or fail, with the evidence
   python shadow_agent.py network [--json]    interfaces, routes, firewall, open ports, connections, devices
   python shadow_agent.py apps [--json] [--store] [--updates]   installed applications, versions, what changed; --updates asks winget (online)
   python shadow_agent.py search "<query>"     search the index (the agent builds it in the background)
@@ -1032,6 +1033,7 @@ def main():
     apc.add_argument("--json", action="store_true", help="print raw JSON instead of text")
     apc.add_argument("--store", action="store_true", help="also list Store and packaged apps")
     apc.add_argument("--updates", action="store_true", help="ask winget (online) which have a newer version")
+    sub.add_parser("compliance")
     nw = sub.add_parser("network")
     nw.add_argument("--json", action="store_true", help="print raw JSON instead of text")
     vu = sub.add_parser("vulns")
@@ -1066,6 +1068,11 @@ def main():
             apps.check_updates(cfg, log=log)
         v = apps.with_updates(cfg, apps.view(cfg), a.updates or s["check_updates"], s["update_hours"])
         print(json.dumps(v, indent=1) if a.json else apps.as_text(v, packaged=a.store))
+        return
+    if a.cmd == "compliance":
+        import compliance
+        v = compliance.view(cfg, force=True)
+        print(v.get("text") or v.get("error") or "")
         return
     if a.cmd == "network":
         import network
