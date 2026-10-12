@@ -281,7 +281,13 @@ The Library page lists what you already hold. It is read-only: nothing is moved,
 - **Pictures**: pictures that look the same (resized, re-saved, downloaded twice), compared by a small
   fingerprint of the picture rather than by name.
 - **Installers**: programs and installers, and whether Windows accepts the publisher's signature: signed, not
-  signed, not trusted, or changed after signing.
+  signed, not trusted, or changed after signing. A file that belongs to an installed application says which
+  version is installed and whether the file is older.
+- **Applications**: the programs installed on this PC with version, publisher, install date and size, and
+  what was installed, updated or removed since the last scan (also in Activity › Journal). Store and packaged
+  apps are a separate filter. Where Windows records no install date, the day the entry last changed is shown
+  with an asterisk. Nothing goes online: it does not check whether a newer version exists. From the command
+  line: `shadow_agent.py apps [--store] [--json]`.
 A scan runs once a day (Settings › Library) or when you click Scan now; the first one takes a few seconds.
 **Hide** removes an entry from the list (not from disk); **Show** opens its folder.
 

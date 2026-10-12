@@ -10,7 +10,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - Watches `%USERPROFILE%\Downloads`; PARA tree is `D:\Organized` (37 destinations at depth 2).
 - Ollama: `qwen3:4b` (filing guesses), `nomic-embed-text` (search + suggestions).
 - Console: **Inbox** (home; Waiting / Recent moves / Auto-filing), **Search**, **Cleanup**, **Watch** (Dates /
-  Sensitive files), **Library** (Images / Versions / Pictures / Installers), **Activity** (Journal / Accuracy /
+  Sensitive files), **Library** (Images / Versions / Pictures / Installers / Applications), **Activity** (Journal / Accuracy /
   Predictions / Log), **Settings** (form + System + Advanced YAML). Designed in Lovable.
 
 | File | Role |
@@ -22,6 +22,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 | `origin.py` | Phase 4: where a download came from (Zone.Identifier mark) as a filing signal; in memory only |
 | `watch.py` | Phase 5: dates that matter (expiry, due, valid until) and sensitive files in Downloads, read from `search.db` text; read-only |
 | `library.py` | Phase 6: firmware/VM catalogue, document version chains, look-alike pictures, program signatures; read-only, report in `library_report.json` |
+| `apps.py` | Applications (Library › Applications): programs installed on this PC with version, publisher, install date, size; what was installed, updated or removed between scans (`apps_history`). Reads the registry and the packaged-app list; read-only, never online |
 | `journal.py` | Phase 7: work journal (Activity › Journal): per day, what arrived, was filed, was deleted, and which folders had documents added or changed. Built from existing tables + file dates; writes only its own `journal_touch` table |
 | `mover.py` | the only code that moves files; journal + undo |
 | `autofile.py` | Phase 3 auto-filing, per-folder trust from the user's Inbox decisions |
@@ -66,7 +67,13 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - `library.py` is read-only: it lists, it never moves, renames or deletes (deleting stays with Cleanup). It
   opens only pictures (to fingerprint them, with Pillow) and programs (Windows checks the signature); documents
   and firmware/VM images are judged by name, size and date alone. "Show" opens Explorer only for a path the
-  last scan listed. File paths reach PowerShell on standard input, never on the command line.
+  last scan listed. File paths reach PowerShell on standard input, never on the command line. For a program
+  it also reads the name and version the file states about itself (same Windows call as the signature).
+- `apps.py` is read-only and stays on this PC: it reads Windows' installed-programs lists (registry) and the
+  packaged-app list (one fixed PowerShell call, no arguments). It never installs, updates, removes or starts
+  anything, opens none of the user's files, and never goes online: checking for newer versions (`winget
+  upgrade`) would send the app list to outside sources, so ask before adding it. A list that cannot be read
+  keeps its previous entries (never "everything was removed"); the first scan records no changes.
 - Never commit personal data: `*.db`, logs (including rotated `shadow.log.1`…), `cleanup_report.json`,
   `library_report.json`,
   `config.yaml` (see `.gitignore`).
@@ -85,7 +92,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - Restart the agent after Python changes: console Settings › Restart agent, or POST `/api/restart` with the
   `X-Shadow-Token` from the page's `<meta name="shadow-token">`. Static UI files need no restart.
 - Re-register the task (paths/flags changed): `powershell -ExecutionPolicy Bypass -File .\install_task.ps1`.
-- Useful CLI: `shadow_agent.py check | report | cleanup | search "<q>" | sysinfo`.
+- Useful CLI: `shadow_agent.py check | report | cleanup | search "<q>" | sysinfo | apps [--store]`.
 - Self-tests worth running after related changes: Settings › OCR › Test OCR (`/api/ocr/selftest`); Recycle Bin
   self-test `/api/cleanup/selftest` (creates and recycles a tiny file in the agent folder).
 - Tests: `.venv\Scripts\python -m unittest discover -s tests` (stdlib unittest, temp folders only). Run them
@@ -128,6 +135,16 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   bits apart and different screenshots of one window 10–17, so raising `image_distance` to 12 adds 7 groups of
   unrelated screenshots; an 8x8 fingerprint with chained matching had put 19 screenshots in one group. Programs:
   none in Downloads, 2 filed (1 not signed, 1 with no readable signature).
+- Applications (`apps.py`, 12 Oct 2026, scan 3 s, nearly all of it the packaged-app PowerShell call): 281
+  registry entries, 258 named, 89 after hiding system components, patches and child entries, 85 after folding
+  the same name and version listed in two views. Of the 89: version 86, publisher 87, size 56, install date
+  45, install folder 40. Where the date is missing the day the registry entry last changed is shown and
+  marked (`date_is: changed`); it moves with every update. 194 packages, 84 after hiding frameworks, resource
+  packages and system parts (69 from the Store). An application is recognised by its name with the version
+  taken out, not its registry key (an MSI gets a new key per version); 3 Python entries share one name, so
+  one-gone-one-new under a name is an update and anything else is counted one by one. Matching an installer
+  file to an installed application needs the same name or a shared prefix of 5+ letters ("git" alone is too
+  short; "Go" must not match "GoodSync").
 - Work journal (`journal.py`, built in 0.07 s): 497 files seen in 7 days of predictions, but 418 of those rows
   were written on 10–11 Oct by catch-up runs after reinstalling, so an arrival is dated by the file's own
   arrival time while it is still in Downloads (91 of 123 in the last 30 days) and by the day the agent noticed
@@ -155,6 +172,9 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - The Library page only lists. It does not move the 33.6 GB of firmware/VM images out of Downloads (unpacked
   appliance folders are not something `mover.py` moves), and a version chain is found by file name only, not
   by comparing content.
+- Applications: no check for newer versions (it would go online; not built, ask first). Packaged apps have no
+  size and no true install date (the package folder's creation day is shown). Changes are only known from
+  the first scan on (12 Oct 2026) and only as of the day a scan noticed them.
 - The work journal's "worked on" list only sees documents inside the PARA tree, and only on days the agent
   was running (earlier days show a file's last change only). Work done in Downloads or elsewhere is not in it.
 - Preview (Inbox and Search) shows PDFs, pictures and .docx as they look, and the indexed text for everything
