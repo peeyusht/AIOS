@@ -1,0 +1,35 @@
+# Fleet server, phase 1: PostgreSQL and the API, both reachable from this machine only (127.0.0.1).
+# For anything beyond a developer PC put a TLS reverse proxy in front and change both passwords (see README).
+name: aios-fleet
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: fleet
+    ports: ["127.0.0.1:5433:5432"]
+    volumes: ["fleet-db:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fleet"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  init:
+    build: .
+    command: ["python", "-m", "app.manage", "init"]
+    environment:
+      DATABASE_URL_OWNER: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/fleet
+      FLEET_APP_PASSWORD: ${FLEET_APP_PASSWORD:-fleet_app}
+    depends_on:
+      db: {condition: service_healthy}
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://fleet_app:${FLEET_APP_PASSWORD:-fleet_app}@db:5432/fleet
+      DATABASE_URL_OWNER: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/fleet
+    ports: ["127.0.0.1:8770:8770"]
+    depends_on:
+      init: {condition: service_completed_successfully}
+    restart: unless-stopped
+volumes:
+  fleet-db:

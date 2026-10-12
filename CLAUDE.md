@@ -5,6 +5,12 @@ Ollama). Wants direct, skeptical engineering; push back when something is wrong.
 (commit, push to github.com/peeyusht/AIOS, keep `main` clean).
 
 ## What's here
+Two things. `shadow-filer/` is the agent and local console on one PC (below). `server/` is the central
+fleet server, phase 1 of `docs/architecture.md` (read that first for anything about several PCs): FastAPI +
+PostgreSQL in Docker Compose, with enrolment, check-in and a fleet page; `server/README.md` says how to run
+and test it. The product direction (decided 12 Oct 2026): evidence for cyber insurance and Cyber Essentials
+for small organisations; not EDR.
+
 `shadow-filer/`: a local AI file assistant. Runs from **this folder** (`D:\Projects\AIOS\shadow-filer`) as a
 Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console). Console: http://127.0.0.1:8765.
 - Watches `%USERPROFILE%\Downloads`; PARA tree is `D:\Organized` (37 destinations at depth 2).
@@ -28,6 +34,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 | `network.py` | Network page (`/api/network`): interfaces and addresses, routing table, DNS/proxy/hosts, Windows Firewall and the Public/Private mark, shared folders, listening ports with their programs, open connections, the neighbour table, and findings. Read-only, passive, in memory only |
 | `compliance.py` | Compliance page (`/api/compliance`): the five Cyber Essentials control areas as pass/fail checks with evidence, from this PC's settings (one read-only PowerShell call) and from network.py, cve.py, apps.py and remedy.py; the owner's declarations and accepted exceptions; one history line a day. Read-only for the PC |
 | `eol.py` | End of support: a local copy of the public endoflife.date list (one 3 MB file, kept in `cve.db`), and which installed programs and which Windows are a release line that no longer gets security updates. Strict whole-name matching; the download is the online step |
+| `fleet.py` | Reports this PC to the central server (`server/`): enrolment with a one-time token, a check-in every 15 minutes, and `payload()`, the exact list of what is sent. The only code that sends anything about the PC off it; off until enrolled by hand |
 | `remedy.py` | The only code that changes installed software or a service: Update one application (winget), Stop one service, and switch Windows Firewall on, each one click, confirmed, logged in `remedy_log`. Off by default |
 | `dashboard.py` | Dashboard (`/api/dashboard`): one summary put together from what the other modules already keep, plus the "needs attention" lines. Read-only, asks nothing new of Windows or the internet; a part that fails is replaced by `{error}` |
 | `journal.py` | Phase 7: work journal (Activity › Journal): per day, what arrived, was filed, was deleted, and which folders had documents added or changed. Built from existing tables + file dates; writes only its own `journal_touch` table |
@@ -92,6 +99,18 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   online) and changes nothing. Its picture lives in memory only (30 s cache): remote addresses of open
   connections and the MAC/IP addresses of nearby devices are never written to a database, a report file or
   the log (the log gets counts). The dashboard takes only its findings, read in the background.
+- `fleet.py` is the only code that sends anything about this PC off it, and only after `shadow_agent.py
+  fleet enrol <server> <token>` was run by hand (`fleet leave` stops it). `payload()` copies named fields,
+  never whole records, so nothing new is sent by accident; the SENT / NEVER SENT lists in its docstring and
+  in `docs/architecture.md` are a promise to customers. Never sent: anything about files or documents,
+  account names, folders and program paths, IP and MAC addresses, open connections, neighbouring devices,
+  routes, DNS, hosts, share names. Adding a field to `payload()` widens what leaves the PC: ask first, and
+  update both lists and `tests/test_fleet.py` (which plants such values and checks none come out). HTTPS
+  only, except localhost. The device key is never shown by `status()` or logged.
+- On the server (`server/`): separation between organisations is row-level security in PostgreSQL, forced,
+  with the API connected as `fleet_app` (no bypass). Every new table with customer data needs `org_id`, the
+  policy, and a line in the isolation test. Secrets are stored as hashes only. No endpoint may send a
+  command to a device before phase 5 is designed and agreed.
 - `compliance.py` reads and judges; it changes nothing on the PC and sends nothing. It writes only its own
   tables (`compliance_history`, `compliance_declared`, `compliance_accepted`). Things it cannot measure are
   declarations by the owner and must always be shown as declared, never as measured or passed. An accepted
@@ -148,7 +167,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - Restart the agent after Python changes: console Settings › Restart agent, or POST `/api/restart` with the
   `X-Shadow-Token` from the page's `<meta name="shadow-token">`. Static UI files need no restart.
 - Re-register the task (paths/flags changed): `powershell -ExecutionPolicy Bypass -File .\install_task.ps1`.
-- Useful CLI: `shadow_agent.py check | report | cleanup | search "<q>" | sysinfo | apps [--store] [--updates] | vulns [--sync] [--all] | network | compliance`.
+- Useful CLI: `shadow_agent.py check | report | cleanup | search "<q>" | sysinfo | apps [--store] [--updates] | vulns [--sync] [--all] | network | compliance | fleet show`.
 - Self-tests worth running after related changes: Settings › OCR › Test OCR (`/api/ocr/selftest`); Recycle Bin
   self-test `/api/cleanup/selftest` (creates and recycles a tiny file in the agent folder).
 - Tests: `.venv\Scripts\python -m unittest discover -s tests` (stdlib unittest, temp folders only). Run them
@@ -250,6 +269,12 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   them no longer on the PC (56 before folding the same program left behind in several old version folders).
   36 present programs are allowed from any address on the Public profile. No rule lets any program in on any
   port. All three browsers update themselves (no policy, update services not disabled).
+- Fleet, phase 1 (12 Oct 2026, this PC enrolled to the server on localhost): a report is 70 KB (169 programs,
+  40 services, 17 settings). The server keeps a kind only when its content changed; at first the network
+  kind changed on every check-in, because of a timestamp, then short-lived UDP ports (40 of 58 UDP listeners
+  were in the dynamic range), then discovery ports (mDNS 5353 coming and going). With those left out,
+  repeated check-ins store nothing. Server tests: 4, including reads and writes across organisations
+  refused in SQL.
 - Services (`services.py`, 1.7 s): 313 services, 40 outside the Windows folder (24 running, 36 as SYSTEM), 3
   listen from the network; 14 belong to an installed application by install folder or product name, 1 more by
   first word plus identical version (the MongoDB server).
@@ -284,6 +309,9 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   catalogue, not programs winget cannot identify), and nothing is updated for the user. Packaged apps have no
   size and no true install date (the package folder's creation day is shown). Changes are only known from
   the first scan on (12 Oct 2026) and only as of the day a scan noticed them.
+- Fleet server: phase 1 only. It runs on localhost with default passwords and no TLS, so only this PC can
+  enrol; it shows what devices report and judges nothing. Next is phase 2 (CVE, end-of-life and compliance
+  on the server, the React console reading it). No cloud server has been rented.
 - Compliance is for one PC. Not checked: multi-factor login, backups and the router
   (declared). "Windows is up to date" means an update within 35 days, not "no newer build exists". A fleet
   version (system-service agent, central console, roles) is the planned next step and is not started.

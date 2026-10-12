@@ -765,6 +765,12 @@ def run(cfg: dict, db: DB, config_path: Path) -> None:
                     journal.record_touches(cfg, min_gap=6 * 3600)
                 except Exception as e:
                     log.warning("journal: %s", e)
+                try:   # report to the central server, only if this PC was enrolled by hand (fleet.py)
+                    import fleet
+                    if fleet.due(cfg):
+                        fleet.checkin(cfg, log=log)
+                except Exception as e:
+                    log.warning("fleet: %s", e)
             if time.time() - last_ping > 60:
                 ollama_ok(cfg)
                 last_ping = time.time()
@@ -1034,6 +1040,11 @@ def main():
     apc.add_argument("--store", action="store_true", help="also list Store and packaged apps")
     apc.add_argument("--updates", action="store_true", help="ask winget (online) which have a newer version")
     sub.add_parser("compliance")
+    fl = sub.add_parser("fleet", help="report this PC to a central server (off until enrolled)")
+    fl.add_argument("action", choices=["show", "enrol", "checkin", "status", "leave"])
+    fl.add_argument("server", nargs="?", help="for enrol: https://your-server")
+    fl.add_argument("token", nargs="?", help="for enrol: the enrolment token")
+    fl.add_argument("--json", action="store_true", help="show: print the full data that would be sent")
     nw = sub.add_parser("network")
     nw.add_argument("--json", action="store_true", help="print raw JSON instead of text")
     vu = sub.add_parser("vulns")
@@ -1068,6 +1079,31 @@ def main():
             apps.check_updates(cfg, log=log)
         v = apps.with_updates(cfg, apps.view(cfg), a.updates or s["check_updates"], s["update_hours"])
         print(json.dumps(v, indent=1) if a.json else apps.as_text(v, packaged=a.store))
+        return
+    if a.cmd == "fleet":
+        import fleet
+        if a.action == "show":
+            p = fleet.payload(cfg)
+            print(json.dumps(p, indent=1) if a.json else fleet.as_text(p))
+        elif a.action == "enrol":
+            if not a.server or not a.token:
+                sys.exit("Usage: shadow_agent.py fleet enrol https://your-server <enrolment token>")
+            try:
+                st = fleet.enrol(cfg, a.server, a.token)
+            except (RuntimeError, ValueError) as e:
+                sys.exit(f"Not enrolled: {e}")
+            print(f"Enrolled with {st['server']} as device {st['device_id']}.")
+            print("From now on this PC reports to that server every 15 minutes while the agent runs.")
+            print("See what is sent with: shadow_agent.py fleet show")
+        elif a.action == "checkin":
+            r = fleet.checkin(cfg, log=log)
+            print(f"Sent {', '.join(r['sent'])}; the server kept {', '.join(r['stored']) or 'nothing new'}." if r["ok"] else f"Failed: {r['message']}")
+        elif a.action == "leave":
+            fleet.leave(cfg)
+            print("This PC no longer reports to a server. What was already sent stays there until its administrator deletes it.")
+        else:
+            st = fleet.status(cfg)
+            print("\n".join(f"{k}: {v}" for k, v in st.items()))
         return
     if a.cmd == "compliance":
         import compliance
