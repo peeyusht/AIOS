@@ -15,8 +15,12 @@ the publisher's licence terms were accepted (the dialog says so; winget gets --a
 the agent's own Python is never updated from here; a major-version jump is never taken; nothing is
 uninstalled, no service's start-up setting is changed, no configuration file is edited.
 
-The agent runs as you, not elevated: an installer that needs administrator rights raises the normal Windows
-permission prompt on your desktop, and declining it fails the update, which is reported as such.
+The agent runs as you, not elevated. An update is first tried that way, which is enough for programs
+installed for you alone and for installers that ask for permission themselves. A silent installer that needs
+administrator rights does NOT ask: it just fails (measured 12 Oct 2026: PuTTY's MSI, "Uninstall failed with
+exit code: 1603", nothing changed). Only then is the same winget command started once more as administrator,
+which raises the normal Windows permission prompt on your desktop; declining it fails the update, and that is
+what is reported. The agent itself never becomes elevated.
 """
 import ctypes
 import os
@@ -81,6 +85,46 @@ class _ExecInfo(ctypes.Structure):
                 ("dwHotKey", ctypes.c_ulong), ("hIcon", ctypes.c_void_p), ("hProcess", ctypes.c_void_p)]
 
 
+def _as_admin(exe: str, params: str, wait_ms: int):
+    """Start one program as administrator (Windows shows its permission prompt) and wait for it.
+    Returns its exit code, or 'declined', or 'error N' when Windows would not start it."""
+    info = _ExecInfo()
+    info.cbSize = ctypes.sizeof(info)
+    info.fMask = 0x40 | 0x8000                            # keep the process handle; no new console
+    info.lpVerb, info.lpFile, info.lpParameters, info.nShow = "runas", exe, params, 0
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    kernel32.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    if not shell32.ShellExecuteExW(ctypes.byref(info)) or not info.hProcess:
+        err = ctypes.get_last_error()
+        return "declined" if err == 1223 else f"error {err}"
+    code = ctypes.c_ulong(0)
+    waited = kernel32.WaitForSingleObject(info.hProcess, wait_ms)
+    kernel32.GetExitCodeProcess(info.hProcess, ctypes.byref(code))
+    kernel32.CloseHandle(info.hProcess)
+    return "error timeout" if waited == 0x102 else code.value
+
+
+# winget's "the installer (or the uninstaller of the old version) failed": what a silent installer without
+# administrator rights ends in. Only these are tried again as administrator.
+NEEDS_RIGHTS = {0x8A150006, 0x8A150030}
+
+
+def run_winget_elevated(args: list) -> tuple:
+    """The same winget command, as administrator. Its output cannot be read: (exit code, what happened)."""
+    exe = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WindowsApps", "winget.exe")
+    if os.name != "nt" or not os.path.exists(exe):
+        return -1, "winget (Windows' App Installer) was not found on this PC."
+    got = _as_admin(exe, subprocess.list2cmdline(args), UPDATE_TIMEOUT * 1000)
+    if got == "declined":
+        return -3, "You declined the Windows permission prompt."
+    if isinstance(got, str):
+        return -1, f"Windows would not start winget as administrator ({got})."
+    return (got if got < 0x80000000 else got - (1 << 32)), ""
+
+
 def _sc() -> str:
     return os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "sc.exe")
 
@@ -102,25 +146,14 @@ def stop_elevated(name: str) -> tuple:
         return False, "Only available on Windows."
     if not SERVICE_RX.fullmatch(name or ""):
         return False, "Not a service name."
-    info = _ExecInfo()
-    info.cbSize = ctypes.sizeof(info)
-    info.fMask = 0x40 | 0x8000                            # keep the process handle; no new console
-    info.lpVerb, info.lpFile, info.lpParameters, info.nShow = "runas", _sc(), f'stop "{name}"', 0
-    shell32, kernel32 = ctypes.windll.shell32, ctypes.windll.kernel32
-    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
-    kernel32.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
-    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
-    if not shell32.ShellExecuteExW(ctypes.byref(info)):
-        err = ctypes.GetLastError() or kernel32.GetLastError()
-        return False, ("You declined the Windows permission prompt." if err == 1223
-                       else f"Windows would not start the command (error {err}).")
-    code = ctypes.c_ulong(0)
-    kernel32.WaitForSingleObject(info.hProcess, 60_000)
-    kernel32.GetExitCodeProcess(info.hProcess, ctypes.byref(code))
-    kernel32.CloseHandle(info.hProcess)
-    if code.value not in (0, 1062):                       # 1062: it was not running any more
+    got = _as_admin(_sc(), f'stop "{name}"', 60_000)
+    if got == "declined":
+        return False, "You declined the Windows permission prompt."
+    if isinstance(got, str):
+        return False, f"Windows would not start the command ({got})."
+    if got not in (0, 1062):                              # 1062: it was not running any more
         why = {5: "Windows refused: not enough rights.", 1051: "Other running services depend on it; stop those first.",
-               1060: "Windows no longer knows this service."}.get(code.value, f"Windows answered with code {code.value}.")
+               1060: "Windows no longer knows this service."}.get(got, f"Windows answered with code {got}.")
         return False, why
     for _ in range(30):                                   # stopping takes a moment
         if service_running(name) is False:
@@ -195,7 +228,8 @@ def _end(ok: bool, message: str) -> None:
     state.update(running=False, ok=ok, message=message, finished=datetime.now().isoformat(timespec="seconds"))
 
 
-def start_update(cfg: dict, app_id: str, terms_accepted: bool, log=None, run=run_winget, wait: bool = False) -> dict:
+def start_update(cfg: dict, app_id: str, terms_accepted: bool, log=None, run=run_winget,
+                 elevated=run_winget_elevated, wait: bool = False) -> dict:
     """Start updating one application. Everything about it comes from the agent's own list, not the caller."""
     if not enabled(cfg):
         return {"ok": False, "message": "Updating from the console is switched off in Settings."}
@@ -221,6 +255,12 @@ def start_update(cfg: dict, app_id: str, terms_accepted: bool, log=None, run=run
             if log:
                 log.info("REMEDY update %s -> %s (winget %s)", app["name"], plan["to"], " ".join(args))
             code, said = run(args)
+            if code & 0xFFFFFFFF in NEEDS_RIGHTS:           # a silent installer without rights fails, it does not ask
+                if log:
+                    log.info("REMEDY update needs administrator rights (winget code %#x): asking Windows", code & 0xFFFFFFFF)
+                state["message"] = "Windows is asking for permission on your desktop."
+                code2, said2 = elevated(args)
+                code, said = code2, said2 or (said if code2 else "")
             try:
                 _refresh(cfg, log)
             except Exception as e:  # the update itself is what counts
@@ -234,6 +274,8 @@ def start_update(cfg: dict, app_id: str, terms_accepted: bool, log=None, run=run
             elif code == 0:
                 ok, msg = True, (f"winget reports the update as done, but Windows still lists version {before or '?'}. "
                                  "It may need the program closed, or a restart.")
+            elif code == -3:
+                msg = f"Not updated: {said} The installer needs administrator rights."
             else:
                 msg = f"The update did not go through (winget code {code & 0xFFFFFFFF:#x})." + (f" {said}" if said else "")
         except Exception as e:  # never leave the job marked as running
