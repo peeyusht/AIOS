@@ -40,7 +40,9 @@ own `#/inbox`-style routing, so it runs unchanged as a static page.
    existing style; a copy from Lovable before they are sent would lose them): the Security page
    (`src/shadow/pages/Security.tsx`), its nav entry, badge and `SECURITY_CHANGED` event in `App.tsx`, the
    Security section in `Settings.tsx`, `security*` calls in `api.ts`, the `Sec*` types in `types.ts` and the
-   fictional security demo data and routes in `mock.ts`.
+   fictional security demo data and routes in `mock.ts`; and for Update / Stop service: `src/shadow/remedy.tsx`
+   (bar, buttons, dialogs), its use in `Library.tsx` and `Security.tsx`, the `library.remediate` switch in
+   `Settings.tsx`, `remedy*` calls, `UpdatePlan`/`Remedy*` types and mock routes.
 
 ## Rules the UI must keep
 - No external requests (fonts, CDNs, images, analytics): the agent's CSP is `default-src 'self'`.

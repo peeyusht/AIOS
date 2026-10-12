@@ -543,7 +543,7 @@ def scan(cfg: dict, updates: bool = False, hours: int = 24, read_services=None, 
     own = match(cfg, [{**s, "name": s["product"] or s["name"]} for s in svcs if not s["app_id"]])
     own = {s["id"]: s for s in own}
     out_apps = [{k: a.get(k) for k in ("id", "key", "name", "version", "judged_version", "publisher", "kind", "available",
-                                       "update_id", "products", "cves", "unversioned")}
+                                       "update_id", "update", "products", "cves", "unversioned")}
                 for a in judged.values() if a["products"]]
     out_svcs = []
     for s in svcs:

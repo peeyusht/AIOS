@@ -159,6 +159,7 @@ export function SettingsPage({ status }: { status: Status | null }) {
           <Section title="Security">
             <Sw c={ctx} p="library.vulnerabilities" label="Look for known vulnerabilities (goes online)" hint="Keeps a copy of the public CVE list on this PC (about 400 MB, from nvd.nist.gov and cisa.gov) and compares your installed programs and services with it here. What you have installed is never sent. Needs the applications list above." />
             {!!ctx.get("library.vulnerabilities") && <Num c={ctx} p="library.cve_hours" label="Refresh the CVE list every" unit="hours" min={1} max={720} />}
+            <Sw c={ctx} p="library.remediate" label="Allow Update and Stop service from the console" hint="Adds an Update button (runs winget for that one application, after you confirm and accept the publisher's terms) and a Stop button for services. Windows still asks for permission when an installer needs it. Off: the console only lists." />
           </Section>
           <Section title="Interface">
             <Num c={ctx} p="ui.port" label="Port" min={1024} max={65535} restart />

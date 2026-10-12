@@ -12,6 +12,7 @@ import { when } from "@/lib/format";
 import type { SecApp, SecCve, SecService, SecurityResponse } from "@/lib/types";
 import { Card, EmptyState, ListSkeleton, LoadError, Mono, Notice, PageHeader, Segmented, Spin, Tip, act } from "../ui";
 import { emitSecurityChanged } from "../App";
+import { RemedyBar, StopButton, UpdateButton } from "../remedy";
 
 const FIRST = 3; // CVEs shown per program before "Show all"
 
@@ -79,7 +80,7 @@ export function SecurityPage() {
           <>
             Known vulnerabilities in the programs installed on this PC, and the background services that are not part of Windows.
             <span className="block">
-              Compared on this PC. Nothing about what you have installed is sent anywhere; nothing is updated or stopped for you.
+              Compared on this PC. Nothing about what you have installed is sent anywhere; nothing is updated or stopped unless you click it.
             </span>
           </>
         }
@@ -104,6 +105,7 @@ export function SecurityPage() {
           <a href="#/settings" className="text-primary underline-offset-4 hover:underline">Settings › Security</a>.
         </EmptyState>
       )}
+      {d && d.enabled && d.settings.remediate && <RemedyBar onDone={() => { void q.reload(); emitSecurityChanged(); }} />}
       {d && d.enabled && d.runner.error && <Notice tone="danger" className="mb-4">{d.runner.error}</Notice>}
       {d && d.enabled && db?.error && (
         <Notice tone="warn" className="mb-4">
@@ -135,9 +137,9 @@ export function SecurityPage() {
               <TabsTrigger value="programs">Programs{s.apps_affected > 0 && <span className={cn("ml-1.5 tabular", s.kev > 0 ? "text-destructive" : "text-warning")}>{s.apps_affected}</span>}</TabsTrigger>
               <TabsTrigger value="services">Services<span className="ml-1.5 tabular text-muted-foreground">{s.services}</span></TabsTrigger>
             </TabsList>
-            <TabsContent value="programs"><Programs apps={apps} onHide={(a) => hide("app", a.key || a.id, a.name)} /></TabsContent>
+            <TabsContent value="programs"><Programs apps={apps} remediate={!!d.settings.remediate} onHide={(a) => hide("app", a.key || a.id, a.name)} /></TabsContent>
             <TabsContent value="services">
-              <Services services={services} read={d.services_read !== false} onHide={(x) => hide("service", x.id, x.name)} />
+              <Services services={services} read={d.services_read !== false} remediate={!!d.settings.remediate} onHide={(x) => hide("service", x.id, x.name)} />
             </TabsContent>
           </Tabs>
           <p className="text-sm text-muted-foreground">
@@ -169,7 +171,7 @@ const HideBtn = ({ onClick, tip }: { onClick: () => void; tip: string }) => (
   <Tip tip={tip}><Button variant="ghost" size="sm" onClick={onClick}><EyeOff /> Hide</Button></Tip>
 );
 
-function Programs({ apps, onHide }: { apps: SecApp[]; onHide: (a: SecApp) => void }) {
+function Programs({ apps, onHide, remediate }: { apps: SecApp[]; onHide: (a: SecApp) => void; remediate: boolean }) {
   const [show, setShow] = useState<"flaws" | "all">("flaws");
   const list = useMemo(() => apps.filter((a) => show === "all" || a.cves.length > 0), [apps, show]);
   const clean = apps.filter((a) => a.cves.length === 0).length;
@@ -182,13 +184,13 @@ function Programs({ apps, onHide }: { apps: SecApp[]; onHide: (a: SecApp) => voi
           {clean > 0 ? `${clean} programs were compared and nothing matched their versions.` : "No program could be compared yet."}
         </EmptyState>
       ) : (
-        <div className="space-y-3">{list.map((a) => <ProgramCard key={a.id} a={a} onHide={() => onHide(a)} />)}</div>
+        <div className="space-y-3">{list.map((a) => <ProgramCard key={a.id} a={a} remediate={remediate} onHide={() => onHide(a)} />)}</div>
       )}
     </div>
   );
 }
 
-function ProgramCard({ a, onHide }: { a: SecApp; onHide: () => void }) {
+function ProgramCard({ a, onHide, remediate }: { a: SecApp; onHide: () => void; remediate: boolean }) {
   const kev = a.cves.filter((x) => x.kev).length;
   const critical = a.cves.filter((x) => (x.score ?? 0) >= 9).length;
   const fixes = a.cves.map((x) => x.fixed_in).filter((x): x is string => !!x);
@@ -214,6 +216,7 @@ function ProgramCard({ a, onHide }: { a: SecApp; onHide: () => void }) {
             {a.update_id && (
               <Button variant="ghost" size="icon" className="size-7 [&_svg]:size-3.5" aria-label="Copy the update command" title={`winget upgrade --id ${a.update_id}`} onClick={() => copyUpgrade(a.update_id!)}><Copy /></Button>
             )}
+            {remediate && <UpdateButton app={a} />}
           </span>
         ) : top && a.cves.length > 0 ? (
           <span>Version {top} or later fixes {fixes.length} of {a.cves.length}</span>
@@ -271,7 +274,7 @@ const ACCOUNT: Record<SecService["account"], { label: string; v: "warning" | "mu
   user: { label: "User account", v: "muted", tip: "Runs as a person's account" },
 };
 
-function Services({ services, read, onHide }: { services: SecService[]; read: boolean; onHide: (s: SecService) => void }) {
+function Services({ services, read, onHide, remediate }: { services: SecService[]; read: boolean; onHide: (s: SecService) => void; remediate: boolean }) {
   const look = (s: SecService) => s.exposed || s.cves.length > 0;
   const [show, setShow] = useState<"look" | "running" | "all">(services.some(look) ? "look" : "running");
   const list = services.filter((s) => (show === "all" ? true : show === "running" ? s.running : look(s)));
@@ -328,7 +331,10 @@ function Services({ services, read, onHide }: { services: SecService[]; read: bo
                         </div>
                       )}
                     </td>
-                    <td className="whitespace-nowrap px-4 py-2 text-right"><HideBtn onClick={() => onHide(x)} tip="I know about this one" /></td>
+                    <td className="whitespace-nowrap px-4 py-2 text-right">
+                      {remediate && <StopButton svc={x} />}
+                      <HideBtn onClick={() => onHide(x)} tip="I know about this one" />
+                    </td>
                   </tr>
                 );
               })}
