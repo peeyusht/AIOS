@@ -52,6 +52,8 @@ FIELDS = [
     ("library.applications", "bool", None, None),
     ("library.check_updates", "bool", None, None),
     ("library.update_hours", "int", 1, 720),
+    ("library.vulnerabilities", "bool", None, None),
+    ("library.cve_hours", "int", 1, 720),
     ("watch.enabled", "bool", None, None),
     ("watch.soon_days", "int", 1, 365),
     ("watch.keep_expired_days", "int", 0, 3650),
