@@ -56,6 +56,8 @@ DEFAULTS = {
     "applications": True,      # list the applications installed on this PC and what changed (apps.py)
     "check_updates": False,    # ONLINE: ask winget which applications have a newer version. Off until switched on
     "update_hours": 24,        # how often the running agent asks again
+    "vulnerabilities": False,  # ONLINE: keep a local copy of the public CVE lists and compare what is installed (cve.py)
+    "cve_hours": 24,           # how often the local CVE copy is refreshed
 }
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
 OFFICE_EXT = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".xlsm", ".xlsb", ".ppt", ".pptx", ".odt", ".ods",
@@ -78,6 +80,7 @@ def settings(cfg: dict) -> dict:
                 s[k] = d
     s["scan_hours"] = max(0, s["scan_hours"])
     s["update_hours"] = min(720, max(1, s["update_hours"]))
+    s["cve_hours"] = min(720, max(1, s["cve_hours"]))
     s["image_distance"] = min(40, max(0, s["image_distance"]))
     return s
 
@@ -528,8 +531,12 @@ def view(cfg: dict) -> dict:
     installed = apps.view(cfg) if s["enabled"] and s["applications"] else None
     if installed:
         installed = apps.with_updates(cfg, installed, s["check_updates"], s["update_hours"])
+    known = None
+    if installed and s["vulnerabilities"]:
+        import cve
+        known = cve.view(cfg)
     base = {"enabled": s["enabled"], "runner": Runner.state, "settings": {"scan_hours": s["scan_hours"]},
-            "applications": installed}
+            "applications": installed, "vulnerabilities": known}
     rep = load_report() if s["enabled"] else None
     if not rep:
         return {**base, "scanned_at": None, **empty, "counts": {k: 0 for k in KINDS}, "dismissed": 0,
@@ -575,6 +582,12 @@ class Runner:
                     if s["check_updates"] and (updates or apps.updates_due(cfg, s["update_hours"])):
                         cls.state.update(progress="Asking winget about newer versions (online)")
                         apps.check_updates(cfg, log=log)
+                    if s["vulnerabilities"]:
+                        import cve
+                        if cve.due(cfg, s["cve_hours"]):
+                            cve.sync(cfg, progress=lambda m: cls.state.update(progress=m), log=log)
+                        cls.state.update(progress="Comparing with known vulnerabilities")
+                        cve.scan(cfg, updates=s["check_updates"], hours=s["update_hours"], log=log)
             except Exception as e:  # never take the agent down
                 cls.state["error"] = str(e)[:300]
                 if log:
@@ -596,5 +609,9 @@ class Runner:
             return True
         if s["applications"] and s["check_updates"]:      # the update check keeps its own, shorter clock
             import apps
-            return apps.updates_due(cfg, s["update_hours"])
+            if apps.updates_due(cfg, s["update_hours"]):
+                return True
+        if s["applications"] and s["vulnerabilities"]:
+            import cve
+            return cve.due(cfg, s["cve_hours"])
         return False

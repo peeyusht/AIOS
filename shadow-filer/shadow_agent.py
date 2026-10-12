@@ -1031,6 +1031,10 @@ def main():
     apc.add_argument("--json", action="store_true", help="print raw JSON instead of text")
     apc.add_argument("--store", action="store_true", help="also list Store and packaged apps")
     apc.add_argument("--updates", action="store_true", help="ask winget (online) which have a newer version")
+    vu = sub.add_parser("vulns")
+    vu.add_argument("--sync", action="store_true", help="refresh the local CVE copy first (online download)")
+    vu.add_argument("--all", action="store_true", help="every recognised application and every CVE")
+    vu.add_argument("--json", action="store_true", help="print raw JSON instead of text")
     cl = sub.add_parser("cleanup")
     cl.add_argument("--csv", help="also write the recommendations to this CSV file")
     cl.add_argument("--json", action="store_true", help="print raw JSON instead of text")
@@ -1059,6 +1063,16 @@ def main():
             apps.check_updates(cfg, log=log)
         v = apps.with_updates(cfg, apps.view(cfg), a.updates or s["check_updates"], s["update_hours"])
         print(json.dumps(v, indent=1) if a.json else apps.as_text(v, packaged=a.store))
+        return
+    if a.cmd == "vulns":
+        import cve
+        import library
+        s = library.settings(cfg)
+        if a.sync:
+            cve.sync(cfg, progress=lambda m: print("  " + m, file=sys.stderr), log=log)
+        cve.scan(cfg, updates=s["check_updates"], hours=s["update_hours"], log=log)
+        v = cve.view(cfg)
+        print(json.dumps(v, indent=1) if a.json else cve.as_text(v, everything=a.all))
         return
     if a.cmd == "search":
         import search_index

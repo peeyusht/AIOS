@@ -23,6 +23,8 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 | `watch.py` | Phase 5: dates that matter (expiry, due, valid until) and sensitive files in Downloads, read from `search.db` text; read-only |
 | `library.py` | Phase 6: firmware/VM catalogue, document version chains, look-alike pictures, program signatures; read-only, report in `library_report.json` |
 | `apps.py` | Applications (Library › Applications): programs installed on this PC with version, publisher, install date, size; what was installed, updated or removed between scans (`apps_history`). Reads the registry and the packaged-app list; read-only. Optional, off by default: asks `winget` which have a newer version (the one online step) |
+| `services.py` | Windows services that are not part of Windows: program, account, running or not, ports listened on (and whether from the network), the installed application each belongs to. Read-only, local |
+| `cve.py` | Known vulnerabilities: a local copy of the public CVE lists (`cve.db`, NVD yearly files + CISA's known-exploited list) and which installed programs and services they name, by strict name and version matching. Optional, off by default; downloads are the online step, the comparison is local |
 | `journal.py` | Phase 7: work journal (Activity › Journal): per day, what arrived, was filed, was deleted, and which folders had documents added or changed. Built from existing tables + file dates; writes only its own `journal_touch` table |
 | `mover.py` | the only code that moves files; journal + undo |
 | `autofile.py` | Phase 3 auto-filing, per-folder trust from the user's Inbox decisions |
@@ -80,6 +82,18 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   (it is asked per package, which tells it what is installed), don't pass `--accept-source-agreements` /
   `--accept-package-agreements` (agreeing to terms is the user's to do), and never run an upgrade or install:
   the page only offers the command to copy. Ask before any other online step.
+- The second online place is `cve.fetch`, only while `library.vulnerabilities` is on (off by default; asked
+  for by the user on 12 Oct 2026, who chose the local copy over per-product lookups). It GETs fixed public
+  files from `nvd.nist.gov` (yearly CVE files, then the "modified" file) and `www.cisa.gov` (known-exploited
+  list) and nothing else: no query, no parameter, nothing about this PC. The list of installed software is
+  never sent anywhere; never replace this with a per-product API lookup without asking. A file that fails
+  NVD's checksum changes nothing. `cve.py` and `services.py` list only: nothing is updated, stopped or removed.
+- CVE matching is strict on purpose, and each rule below removed measured false alarms. Don't loosen one
+  without re-measuring: the product must be the whole display name (minus version, filler and the maker's
+  name in front), never a part of it; the vendor must agree with the publisher, the maker's name in front, or
+  the winget id; the installed version must be inside the stated range; statements with no version at all are
+  counted apart (`unversioned`), not shown as hits; Store/packaged apps are not judged; a range bound that is
+  not a version (a commit id) is not compared.
 - Never commit personal data: `*.db`, logs (including rotated `shadow.log.1`…), `cleanup_report.json`,
   `library_report.json`,
   `config.yaml` (see `.gitignore`).
@@ -98,7 +112,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - Restart the agent after Python changes: console Settings › Restart agent, or POST `/api/restart` with the
   `X-Shadow-Token` from the page's `<meta name="shadow-token">`. Static UI files need no restart.
 - Re-register the task (paths/flags changed): `powershell -ExecutionPolicy Bypass -File .\install_task.ps1`.
-- Useful CLI: `shadow_agent.py check | report | cleanup | search "<q>" | sysinfo | apps [--store] [--updates]`.
+- Useful CLI: `shadow_agent.py check | report | cleanup | search "<q>" | sysinfo | apps [--store] [--updates] | vulns [--sync] [--all]`.
 - Self-tests worth running after related changes: Settings › OCR › Test OCR (`/api/ocr/selftest`); Recycle Bin
   self-test `/api/cleanup/selftest` (creates and recycles a tiny file in the agent folder).
 - Tests: `.venv\Scripts\python -m unittest discover -s tests` (stdlib unittest, temp folders only). Run them
@@ -158,6 +172,27 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   when unsure), so the version only decides between two entries of one name. winget also reported 2 packages
   whose version it cannot determine; those are not listed (`--include-unknown` is not used). A row counts
   only while the installed version is still the one the check saw.
+- CVE copy (`cve.py`, 12 Oct 2026): 25 yearly files, about 300 MB compressed, 4 GB of JSON read as a stream
+  in 7.6 minutes; 385,946 CVEs, 1,803,942 "product, versions" statements (1.08 M NVD's, 0.72 M the
+  reporters'), 119,244 products, 1,739 known exploited; `cve.db` is 401 MB. NVD's own analysis is missing for
+  most new CVEs (397 of the 3,334 most recently changed had it; 3,302 had the reporter's statement), which is
+  why both kinds are kept. Later runs read one file of about 7 MB.
+- CVE matching on the user's PC (85 programs, 40 services; comparison 3 s). First cut, any part of the name:
+  88 of 169 "recognised", 33 "affected", 2,712 CVEs, mostly wrong ("Windows Subsystem for Linux" as linux and
+  windows: 2,224; "MongoDB Shell" and "Compass" as the server; a Visual Studio Code helper package at version
+  1.0.140: 72; an update service judged as the product it updates: 454 and 63). Final rules: 36 of 85 programs
+  recognised, 15 with CVEs for the installed version, 337 CVEs, 1 known exploited, 20 critical; 9 of the 15
+  have a newer version listed by winget. Hand check of the 15: 12 right (MongoDB server, Chrome, three
+  Pythons, Node.js, FortiClient, PuTTY, Ryzen Master, GitHub CLI, VLC, CPU-Z), 1 right for 1 CVE after the
+  phone-app rule (Canva), 2 wrong: "Adobe Acrobat" got 4 CVEs of Adobe's browser extensions filed under the
+  same product name, and "Logi Options+" got 1 CVE of the older, different "Logitech Options". The Chrome
+  count was checked by range only (all "before 155.0.8059.39"), not CVE by CVE. 49 programs match no product:
+  not "safe", unknown. A commit id as a range bound had made Ollama a hit. The one known-exploited hit is
+  real: the MongoDB 7.0.5 server (CVE-2025-14847, fixed in 7.0.28), running as a service and listening on
+  port 27017 from the network.
+- Services (`services.py`, 1.7 s): 313 services, 40 outside the Windows folder (24 running, 36 as SYSTEM), 3
+  listen from the network; 14 belong to an installed application by install folder or product name, 1 more by
+  first word plus identical version (the MongoDB server).
 - Work journal (`journal.py`, built in 0.07 s): 497 files seen in 7 days of predictions, but 418 of those rows
   were written on 10–11 Oct by catch-up runs after reinstalling, so an arrival is dated by the file's own
   arrival time while it is still in Downloads (91 of 123 in the last 30 days) and by the day the agent noticed
@@ -189,6 +224,10 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   catalogue, not programs winget cannot identify), and nothing is updated for the user. Packaged apps have no
   size and no true install date (the package folder's creation day is shown). Changes are only known from
   the first scan on (12 Oct 2026) and only as of the day a scan noticed them.
+- Vulnerabilities: built and scheduled, shown by `shadow_agent.py vulns` and sent in `/api/library`
+  (`vulnerabilities`), but there is no page yet (planned: like Watch, with a sidebar badge and Hide for the
+  wrong matches measured above). Windows itself, Store apps, Microsoft 365/Office (its CVE versions cannot be
+  compared with the installed build) and the 49 programs no product name fits are not judged.
 - The work journal's "worked on" list only sees documents inside the PARA tree, and only on days the agent
   was running (earlier days show a file's last change only). Work done in Downloads or elsewhere is not in it.
 - Preview (Inbox and Search) shows PDFs, pictures and .docx as they look, and the indexed text for everything

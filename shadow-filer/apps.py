@@ -91,7 +91,8 @@ $out = foreach ($p in Get-AppxPackage) {
     publisher = "$($m.PublisherDisplayName)"; arch = "$($p.Architecture)"; location = "$($p.InstallLocation)";
     installed = $made; signature = "$($p.SignatureKind)" }
 }
-'JSON:' + (ConvertTo-Json -InputObject @($out) -Compress)
+$json = ConvertTo-Json -InputObject @($out) -Compress
+'JSON:' + [regex]::Replace($json, '[^\x00-\x7F]', { param($m) '\u{0:x4}' -f [int][char]$m.Value })
 """
 
 

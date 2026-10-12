@@ -21,3 +21,4 @@ config.yaml
 config.yaml.bak
 # Local backups made during updates
 backup-*/
+*.download

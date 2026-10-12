@@ -293,6 +293,14 @@ The Library page lists what you already hold. It is read-only: nothing is moved,
   in the agent that goes online: winget downloads its community catalogue from Microsoft and compares on this
   PC. Nothing is updated for you; the copy button gives you the `winget upgrade --id ...` command to run
   yourself.
+**Known vulnerabilities** (`library.vulnerabilities` in `config.yaml`, off until switched on; no page yet,
+use `shadow_agent.py vulns`): the agent keeps a copy of the public CVE database on this PC (about 400 MB,
+from nvd.nist.gov and CISA's known-exploited list, refreshed daily) and compares your installed programs and
+the Windows services that are not part of Windows with it, here. The list of what you have installed is never
+sent anywhere. It reports only what it is sure of: the product name must match as a whole, the maker must
+agree and your version must be inside the affected range, so a program it does not mention is unknown, not
+safe. Nothing is updated or stopped for you.
+
 A scan runs once a day (Settings › Library) or when you click Scan now; the first one takes a few seconds.
 **Hide** removes an entry from the list (not from disk); **Show** opens its folder.
 
