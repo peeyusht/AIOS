@@ -1,4 +1,4 @@
--- Fleet server, phases 1 and 2. Run as the database owner (see app/manage.py init). Safe to run again.
+-- Fleet server, phases 1 to 3. Run as the database owner (see app/manage.py init). Safe to run again.
 --
 -- Separation between organisations is enforced HERE, not only in the application: every table with customer
 -- data has org_id and row-level security, forced even for the table owner. The API connects as fleet_app,
@@ -139,12 +139,81 @@ CREATE TABLE IF NOT EXISTS reference_status (
   at timestamptz NOT NULL DEFAULT now()
 );
 
+-- ---------------------------------------------------------------- phase 3: people
+-- A person belongs to one organisation and has one role: owner (everything, including people), admin
+-- (accept checks, declarations, share links, enrolment tokens, remove a device), auditor (read only).
+-- The password is stored as a scrypt hash. The second factor's secret has to be readable to check a code, so
+-- it is stored encrypted with a key the database never sees (FLEET_SECRET_KEY, held by the API).
+CREATE TABLE IF NOT EXISTS users (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL REFERENCES organisations ON DELETE CASCADE,
+  email text NOT NULL,
+  name text NOT NULL DEFAULT '',
+  role text NOT NULL CHECK (role IN ('owner', 'admin', 'auditor')),
+  password_hash text,
+  totp_secret text,
+  totp_confirmed boolean NOT NULL DEFAULT false,
+  totp_last_step bigint NOT NULL DEFAULT 0,          -- a code is good once: the same or an older one is refused
+  disabled boolean NOT NULL DEFAULT false,
+  failed int NOT NULL DEFAULT 0,
+  locked_until timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  last_login timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users (lower(email));      -- one account per address, on the whole server
+
+-- A one-time link with which a person sets (or sets again) their own password. Nobody else ever knows it.
+CREATE TABLE IF NOT EXISTS setup_links (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL REFERENCES organisations ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES users ON DELETE CASCADE,
+  token_hash text NOT NULL UNIQUE,
+  expires_at timestamptz NOT NULL,
+  used_at timestamptz
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL REFERENCES organisations ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES users ON DELETE CASCADE,
+  token_hash text NOT NULL UNIQUE,
+  mfa boolean NOT NULL DEFAULT false,                -- false until the second factor was given: such a session opens nothing
+  created_at timestamptz NOT NULL DEFAULT now(),
+  last_seen timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user_id);
+
+CREATE TABLE IF NOT EXISTS recovery_codes (
+  org_id uuid NOT NULL REFERENCES organisations ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES users ON DELETE CASCADE,
+  code_hash text NOT NULL,
+  used_at timestamptz,
+  PRIMARY KEY (user_id, code_hash)
+);
+
+-- A link that shows the organisation's evidence, read-only, to someone without an account (a broker, an
+-- assessor) until it expires or is withdrawn.
+CREATE TABLE IF NOT EXISTS share_links (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL REFERENCES organisations ON DELETE CASCADE,
+  token_hash text NOT NULL UNIQUE,
+  label text NOT NULL DEFAULT '',
+  created_by text NOT NULL DEFAULT '',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL,
+  revoked_at timestamptz,
+  opened int NOT NULL DEFAULT 0,
+  last_opened timestamptz
+);
+
 -- ---------------------------------------------------------------- row-level security
 DO $$
 DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['admin_keys', 'enrolment_tokens', 'devices', 'snapshots', 'audit_log',
-                           'judgements', 'compliance_history', 'declarations', 'exceptions'] LOOP
+                           'judgements', 'compliance_history', 'declarations', 'exceptions',
+                           'users', 'setup_links', 'sessions', 'recovery_codes', 'share_links'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS own_org ON %I', t);
@@ -167,6 +236,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON declarations, exceptions TO fleet_app;
 GRANT SELECT, UPDATE ON judgements TO fleet_app;          -- the API re-applies exceptions; only the worker judges
 GRANT SELECT, INSERT, UPDATE ON compliance_history TO fleet_app;
 GRANT SELECT ON reference_status TO fleet_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON users, setup_links, sessions, recovery_codes, share_links TO fleet_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO fleet_app;
 
 GRANT USAGE ON SCHEMA public TO fleet_worker;
@@ -202,6 +272,46 @@ $$;
 
 REVOKE ALL ON FUNCTION auth_device(text), auth_admin(text), redeem_token(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION auth_device(text), auth_admin(text), redeem_token(text) TO fleet_app;
+
+-- Phase 3: four more doors, for people. Each answers with one row about the secret presented, nothing else.
+
+-- Signing in starts with an address, before any organisation is known. Answers with what is needed to check
+-- the password; the caller then works inside that organisation.
+CREATE OR REPLACE FUNCTION auth_login(p_email text)
+RETURNS TABLE (user_id uuid, org_id uuid, password_hash text, disabled boolean, locked_until timestamptz)
+LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT u.id, u.org_id, u.password_hash, u.disabled, u.locked_until FROM users u WHERE lower(u.email) = lower(p_email)
+$$;
+
+-- A session cookie -> who it is. Ends by itself after p_idle seconds without a request, and at expires_at.
+CREATE OR REPLACE FUNCTION auth_session(p_hash text, p_idle int)
+RETURNS TABLE (session_id uuid, user_id uuid, org_id uuid, role text, email text, name text, mfa boolean, totp_confirmed boolean)
+LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  WITH s AS (
+    UPDATE sessions SET last_seen = now()
+     WHERE token_hash = p_hash AND expires_at > now() AND last_seen > now() - make_interval(secs => p_idle)
+    RETURNING id, sessions.user_id, sessions.mfa)
+  SELECT s.id, u.id, u.org_id, u.role, u.email, u.name, s.mfa, u.totp_confirmed
+    FROM s JOIN users u ON u.id = s.user_id WHERE NOT u.disabled
+$$;
+
+-- A set-your-password link -> whose it is, while it is unused and not expired. Using it up is the caller's job.
+CREATE OR REPLACE FUNCTION auth_setup(p_hash text) RETURNS TABLE (link_id uuid, user_id uuid, org_id uuid, email text)
+LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT l.id, u.id, u.org_id, u.email FROM setup_links l JOIN users u ON u.id = l.user_id
+   WHERE l.token_hash = p_hash AND l.used_at IS NULL AND l.expires_at > now() AND NOT u.disabled
+$$;
+
+-- A share link -> the organisation whose evidence it shows, while it is valid. Each opening is counted.
+CREATE OR REPLACE FUNCTION auth_share(p_hash text) RETURNS TABLE (link_id uuid, org_id uuid, label text, expires_at timestamptz)
+LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  UPDATE share_links SET opened = opened + 1, last_opened = now()
+   WHERE token_hash = p_hash AND revoked_at IS NULL AND share_links.expires_at > now()
+  RETURNING id, share_links.org_id, share_links.label, share_links.expires_at
+$$;
+
+REVOKE ALL ON FUNCTION auth_login(text), auth_session(text, int), auth_setup(text), auth_share(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION auth_login(text), auth_session(text, int), auth_setup(text), auth_share(text) TO fleet_app;
 
 -- The worker's door: which devices are waiting to be judged. Ids only; to read or write anything about a
 -- device the worker then sets that organisation, like the API does.

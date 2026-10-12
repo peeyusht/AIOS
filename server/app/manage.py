@@ -6,7 +6,11 @@ admin keys and enrolment tokens are made here. Each secret is printed once and o
   python -m app.manage org "Acme Ltd"                create an organisation
   python -m app.manage admin-key "Acme Ltd"          a console key for it
   python -m app.manage token "Acme Ltd" [--uses 5] [--days 7]     an enrolment token for its PCs
+  python -m app.manage user "Acme Ltd" jo@acme.example [--role owner] [--name "Jo"]
+                                                     a person who signs in to the console; prints their one-time
+                                                     link for setting a password (also for a forgotten one)
   python -m app.manage list                          organisations with their device counts
+  python -m app.manage secret-key                    a key for FLEET_SECRET_KEY (encrypts second-factor secrets)
 """
 import argparse
 import os
@@ -68,6 +72,12 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("init")
     sub.add_parser("list")
+    sub.add_parser("secret-key")
+    u = sub.add_parser("user")
+    u.add_argument("org")
+    u.add_argument("email")
+    u.add_argument("--role", default="owner", choices=["owner", "admin", "auditor"])
+    u.add_argument("--name", default="")
     o = sub.add_parser("org")
     o.add_argument("name")
     k = sub.add_parser("admin-key")
@@ -79,6 +89,11 @@ def main() -> None:
     t.add_argument("--days", type=int, default=7)
     t.add_argument("--label", default="")
     a = ap.parse_args()
+    if a.cmd == "secret-key":       # needs no database
+        from cryptography.fernet import Fernet
+        print("Put this line in server/.env and keep a copy somewhere safe. Without it nobody's second factor can be checked:")
+        print("FLEET_SECRET_KEY=" + Fernet.generate_key().decode())
+        return
     with connect() as c:
         if a.cmd == "init":
             init(c)
@@ -91,6 +106,15 @@ def main() -> None:
         elif a.cmd == "token":
             print(f"Enrolment token for {a.org!r}, {a.uses} use(s), valid {a.days} day(s) (shown once):")
             print(create_token(c, org_id(c, a.org), a.uses, a.days, a.label))
+        elif a.cmd == "user":
+            from . import auth, people
+            try:
+                token = people.add_first_user(c, org_id(c, a.org), a.email, a.role, a.name)
+            except ValueError as e:
+                sys.exit(str(e))
+            base = (os.environ.get("PUBLIC_URL") or "http://127.0.0.1:8770").rstrip("/")
+            print(f"{a.email} is {a.role} of {a.org!r}. Their link to set a password (works once, for {auth.SETUP_DAYS} days):")
+            print(f"{base}/#/setup/{token}")
         elif a.cmd == "list":
             for name, n in c.execute("SELECT o.name, count(d.id) FROM organisations o LEFT JOIN devices d ON d.org_id = o.id GROUP BY o.name ORDER BY o.name"):
                 print(f"{name}: {n} device(s)")

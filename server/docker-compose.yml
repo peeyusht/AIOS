@@ -42,6 +42,9 @@ services:
     <<: *app
     environment:
       DATABASE_URL: postgresql://fleet_app:${FLEET_APP_PASSWORD:-fleet_app}@db:5432/fleet
+      # encrypts the second-factor secrets; the database never sees it. The default is for a developer PC only:
+      # make your own with  docker compose run --rm manage secret-key  and put it in .env
+      FLEET_SECRET_KEY: ${FLEET_SECRET_KEY:-ZGV2ZWxvcGVyLXBjLW9ubHktbm90LWEtc2VjcmV0ISE=}
     ports: ["127.0.0.1:8770:8770"]
     depends_on:
       init: {condition: service_completed_successfully}
@@ -71,6 +74,7 @@ services:
     entrypoint: ["python", "-m", "app.manage"]
     environment:
       DATABASE_URL_OWNER: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/fleet
+      PUBLIC_URL: ${PUBLIC_URL:-http://127.0.0.1:8770}
     depends_on:
       db: {condition: service_healthy}
 
@@ -83,6 +87,7 @@ services:
       TEST_DATABASE_URL_OWNER: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
       FLEET_APP_PASSWORD: ${FLEET_APP_PASSWORD:-fleet_app}
       FLEET_WORKER_PASSWORD: ${FLEET_WORKER_PASSWORD:-fleet_worker}
+      FLEET_SECRET_KEY: ZGV2ZWxvcGVyLXBjLW9ubHktbm90LWEtc2VjcmV0ISE=
     depends_on:
       init: {condition: service_completed_successfully}
 

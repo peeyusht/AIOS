@@ -1,7 +1,7 @@
 # Architecture: from one PC to a managed fleet
 
-Status on 12 Oct 2026: the single-PC product is built (`shadow-filer/`). Phases 1 and 2 of the central
-server are built (`server/`, and `shadow-filer/fleet.py` on the agent). Phases 3 to 6 are planned, not
+Status on 12 Oct 2026: the single-PC product is built (`shadow-filer/`). Phases 1 to 3 of the central
+server are built (`server/`, and `shadow-filer/fleet.py` on the agent). Phases 4 to 6 are planned, not
 started.
 
 ## What the product is
@@ -101,14 +101,24 @@ Phase 2 tables:
 The lists themselves (`cve`, `aff`, `kev`, `eol_product`) are not in PostgreSQL: they are public, the same
 for everyone, and stay in the worker's SQLite file so the agent's matching code reads them unchanged.
 
-Later phases add: `users`, `roles`, `sessions` (3); `commands`, `command_results` (5).
+Phase 3 tables:
+
+| Table | Holds |
+|---|---|
+| `users` | a person: address, role, password hash, the encrypted authenticator secret, lock state |
+| `sessions` | signed-in browsers (token hashed), and whether the second factor was given |
+| `setup_links` | one-time links with which a person sets their own password |
+| `recovery_codes` | eight per person, hashed, each good once |
+| `share_links` | read-only links for someone without an account, with expiry and a count of openings |
+
+Phase 5 adds `commands` and `command_results`.
 
 **Separation between customers** is enforced by the database, not only by the application. Every table with
 customer data has an `org_id` and row-level security with `FORCE ROW LEVEL SECURITY`; the API connects as a
 role that cannot bypass it and sets the organisation for each transaction. The only code that can look across
-organisations is four `SECURITY DEFINER` functions: three turn a presented key or token into an organisation
-(`auth_device`, `auth_admin`, `redeem_token`) and one tells the worker which devices are waiting, by id
-(`judge_queue`). The worker has its own database role, which cannot read keys, tokens or the audit log;
+organisations is eight `SECURITY DEFINER` functions: seven turn something presented into the one organisation
+it belongs to (`auth_device`, `auth_admin`, `redeem_token`, and for people `auth_login`, `auth_session`,
+`auth_setup`, `auth_share`) and one tells the worker which devices are waiting, by id (`judge_queue`). The worker has its own database role, which cannot read keys, tokens or the audit log;
 the API's role cannot create a judgement. A bug in a query therefore returns nothing instead of another
 customer's data. `server/tests/test_server.py` proves it by querying one organisation's devices as another.
 
@@ -119,8 +129,17 @@ customer's data. `server/tests/test_server.py` proves it by querying one organis
   hashes of tokens and keys.
 - **Check-in.** The agent sends its key as a bearer credential over TLS. Phase 4 replaces this with a key
   pair generated on the device (the private key never leaves it) and requests signed by it.
-- **Console.** Phase 1: an organisation admin key. Phase 3: named users, multi-factor sign-in, roles (owner,
-  admin, read-only auditor) and a time-limited share link for a broker or assessor.
+- **Console.** Named people. Each signs in with an address and password, then a code from an authenticator
+  app (required for everyone; eight one-time recovery codes for a lost phone). Roles: **auditor** reads,
+  **admin** also accepts checks, records declarations, makes share links and enrolment tokens and removes
+  a device, **owner** also manages people. Nobody sets a password for someone else: an owner makes a
+  one-time link and passes it on (no email is sent by the server). A session is a cookie the page cannot
+  read; it ends after 2 hours idle and 12 hours at most; five wrong tries lock the account for 15 minutes.
+  Every change is recorded under the person's name.
+- **Share link.** For a broker or an assessor without an account: one page with the organisation's
+  devices, checks, declarations and the report, read-only, for 1 to 90 days, withdrawable, each opening
+  counted. The token is in the part of the address a browser does not send to the server as a path.
+- **Organisation key** (phase 1). Still works, for scripts, and can only read.
 - **Transport.** HTTPS only. The agent refuses a plain `http://` server unless it is `localhost`, for
   development.
 
@@ -166,7 +185,7 @@ result is in the audit log. The local console remains the place an owner can ref
 |---|---|---|
 | 1. Pipeline proof | server, database, enrolment, the user-mode agent uploading inventory, a fleet device list | built |
 | 2. Central judging | CVE, end-of-life and compliance on the server; per-device pages and a fleet dashboard; the evidence report per device and per organisation | built |
-| 3. Organisations and roles | sign-in with multi-factor, owner / admin / auditor roles, share link | not started |
+| 3. Organisations and roles | sign-in with multi-factor, owner / admin / auditor roles, share link | built |
 | 4. Service agent and installer | runs as a service, signed, self-updating, per-user helper, device key pair | not started |
 | 5. Remote actions | signed command queue, audit, approvals | not started |
 | 6. Hardening | TLS proxy, rate limits, backups, monitoring, penetration test, published data list | not started |

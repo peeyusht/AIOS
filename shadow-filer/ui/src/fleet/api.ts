@@ -1,34 +1,29 @@
-/* The single gateway to the fleet server. Every call carries the organisation's console key; the key is kept
-   for this browser tab only (sessionStorage) and never written anywhere else. */
-
-const KEY = "sf-fleet-key";
-let memory: string | null = null; // used when the browser refuses sessionStorage
-
-export function getKey(): string | null {
-  try { return sessionStorage.getItem(KEY) ?? memory; } catch { return memory; }
-}
-export function setKey(k: string | null) {
-  memory = k;
-  try { if (k) sessionStorage.setItem(KEY, k); else sessionStorage.removeItem(KEY); } catch { /* memory only */ }
-  window.dispatchEvent(new Event("sf-fleet-key"));
-}
+/* The single gateway to the fleet server. A signed-in person is known by a cookie the page itself cannot read
+   (HttpOnly); nothing that opens a door is kept in the page or in browser storage. A request that changes
+   something also carries the console's own header, which a page on another site cannot add. */
 
 export class FleetError extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
 
-async function request<T>(method: "GET" | "POST", url: string, body?: unknown, key = getKey()): Promise<T> {
+/** Fired when the server no longer knows this browser (signed out, idle too long, switched off). */
+export const SESSION_ENDED = "sf-fleet-session-ended";
+
+async function request<T>(method: "GET" | "POST", url: string, body?: unknown, opts: { share?: string; quiet?: boolean } = {}): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, {
-      method, cache: "no-store",
-      headers: { Authorization: `Bearer ${key ?? ""}`, ...(method === "POST" ? { "Content-Type": "application/json" } : {}) },
+      method, cache: "no-store", credentials: "same-origin",
+      headers: {
+        ...(method === "POST" ? { "Content-Type": "application/json", "X-Fleet-Console": "1" } : {}),
+        ...(opts.share ? { Authorization: `Share ${opts.share}` } : {}),
+      },
       body: method === "POST" ? JSON.stringify(body ?? {}) : undefined,
     });
   } catch {
     throw new FleetError("The server is not reachable.", 0);
   }
-  if (res.status === 401 && key === getKey()) setKey(null); // the key was withdrawn: back to the sign-in page
+  if (res.status === 401 && !opts.share && !opts.quiet) window.dispatchEvent(new Event(SESSION_ENDED));
   if (!res.ok) {
     let detail = "";
     try { detail = (await res.json()).detail ?? ""; } catch { /* not JSON */ }
@@ -37,19 +32,66 @@ async function request<T>(method: "GET" | "POST", url: string, body?: unknown, k
   return (await res.json()) as T;
 }
 
+const id = encodeURIComponent;
+const quiet = { quiet: true };
+
 export const api = {
-  /** Tries a key before it is kept. */
-  check: (key: string) => request<Devices>("GET", "/api/v1/devices", undefined, key),
+  // signing in
+  me: () => request<Me>("GET", "/api/v1/auth/me", undefined, quiet),
+  login: (email: string, password: string) => request<{ stage: Stage }>("POST", "/api/v1/auth/login", { email, password }, quiet),
+  code: (code: string) => request<{ stage: Stage; recovery_left?: number }>("POST", "/api/v1/auth/mfa", { code }, quiet),
+  secondFactor: () => request<{ secret: string; uri: string; qr: string; email: string }>("GET", "/api/v1/auth/mfa/setup", undefined, quiet),
+  confirmSecondFactor: (code: string) => request<{ stage: Stage; recovery_codes: string[] }>("POST", "/api/v1/auth/mfa/setup", { code }, quiet),
+  logout: () => request<{ ok: boolean }>("POST", "/api/v1/auth/logout", {}, quiet),
+  setupCheck: (token: string) => request<{ email: string; min_password: number }>("POST", "/api/v1/auth/setup/check", { token }, quiet),
+  setup: (token: string, password: string) => request<{ ok: boolean; email: string }>("POST", "/api/v1/auth/setup", { token, password }, quiet),
+  changePassword: (current: string, next: string) => request<{ ok: boolean }>("POST", "/api/v1/auth/password", { current, new: next }),
+  // the fleet
   devices: () => request<Devices>("GET", "/api/v1/devices"),
   fleet: () => request<Fleet>("GET", "/api/v1/fleet"),
-  device: (id: string) => request<DeviceDetail>("GET", `/api/v1/devices/${encodeURIComponent(id)}`),
+  device: (d: string) => request<DeviceDetail>("GET", `/api/v1/devices/${id(d)}`),
   software: () => request<Software>("GET", "/api/v1/software"),
-  report: (id?: string) => request<{ text: string; generated_at: string }>("GET", id ? `/api/v1/devices/${encodeURIComponent(id)}/report` : "/api/v1/report"),
+  report: (d?: string) => request<{ text: string; generated_at: string }>("GET", d ? `/api/v1/devices/${id(d)}/report` : "/api/v1/report"),
   audit: () => request<{ entries: AuditEntry[] }>("GET", "/api/v1/audit"),
   declare: (key: string, answer: Answer, note: string) => request<{ ok: boolean }>("POST", "/api/v1/declarations", { key, answer, note }),
-  accept: (id: string, check_id: string, reason: string) =>
-    request<{ ok: boolean }>("POST", `/api/v1/devices/${encodeURIComponent(id)}/exceptions`, { check_id, reason }),
+  accept: (d: string, check_id: string, reason: string) => request<{ ok: boolean }>("POST", `/api/v1/devices/${id(d)}/exceptions`, { check_id, reason }),
+  removeDevice: (d: string) => request<{ ok: boolean }>("POST", `/api/v1/devices/${id(d)}/remove`),
+  // who has access
+  access: () => request<Access>("GET", "/api/v1/access"),
+  addUser: (email: string, name: string, role: Role) => request<{ ok: boolean; setup_token: string; valid_days: number }>("POST", "/api/v1/users", { email, name, role }),
+  changeUser: (u: string, action: UserAction, role?: Role) => request<{ ok: boolean; setup_token?: string; valid_days?: number }>("POST", `/api/v1/users/${id(u)}`, { action, role }),
+  addShareLink: (label: string, days: number) => request<{ ok: boolean; share_token: string; days: number }>("POST", "/api/v1/share-links", { label, days }),
+  revokeShareLink: (l: string) => request<{ ok: boolean }>("POST", `/api/v1/share-links/${id(l)}/revoke`),
+  addEnrolmentToken: (label: string, uses: number, days: number) => request<{ ok: boolean; enrolment_token: string; uses: number; days: number }>("POST", "/api/v1/tokens", { label, uses, days }),
+  // what a share link shows
+  shared: (token: string) => request<Shared>("GET", "/api/v1/shared", undefined, { share: token }),
 };
+
+export type Stage = "ok" | "mfa" | "mfa_setup";
+export type Role = "auditor" | "admin" | "owner";
+export type UserAction = "role" | "disable" | "enable" | "reset_password" | "reset_second_factor";
+export interface Me { stage: Stage; email: string; name?: string; role?: Role; organisation?: string }
+export interface Person {
+  id: string; email: string; name: string; role: Role; disabled: boolean; second_factor: boolean; has_password: boolean; locked: boolean;
+  created_at: string; last_login: string | null;
+}
+export interface ShareLink {
+  id: string; label: string; created_by: string; created_at: string; expires_at: string; opened: number; last_opened: string | null;
+  state: "active" | "expired" | "withdrawn";
+}
+export interface Access {
+  me: { email: string | null; name: string; role: Role; id: string | null };
+  users: Person[]; share_links: ShareLink[];
+  enrolment_tokens: { id: string; label: string; uses_left: number; expires_at: string }[];
+  organisation_keys: number; roles: Role[]; setup_days: number; session_hours: number;
+}
+export interface Shared {
+  organisation: string; label: string; expires_at: string; generated_at: string; devices: number; judged: number; all_passing: number;
+  areas: ({ key: string; title: string; about: string } & Record<AreaStatus, number>)[];
+  device_list: { id: string; name: string; windows: string | null; model: string; last_seen: string | null; judged_at: string | null;
+    compliance: Compliance | null; security: Judgement["security"] }[];
+  declared: Declared[]; text: string;
+}
 
 /* ---- what the server answers ---- */
 export type CheckStatus = "pass" | "fail" | "warn" | "unknown" | "info";

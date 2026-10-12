@@ -77,7 +77,7 @@ function CheckRow({ c, deviceId, onAccept, onWithdraw }: { c: Check; deviceId: s
   const [all, setAll] = useState(false);
   const shown = all ? c.evidence : c.evidence.slice(0, 4);
   const hidden = c.evidence.slice(4);
-  const link = c.to && TAB[c.to] ? <a href={`#/devices/${deviceId}/${c.to}`} data-print-hide className="ml-1 text-xs text-primary hover:underline">Open {TAB[c.to]}</a> : null;
+  const link = deviceId && c.to && TAB[c.to] ? <a href={`#/devices/${deviceId}/${c.to}`} data-print-hide className="ml-1 text-xs text-primary hover:underline">Open {TAB[c.to]}</a> : null;
   return (
     <div data-print-row className={cn("flex gap-3 px-5 py-3.5", c.accepted && "bg-muted/30")}>
       <Mark status={c.status} quiet={!!c.accepted || c.status === "info"} />
@@ -111,7 +111,8 @@ function CheckRow({ c, deviceId, onAccept, onWithdraw }: { c: Check; deviceId: s
   );
 }
 
-export function ControlCard({ ctl, deviceId, onAccept, onWithdraw }: { ctl: Control; deviceId: string; onAccept: (c: Check) => void; onWithdraw: (c: Check) => void }) {
+/** Without onAccept and onWithdraw the card only shows (an auditor, a share link). */
+export function ControlCard({ ctl, deviceId, onAccept, onWithdraw }: { ctl: Control; deviceId: string; onAccept?: (c: Check) => void; onWithdraw?: (c: Check) => void }) {
   const sorted = [...ctl.checks].sort((a, b) => ORDER[a.status] - ORDER[b.status]);
   const rest = sorted.filter((c) => c.status !== "pass");
   const passed = sorted.filter((c) => c.status === "pass");
@@ -120,7 +121,7 @@ export function ControlCard({ ctl, deviceId, onAccept, onWithdraw }: { ctl: Cont
     ctl.counts.pass && `${ctl.counts.pass} passed`, ctl.counts.fail && `${ctl.counts.fail} failing`, ctl.counts.warn && `${ctl.counts.warn} worth a look`,
     ctl.counts.unknown && `${ctl.counts.unknown} could not be checked`, ctl.accepted && `${ctl.accepted} accepted`,
   ].filter(Boolean).join(" · ");
-  const row = (c: Check) => <CheckRow key={c.id} c={c} deviceId={deviceId} onAccept={() => onAccept(c)} onWithdraw={() => onWithdraw(c)} />;
+  const row = (c: Check) => <CheckRow key={c.id} c={c} deviceId={deviceId} onAccept={onAccept && (() => onAccept(c))} onWithdraw={onWithdraw && (() => onWithdraw(c))} />;
   return (
     <Card data-print-card className="overflow-hidden rounded-lg">
       <div data-print-row className="flex items-start gap-3 border-b px-5 py-4">

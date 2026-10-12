@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { ArrowLeft, Copy, Flame, Printer } from "lucide-react";
+import { ArrowLeft, Copy, Flame, Printer, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { bytes, when } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Card, Confirm, ListSkeleton, LoadError, Notice, PageHeader, Segmented, Stat } from "@/shadow/ui";
 import { api, type AppFact, type AreaStatus, type Check, type Cve, type DeviceDetail, type FlawApp, type FlawService, type SupportProgram } from "../api";
+import { useCan } from "../session";
 import { ControlCard, HistoryGrid, LABEL, ReferenceLine, Section, silentFor, SQUARE, Tile } from "../parts";
 
 const TABS = ["compliance", "security", "programs", "network", "reported"] as const;
@@ -218,6 +219,8 @@ export function DevicePage({ id, tab }: { id: string; tab?: string }) {
   const q = usePoll<DeviceDetail>(() => api.device(id), 60_000, [id]);
   const [accepting, setAccepting] = useState<Check | null>(null);
   const [reason, setReason] = useState("");
+  const [removing, setRemoving] = useState(false);
+  const canEdit = useCan("admin");
   const keep = useRef(false);
   const d = q.data;
   const current: TabKey = (TABS as readonly string[]).includes(tab ?? "") ? (tab as TabKey) : "compliance";
@@ -231,6 +234,9 @@ export function DevicePage({ id, tab }: { id: string; tab?: string }) {
     if (!accepting) return;
     if (!reason.trim()) { keep.current = true; toast.error("Write why this is acceptable."); return; }
     await save(accepting, reason.trim());
+  };
+  const remove = async () => {
+    try { await api.removeDevice(id); toast.success(`${d.name} was removed.`); window.location.hash = "/devices"; } catch (e) { toast.error((e as Error).message); }
   };
   const copy = async () => { try { await navigator.clipboard.writeText((await api.report(id)).text); toast.success("Copied"); } catch (e) { toast.error((e as Error).message || "Could not copy."); } };
 
@@ -249,6 +255,7 @@ export function DevicePage({ id, tab }: { id: string; tab?: string }) {
         actions={<>
           <Button variant="outline" size="sm" onClick={() => void copy()} disabled={!c}><Copy />Copy as text</Button>
           <Button variant="outline" size="sm" onClick={() => window.print()} disabled={!c}><Printer />Print</Button>
+          {canEdit && <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setRemoving(true)}><Trash2 />Remove</Button>}
         </>}
       />
       {q.error && <div className="mb-4"><LoadError error={q.error} onRetry={q.reload} /></div>}
@@ -280,7 +287,7 @@ export function DevicePage({ id, tab }: { id: string; tab?: string }) {
                 </p>
               </Card>
               <Section title="Control areas">
-                <div className="space-y-4">{c.controls.map((ctl) => <ControlCard key={ctl.key} ctl={ctl} deviceId={id} onAccept={(ch) => { setReason(""); setAccepting(ch); }} onWithdraw={(ch) => void save(ch, "")} />)}</div>
+                <div className="space-y-4">{c.controls.map((ctl) => <ControlCard key={ctl.key} ctl={ctl} deviceId={id} onAccept={canEdit ? (ch) => { setReason(""); setAccepting(ch); } : undefined} onWithdraw={canEdit ? (ch) => void save(ch, "") : undefined} />)}</div>
               </Section>
               <Section title="History" sub="One line per control area, one square per day.">
                 <Card data-print-card className="rounded-lg">
@@ -308,7 +315,11 @@ export function DevicePage({ id, tab }: { id: string; tab?: string }) {
           <span className="text-sm font-medium">Why is this acceptable on {d.name}?</span>
           <Textarea value={reason} onChange={(e) => setReason(e.target.value)} required rows={3} autoFocus />
         </label>
-        <p>It stays listed as failing, marked as accepted, and no longer counts against the control area. The acceptance is written to the audit log.</p>
+        <p>It stays listed as failing, marked as accepted, and no longer counts against the control area. The acceptance is recorded under your name.</p>
+      </Confirm>
+      <Confirm open={removing} onOpenChange={setRemoving} title={`Remove ${d.name}?`} confirmLabel="Remove" danger onConfirm={remove}>
+        <p>The server forgets this device: everything it reported, its judgement, its history and its accepted exceptions. Its key stops working, so the PC can no longer report.</p>
+        <p>Nothing is changed on the PC itself. To bring it back it has to enrol again with a new token (on the PC: <span className="path">fleet leave</span>, then <span className="path">fleet enrol</span>).</p>
       </Confirm>
     </>
   );

@@ -4,7 +4,8 @@ support, the compliance checks); an administrator sees the fleet, each device, a
 
 Agents call:    POST /api/v1/enrol      a one-time token -> a device id and key
                 POST /api/v1/checkin    the device key   -> stores what changed since the last report
-Console calls (with an organisation admin key):
+Console calls (a signed-in person, see app/people.py for signing in, roles, people and share links; an
+organisation key can read but change nothing):
                 GET  /api/v1/fleet                      the dashboard: control areas, what fails where, history
                 GET  /api/v1/devices, /devices/{id}     the list; one device with its judgement and history
                 GET  /api/v1/software                   which program is on which devices
@@ -12,6 +13,7 @@ Console calls (with an organisation admin key):
                 POST /api/v1/declarations               what the organisation states about what cannot be measured
                 POST /api/v1/devices/{id}/exceptions    accept a failing check with a reason, or withdraw that
                 GET  /api/v1/audit
+With a share link:  GET /api/v1/shared                  the organisation's evidence, read-only, until the link expires
 Anyone:         GET  /healthz, and the console at /
 
 The API reads judgements; it does not make them (app/worker.py does) and never opens the reference lists.
@@ -29,7 +31,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from psycopg.types.json import Jsonb
 
-from . import db, judge
+from . import db, judge, people
+from .people import editor, reader
 
 KINDS = ("device", "apps", "services", "network", "posture")
 MAX_BODY = 5 * 1024 * 1024          # a full report from the first PC is about 60 KB
@@ -46,6 +49,7 @@ async def lifespan(_app):
 
 
 app = FastAPI(title="Shadow Filer fleet server", version="0.2.0", docs_url=None, redoc_url=None, lifespan=lifespan)
+app.include_router(people.router)
 if (CONSOLE / "assets").is_dir():
     app.mount("/assets", StaticFiles(directory=CONSOLE / "assets"), name="assets")
 
@@ -76,14 +80,6 @@ def device(authorization: str | None = Header(default=None)) -> dict:
         row = c.execute("SELECT * FROM auth_device(%s)", (db.digest(_bearer(authorization)),)).fetchone()
     if not row:
         raise HTTPException(401, "Unknown device key.")
-    return row
-
-
-def admin(authorization: str | None = Header(default=None)) -> dict:
-    with db.anon() as c:
-        row = c.execute("SELECT * FROM auth_admin(%s)", (db.digest(_bearer(authorization)),)).fetchone()
-    if not row:
-        raise HTTPException(401, "Unknown admin key.")
     return row
 
 
@@ -186,7 +182,7 @@ def _iso(v):
 
 
 def _actor(who: dict) -> str:
-    return f"key:{who['key_id']}"
+    return who["actor"]
 
 
 def _device_row(r: dict, now: datetime) -> dict:
@@ -214,7 +210,7 @@ def _declared(c) -> list:
 
 
 @app.get("/api/v1/devices")
-def devices(who: dict = Depends(admin)):
+def devices(who: dict = Depends(reader)):
     with db.org(who["org_id"]) as c:
         org = c.execute("SELECT name FROM organisations").fetchone()
         rows = c.execute(DEVICES_SQL + "ORDER BY lower(d.name)").fetchall()
@@ -224,7 +220,7 @@ def devices(who: dict = Depends(admin)):
 
 
 @app.get("/api/v1/fleet")
-def fleet(who: dict = Depends(admin)):
+def fleet(who: dict = Depends(reader)):
     """The dashboard: how many devices pass each control area, which checks fail on which devices, flaws
     that are being used in real attacks, and the last 90 days."""
     now = datetime.now(timezone.utc)
@@ -283,7 +279,7 @@ def _one_device(c, device_id: str, now: datetime) -> dict:
 
 
 @app.get("/api/v1/devices/{device_id}")
-def device_detail(device_id: str, who: dict = Depends(admin)):
+def device_detail(device_id: str, who: dict = Depends(reader)):
     now = datetime.now(timezone.utc)
     with db.org(who["org_id"]) as c:
         dev = _one_device(c, device_id, now)
@@ -303,7 +299,7 @@ def device_detail(device_id: str, who: dict = Depends(admin)):
 
 
 @app.post("/api/v1/devices/{device_id}/exceptions")
-async def accept_check(device_id: str, request: Request, who: dict = Depends(admin)):
+async def accept_check(device_id: str, request: Request, who: dict = Depends(editor)):
     """Accept a failing check on one device, with the reason; an empty reason withdraws it. The check keeps its
     failing mark and stops counting against its control area. Written to the audit log."""
     body = await request.json()
@@ -338,7 +334,7 @@ async def accept_check(device_id: str, request: Request, who: dict = Depends(adm
 
 
 @app.post("/api/v1/declarations")
-async def declare(request: Request, who: dict = Depends(admin)):
+async def declare(request: Request, who: dict = Depends(editor)):
     """What the organisation states about things no program can measure. answer: yes | no | na | null (clears)."""
     body = await request.json()
     key, answer, note = _text(body.get("key"), 40), body.get("answer"), _text(body.get("note"), 500)
@@ -369,7 +365,7 @@ def _report(c, now: datetime, only: str | None = None) -> str:
 
 
 @app.get("/api/v1/report")
-def report(who: dict = Depends(admin)):
+def report(who: dict = Depends(reader)):
     """The evidence for the whole organisation as plain text: to paste into a questionnaire or send to a broker."""
     now = datetime.now(timezone.utc)
     with db.org(who["org_id"]) as c:
@@ -378,7 +374,7 @@ def report(who: dict = Depends(admin)):
 
 
 @app.get("/api/v1/devices/{device_id}/report")
-def device_report(device_id: str, who: dict = Depends(admin)):
+def device_report(device_id: str, who: dict = Depends(reader)):
     now = datetime.now(timezone.utc)
     with db.org(who["org_id"]) as c:
         _one_device(c, device_id, now)
@@ -386,8 +382,37 @@ def device_report(device_id: str, who: dict = Depends(admin)):
     return {"generated_at": _iso(now), "text": text}
 
 
+@app.get("/api/v1/shared")
+def shared(authorization: str | None = Header(default=None)):
+    """What a share link shows: the organisation's devices with their checks, the declarations and the report.
+    Read-only, no account needed, until the link expires or is withdrawn. Every opening is counted."""
+    token = authorization[6:].strip() if authorization and authorization.lower().startswith("share ") else ""
+    with db.anon() as c:
+        link = c.execute("SELECT * FROM auth_share(%s)", (db.digest(token),)).fetchone() if token else None
+    if not link:
+        raise HTTPException(401, "This link is not valid any more: it expired or was withdrawn.")
+    now = datetime.now(timezone.utc)
+    with db.org(link["org_id"]) as c:
+        org = c.execute("SELECT name FROM organisations").fetchone()
+        rows = c.execute("SELECT d.id, d.name, d.last_seen, d.summary, j.judged_at, j.summary AS judgement, j.compliance FROM devices d "
+                         "LEFT JOIN judgements j ON j.device_id = d.id ORDER BY lower(d.name)").fetchall()
+        said, text = _declared(c), _report(c, now)
+    judged = [r for r in rows if r["judgement"]]
+    return {"organisation": org["name"] if org else "", "label": link["label"], "expires_at": _iso(link["expires_at"]), "generated_at": _iso(now),
+            "devices": len(rows), "judged": len(judged),
+            "all_passing": sum(1 for r in judged if r["judgement"]["compliance"]["controls_passing"] == r["judgement"]["compliance"]["controls"]),
+            "areas": [{"key": k, "title": t, "about": about,
+                       **{s: sum(1 for r in judged if r["judgement"]["compliance"]["areas"].get(k) == s) for s in ("pass", "fail", "warn", "unknown")}}
+                      for k, t, about in judge.agent.CONTROLS],
+            "device_list": [{"id": str(r["id"]), "name": r["name"], "windows": (r["summary"] or {}).get("windows"),
+                             "model": ((r["summary"] or {}).get("model") or "").strip(), "last_seen": _iso(r["last_seen"]),
+                             "judged_at": _iso(r["judged_at"]), "compliance": r["compliance"],
+                             "security": (r["judgement"] or {}).get("security")} for r in rows],
+            "declared": said, "text": text}
+
+
 @app.get("/api/v1/software")
-def software(who: dict = Depends(admin)):
+def software(who: dict = Depends(reader)):
     """Which program is on which devices, in which versions, with what is known about it."""
     with db.org(who["org_id"]) as c:
         rows = c.execute("SELECT d.id, d.name, s.payload, j.security FROM devices d "
@@ -419,7 +444,7 @@ def software(who: dict = Depends(admin)):
 
 
 @app.get("/api/v1/audit")
-def audit(who: dict = Depends(admin)):
+def audit(who: dict = Depends(reader)):
     with db.org(who["org_id"]) as c:
         rows = c.execute("SELECT at, actor, action, detail FROM audit_log ORDER BY at DESC, id DESC LIMIT 200").fetchall()
     return {"entries": [{"at": _iso(r["at"]), "actor": r["actor"], "action": r["action"], "detail": r["detail"]} for r in rows]}
