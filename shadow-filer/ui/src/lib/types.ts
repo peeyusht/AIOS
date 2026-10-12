@@ -508,3 +508,36 @@ export interface RemedyResponse {
   enabled: boolean; job: RemedyJob;
   history: { ts: string; action: "update" | "stop"; name: string; target: string; before: string; after: string; ok: number; message: string }[];
 }
+
+/* --- Network: interfaces, routes, exposure, connections, devices --- */
+export interface NetAddress { address: string; prefix: number | null; family: "IPv4" | "IPv6"; origin: string; scope: "this PC" | "local network" | "internet" | "all" | "unknown"; }
+export interface NetAdapter {
+  index: number; name: string; description: string;
+  kind: "ethernet" | "wifi" | "vpn" | "virtual" | "bluetooth";
+  up: boolean; status: string; speed: number;
+  mac: string; addresses: NetAddress[]; gateways: string[]; dns: string[];
+  dhcp: boolean; metric: number | null; mtu: number | null;
+  network: string | null;
+  category: "public" | "private" | "domainauthenticated" | null;
+  internet: boolean;
+  wifi: { ssid?: string; signal?: string; authentication?: string; radio_type?: string; channel?: string; band?: string } | null;
+}
+export interface NetRoute { destination: string; next: string; on_link: boolean; interface: string; metric: number | null; family: "IPv4" | "IPv6"; protocol: string;
+  kind: "default" | "network" | "host" | "link" | "multicast" | "loopback"; }
+export interface NetListener { proto: "TCP" | "UDP"; port: number; process: string; path: string; pid: number; addresses: string[]; reach: "network" | "this PC"; windows: boolean; }
+export interface NetConnectionGroup { process: string; count: number; internet: number; local: number; remotes: { address: string; port: number; count: number; scope: string }[]; }
+export interface NetDevice { address: string; mac: string; state: string; interface: string; gateway: boolean; family: "IPv4" | "IPv6"; }
+export interface NetworkResponse {
+  read_at: string | null; error?: string; seconds?: number; computer?: string;
+  adapters: NetAdapter[]; routes: NetRoute[];
+  firewall: { name: string; enabled: boolean; inbound: string; outbound: string }[];
+  other_firewalls?: string[];
+  shares: { name: string; path: string; description: string; builtin: boolean; printer: boolean }[];
+  listening: NetListener[]; connections: NetConnectionGroup[]; devices: NetDevice[];
+  dns: { suffixes: string[]; servers: string[] };
+  proxy: { enabled: boolean; server: string; script: string; bypass: string };
+  hosts: { address: string; names: string[] }[];
+  findings: { level: "danger" | "warning" | "info"; text: string; tab: "exposure" | "interfaces" | "routes" | "dns" }[];
+  counts: { adapters_up?: number; adapters?: number; routes?: number; listening?: number; listening_network?: number; listening_network_other?: number;
+    connections?: number; programs_connected?: number; devices?: number; shares?: number; hosts?: number };
+}

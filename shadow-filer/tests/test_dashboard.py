@@ -43,6 +43,9 @@ class BuildTest(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="sf-test-"))
         self.cfg = {"database": self.tmp / "t.db", "cve_database": self.tmp / "cve.db", "inbox_folders": [],
                     "para_root": self.tmp / "para", "destination_depth": 2, "library": {"vulnerabilities": True}}
+        p = mock.patch.object(dashboard, "_network", return_value={"read_at": None, "findings": [], "counts": {}})
+        p.start()                                       # the real one would ask this PC about its network
+        self.addCleanup(p.stop)
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -52,6 +55,7 @@ class BuildTest(unittest.TestCase):
         journal._recorded["at"] = 0
         files = [{"added": 0, "size": 10}, {"added": 9e12, "size": 5}]
         with mock.patch.object(dashboard, "_storage", side_effect=RuntimeError("no disks")), \
+                mock.patch.object(dashboard, "_network", return_value={"read_at": None, "findings": [], "counts": {}}), \
                 mock.patch.object(dashboard, "_watch", return_value={"enabled": True, "counts": {"soon": 0, "sensitive": 3}, "next": []}), \
                 mock.patch.object(dashboard, "_cleanup", return_value={"scanned_at": None, "safe": {"count": 0, "bytes": 0}}):
             d = dashboard.build(self.cfg, {"watching": True, "ollama": True, "model": "m"}, files, {"disabled": True},

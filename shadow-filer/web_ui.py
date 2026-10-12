@@ -515,6 +515,9 @@ class Handler(BaseHTTPRequestHandler):
                 idx = search_index.get()
                 return self._send(200, dashboard.build(cfg, {**Ctx.status, "model": cfg["ollama"]["model"]}, files,
                                                        idx.stats() if idx else {"disabled": True}))
+            if u.path == "/api/network":
+                import network
+                return self._send(200, network.view(force=q.get("refresh") == "1", log=Ctx.log))
             if u.path == "/api/remedy":
                 import remedy
                 return self._send(200, remedy.view(cfg))
