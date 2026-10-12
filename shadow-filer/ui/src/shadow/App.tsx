@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
   Activity as ActivityIcon, LibraryBig, BellRing, Eye, EyeOff, FlaskConical, Inbox as InboxIcon, Moon, RefreshCw, Search as SearchIcon,
-  Settings as SettingsIcon, Sparkles, Sun, Trash2, WifiOff,
+  Settings as SettingsIcon, ShieldAlert, Sparkles, Sun, Trash2, WifiOff,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -18,6 +18,7 @@ import { InboxPage } from "./pages/Inbox";
 import { SearchPage } from "./pages/Search";
 import { CleanupPage } from "./pages/Cleanup";
 import { WatchPage } from "./pages/Watch";
+import { SecurityPage } from "./pages/Security";
 import { LibraryPage } from "./pages/Library";
 import { ActivityPage } from "./pages/Activity";
 import { SettingsPage } from "./pages/Settings";
@@ -25,6 +26,8 @@ import { SettingsPage } from "./pages/Settings";
 export const INBOX_CHANGED = "sf-inbox-changed";
 export const WATCH_CHANGED = "sf-watch-changed";
 export const emitWatchChanged = () => window.dispatchEvent(new Event(WATCH_CHANGED));
+export const SECURITY_CHANGED = "sf-security-changed";
+export const emitSecurityChanged = () => window.dispatchEvent(new Event(SECURITY_CHANGED));
 export const emitInboxChanged = () => window.dispatchEvent(new Event(INBOX_CHANGED));
 
 function useTheme() {
@@ -48,6 +51,7 @@ const NAV = [
   { path: "/search", label: "Search", icon: SearchIcon },
   { path: "/cleanup", label: "Cleanup", icon: Trash2 },
   { path: "/watch", label: "Watch", icon: BellRing },
+  { path: "/security", label: "Security", icon: ShieldAlert },
   { path: "/library", label: "Library", icon: LibraryBig },
   { path: "/activity", label: "Activity", icon: ActivityIcon },
   { path: "/settings", label: "Settings", icon: SettingsIcon },
@@ -78,6 +82,12 @@ export default function ShadowApp() {
     window.addEventListener(WATCH_CHANGED, h);
     return () => window.removeEventListener(WATCH_CHANGED, h);
   }, [watch]);
+  const security = usePoll(() => api.security(true), 300_000);
+  useEffect(() => {
+    const h = () => security.reload();
+    window.addEventListener(SECURITY_CHANGED, h);
+    return () => window.removeEventListener(SECURITY_CHANGED, h);
+  }, [security]);
   useEffect(() => {
     const h = () => count.reload();
     window.addEventListener(INBOX_CHANGED, h);
@@ -96,6 +106,7 @@ export default function ShadowApp() {
     case "/search": page = <SearchPage />; break;
     case "/cleanup": page = <CleanupPage />; break;
     case "/watch": page = <WatchPage />; break;
+    case "/security": page = <SecurityPage />; break;
     case "/library": page = <LibraryPage />; break;
     case "/activity": page = <ActivityPage />; break;
     case "/settings": page = <SettingsPage status={s} />; break;
@@ -137,6 +148,16 @@ export default function ShadowApp() {
                   {p === "/watch" && watch.data && watch.data.counts.soon > 0 && (
                     <span className="rounded-full bg-warning-soft px-1.5 text-[11px] font-semibold leading-5 text-warning ring-1 ring-warning/30 tabular" aria-label={`${watch.data.counts.soon} dates coming up`}>
                       {watch.data.counts.soon}
+                    </span>
+                  )}
+                  {p === "/security" && security.data?.summary && security.data.summary.kev > 0 && (
+                    <span className="rounded-full bg-danger-soft px-1.5 text-[11px] font-semibold leading-5 text-destructive ring-1 ring-destructive/30 tabular" aria-label={`${security.data.summary.kev} flaws used in real attacks`}>
+                      {security.data.summary.kev}
+                    </span>
+                  )}
+                  {p === "/security" && security.data?.summary && security.data.summary.kev === 0 && security.data.summary.apps_affected > 0 && (
+                    <span className="rounded-full bg-warning-soft px-1.5 text-[11px] font-semibold leading-5 text-warning ring-1 ring-warning/30 tabular" aria-label={`${security.data.summary.apps_affected} programs with known flaws`}>
+                      {security.data.summary.apps_affected}
                     </span>
                   )}
                 </a>

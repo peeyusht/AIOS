@@ -36,7 +36,11 @@ own `#/inbox`-style routing, so it runs unchanged as a static page.
    Last copied Lovable commit: `5c64d4f` (newer versions on Library › Applications: Available column, Updates filter, Check now).
    Lovable also writes test files (`*.test.tsx`, vitest); they are not copied and `tsconfig.json` excludes them.
    Dependencies Lovable adds must be added to our `package.json` too (so far: `docx-preview`).
-   No local changes are waiting to be sent.
+   **Local changes waiting to be sent to Lovable** (made here on 12 Oct 2026 at the user's request, in the
+   existing style; a copy from Lovable before they are sent would lose them): the Security page
+   (`src/shadow/pages/Security.tsx`), its nav entry, badge and `SECURITY_CHANGED` event in `App.tsx`, the
+   Security section in `Settings.tsx`, `security*` calls in `api.ts`, the `Sec*` types in `types.ts` and the
+   fictional security demo data and routes in `mock.ts`.
 
 ## Rules the UI must keep
 - No external requests (fonts, CDNs, images, analytics): the agent's CSP is `default-src 'self'`.

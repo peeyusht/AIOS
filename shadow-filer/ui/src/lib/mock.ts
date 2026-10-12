@@ -1,5 +1,5 @@
 /* Entirely fictional demo data with in-memory mutations, used when no agent token is present. */
-import type { AppChange, InstalledApp, LibraryApplications, JournalDay, JournalResponse, WatchDate, WatchSensitive, LibraryChain, LibraryInstaller, LibraryPictureGroup, LibraryProduct, LibraryPicture,
+import type { SecApp, SecCve, SecService, SecurityResponse, AppChange, InstalledApp, LibraryApplications, JournalDay, JournalResponse, WatchDate, WatchSensitive, LibraryChain, LibraryInstaller, LibraryPictureGroup, LibraryProduct, LibraryPicture,
   AutofileResponse,
   CleanupHistoryRow,
   CleanupItem,
@@ -182,7 +182,7 @@ const settingsRaw: Raw = {
   autofile: { enabled: false, min_decisions: 20, min_rate: 0.95, window: 30, min_score: 0.9, delay_minutes: 30 },
   ocr: { enabled: true, max_pdf_pages: 20, min_image_kb: 50 },
   watch: { enabled: true, soon_days: 30, keep_expired_days: 60 },
-  library: { enabled: true, scan_hours: 24, image_distance: 8, check_signatures: true, applications: true, check_updates: true, update_hours: 24 },
+  library: { enabled: true, scan_hours: 24, image_distance: 8, check_signatures: true, applications: true, check_updates: true, update_hours: 24, vulnerabilities: true, cve_hours: 24 },
   ui: { port: 8765 },
   telemetry_note: "kept untouched",
 };
@@ -575,7 +575,72 @@ function journalFor(days: number): JournalResponse {
   };
 }
 
+/* --- security (fictional) --- */
+const cveRow = (id: string, score: number, summary: string, fixed_in: string | null, days: number, kev = false): SecCve =>
+  ({ id, published: ago(days * 1440).slice(0, 10), score, severity: score >= 9 ? "CRITICAL" : score >= 7 ? "HIGH" : score >= 4 ? "MEDIUM" : "LOW",
+    summary, fixed_in, kev, kev_added: kev ? ago((days - 6) * 1440).slice(0, 10) : null, ransomware: false });
+const tessCves: SecCve[] = [
+  cveRow("CVE-2026-90412", 9.8, "Mismatched length fields in Tessellate's compressed protocol headers may allow an unauthenticated client to read uninitialised memory.", "4.96.0", 40, true),
+  cveRow("CVE-2026-88120", 8.1, "Tessellate Containers before 4.95.2 does not check the owner of a mounted socket, allowing a local user to gain the service's rights.", "4.95.2", 75),
+  cveRow("CVE-2026-71554", 7.5, "A crafted image manifest can make the Tessellate engine use all available memory.", "4.95.0", 120),
+  cveRow("CVE-2026-60031", 5.3, "Log files written by Tessellate Containers can contain registry credentials.", "4.94.3", 160),
+];
+const secApps: SecApp[] = [
+  { id: "tessellate", key: "desktop:tessellatecontainers", name: "Tessellate Containers", version: "4.94.0", judged_version: "4.94.0", publisher: "Tessellate Inc.", kind: "desktop",
+    available: null, update_id: null, products: ["tessellate:containers"], cves: tessCves, unversioned: 2 },
+  { id: "pine312", key: "desktop:pineruntime", name: "Pine Runtime 3.12.4 (64-bit)", version: "3.12.4150.0", judged_version: "3.12.4", publisher: "Pine Project", kind: "desktop",
+    available: "3.12.10", update_id: "Pine.Runtime.3.12", products: ["pine:runtime", "pine_project:runtime"], unversioned: 0, cves: [
+      cveRow("CVE-2026-55210", 9.1, "The archive module of Pine Runtime follows links when unpacking, so a crafted archive can write outside the target folder.", "3.12.9", 60),
+      cveRow("CVE-2026-41877", 7.5, "Pine Runtime's e-mail parser can be made to loop for a very long time by a crafted header.", "3.12.8", 110),
+      cveRow("CVE-2026-30096", 6.5, "The bundled HTTP client of Pine Runtime 3.12 before 3.12.7 accepts control characters in a URL path.", "3.12.7", 150),
+      cveRow("CVE-2026-22841", 5.9, "A timing difference in Pine Runtime's comparison helper leaks the length of a secret.", "3.12.6", 200),
+      cveRow("CVE-2025-91533", 4.3, "Pine Runtime's temporary-folder helper creates folders other local users can read.", "3.12.5", 320),
+    ] },
+  { id: "northwind", key: "desktop:northwindvpnclient", name: "Northwind VPN Client", version: "7.4.3.4726", judged_version: "7.4.3.4726", publisher: "Northwind Networks Inc", kind: "desktop",
+    available: "7.4.4.4801", update_id: "Northwind.VPNClient", products: ["northwind:vpn_client"], unversioned: 1, cves: [
+      cveRow("CVE-2026-70465", 7.8, "An unquoted search path in the Northwind VPN Client scheduler lets a local user run a program as SYSTEM.", "7.4.4", 30),
+      cveRow("CVE-2026-24018", 7.1, "Northwind VPN Client 7.4.0 through 7.4.4 does not validate the certificate of the update server in one code path.", "7.4.5", 90),
+    ] },
+  { id: "brightpad", key: "desktop:brightpadnotes", name: "Brightpad Notes", version: "4.12.1", judged_version: "4.12.1", publisher: "Brightpad Labs", kind: "desktop",
+    available: "4.13.0", update_id: "Brightpad.Notes", products: ["brightpad:notes"], cves: [], unversioned: 0 },
+  { id: "kettle", key: "desktop:kettlearchive", name: "Kettle Archive 24.08 (x64)", version: "24.08", judged_version: "24.08", publisher: "Kettle Software", kind: "desktop",
+    available: null, update_id: null, products: ["kettle:archive"], cves: [], unversioned: 0 },
+];
+const svc = (id: string, name: string, exe: string, running: boolean, account: SecService["account"], ports: [number, boolean][], app: SecApp | null, product = "", version = ""): SecService =>
+  ({ id, name, service: id, running, start: running ? "auto" : "manual", account, exe, publisher: app?.publisher ?? "", product: product || (app?.name ?? ""), version: version || (app?.judged_version ?? ""),
+    app_id: app?.id ?? null, app_name: app?.name ?? null, ports: ports.map(([port, network]) => ({ port, network })), exposed: ports.some(([, n]) => n),
+    products: app?.products ?? [], cves: app?.cves ?? [], unversioned: app?.unversioned ?? 0 });
+const secServices: SecService[] = [
+  svc("TessEngine", "Tessellate Engine", "C:\\Program Files\\Tessellate\\engine.exe", true, "limited", [[27017, true]], secApps[0]!),
+  svc("HarborSvc", "Harbor Remote Service", "C:\\Program Files (x86)\\Harbor\\harbor.exe", true, "system", [[7070, true]], null, "Harbor Remote", "9.0.14"),
+  svc("NorthwindSched", "Northwind VPN Service Scheduler", "C:\\Program Files\\Northwind\\scheduler.exe", true, "system", [], secApps[2]!),
+  svc("QuillmarkUpd", "Quillmark Update Service", "C:\\Program Files\\Quillmark\\updater.exe", true, "system", [], null, "Quillmark Updater", "1.8.2"),
+  svc("LarkspurMaint", "Larkspur Maintenance Service", "C:\\Program Files\\Larkspur\\maintenance.exe", false, "system", [], null, "Larkspur Maintenance", "158.0"),
+  svc("BrightSync", "Brightpad Sync", "C:\\Program Files\\Brightpad\\sync.exe", true, "user", [[9000, false]], secApps[3]!),
+];
+const secHidden = new Set<string>();
+let secScanned = ago(95);
+function securityAnswer(brief: boolean): SecurityResponse {
+  const ls = settingsRaw.library ?? {};
+  const base = { enabled: ls.vulnerabilities !== false, runner: { ...libRunner }, settings: { cve_hours: Number(ls.cve_hours ?? 24), check_updates: !!ls.check_updates } };
+  if (!base.enabled) return base;
+  const apps = secApps.filter((a) => !secHidden.has("app|" + a.key));
+  const quiet = new Set(secApps.filter((a) => secHidden.has("app|" + a.key)).map((a) => a.id));
+  const services = secServices.filter((s) => !secHidden.has("service|" + s.id)).map((s) => (s.app_id && quiet.has(s.app_id) ? { ...s, cves: [], unversioned: 0 } : s));
+  const hit = apps.filter((a) => a.cves.length > 0), all = hit.flatMap((a) => a.cves);
+  const out: SecurityResponse = {
+    ...base, scanned_at: secScanned, services_read: true, installed: 10, recognised: secApps.length,
+    summary: { apps_affected: hit.length, cves: all.length, kev: all.filter((c) => c.kev).length, critical: all.filter((c) => (c.score ?? 0) >= 9).length,
+      fix_available: hit.filter((a) => a.available).length, services: services.length, services_running: services.filter((s) => s.running).length,
+      services_exposed: services.filter((s) => s.exposed).length, services_affected: services.filter((s) => s.cves.length > 0).length },
+    database: { synced_at: ago(180), tried_at: ago(180), complete: true, cves: 385_946, kev: 1_739, bytes: 401 * MB, error: null },
+    hidden: secApps.length - apps.length + secServices.length - services.length,
+  };
+  return brief ? out : { ...out, apps, services };
+}
+
 const get: Record<string, Handler> = {
+  "/api/security": (q) => securityAnswer(q.get("brief") === "1"),
   "/api/journal": (q) => journalFor(Math.max(1, Number(q.get("days")) || 30)),
   "/api/library": () => {
     const ls = settingsRaw.library ?? { enabled: true, scan_hours: 24 };
@@ -762,6 +827,18 @@ const get: Record<string, Handler> = {
 };
 
 const post: Record<string, Handler> = {
+  "/api/security/check": () => {
+    if (libRunner.running) return { ok: false, message: "A check is already running." };
+    Object.assign(libRunner, { running: true, started: iso(now()), progress: "Comparing with known vulnerabilities", error: null });
+    setTimeout(() => { Object.assign(libRunner, { running: false, progress: null, finished: iso(now()) }); secScanned = iso(now()); }, 2000);
+    return { ok: true, started: true };
+  },
+  "/api/security/hide": (_q, b) => {
+    const id = `${b.kind}|${b.key}`;
+    if (b.undo) secHidden.delete(id); else secHidden.add(id);
+    return { ok: true };
+  },
+  "/api/security/restore": () => { secHidden.clear(); return { ok: true }; },
   "/api/library/scan": () => {
     if (libRunner.running) return { ok: false, message: "A scan is already running." };
     Object.assign(libRunner, { running: true, started: iso(now()), progress: "Looking at pictures: 40 of 120", error: null });

@@ -531,12 +531,8 @@ def view(cfg: dict) -> dict:
     installed = apps.view(cfg) if s["enabled"] and s["applications"] else None
     if installed:
         installed = apps.with_updates(cfg, installed, s["check_updates"], s["update_hours"])
-    known = None
-    if installed and s["vulnerabilities"]:
-        import cve
-        known = cve.view(cfg)
     base = {"enabled": s["enabled"], "runner": Runner.state, "settings": {"scan_hours": s["scan_hours"]},
-            "applications": installed, "vulnerabilities": known}
+            "applications": installed}
     rep = load_report() if s["enabled"] else None
     if not rep:
         return {**base, "scanned_at": None, **empty, "counts": {k: 0 for k in KINDS}, "dismissed": 0,
@@ -564,7 +560,7 @@ class Runner:
     state = {"running": False, "started": None, "progress": None, "error": None, "finished": None}
 
     @classmethod
-    def start(cls, cfg: dict, log=None, updates: bool = False) -> bool:
+    def start(cls, cfg: dict, log=None, updates: bool = False, cves: bool = False) -> bool:
         with cls.lock:
             if cls.state["running"]:
                 return False
@@ -584,7 +580,7 @@ class Runner:
                         apps.check_updates(cfg, log=log)
                     if s["vulnerabilities"]:
                         import cve
-                        if cve.due(cfg, s["cve_hours"]):
+                        if cves or cve.due(cfg, s["cve_hours"]):
                             cve.sync(cfg, progress=lambda m: cls.state.update(progress=m), log=log)
                         cls.state.update(progress="Comparing with known vulnerabilities")
                         cve.scan(cfg, updates=s["check_updates"], hours=s["update_hours"], log=log)
