@@ -408,3 +408,11 @@ export interface JournalResponse {
   days: JournalDay[];
   text: string;
 }
+
+export interface PreviewResponse {
+  ok: boolean; message?: string;
+  path: string; name: string; ext?: string; size?: number;
+  status: "ok" | "ocr" | "locked" | "name_only" | "no_text" | "ocr_empty" | "pending";
+  modified?: string; read_at?: string | null;
+  text: string; chars: number; truncated: boolean; openable: boolean; note: string;
+}

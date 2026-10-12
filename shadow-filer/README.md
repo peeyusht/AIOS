@@ -251,6 +251,13 @@ The Watch page reads the text the search index already holds; it opens no file a
   spreadsheets are not flagged unless they are written like the real thing or named as such.
 Both are in Settings › Document watch (on/off, days ahead, how long passed dates stay listed).
 
+## Preview before filing
+**Preview** on an Inbox file (and on a search result) opens a side panel with the document's text as the agent
+read it, so you can check what a file is before filing it. It uses what the search index already holds, so no
+file is opened again; scans say they were read by OCR, long documents show their start, and files with no
+text (archives, images of firmware, password-protected PDFs) say why. **Open** in the panel launches the file
+in its normal app when you need the real layout.
+
 ## Work journal
 Activity › Journal is a dated record, newest day first: what arrived in Downloads, what was filed where (through
 the Inbox, automatically, or by hand in Explorer) and what was undone, what Cleanup sent to the Recycle Bin, and

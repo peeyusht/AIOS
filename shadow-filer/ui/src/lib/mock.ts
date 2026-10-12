@@ -756,6 +756,7 @@ const post: Record<string, Handler> = {
   "/api/cleanup/reveal": () => ({ ok: true }),
   "/api/search/open": () => ({ ok: true }),
   "/api/search/reveal": () => ({ ok: true }),
+  "/api/search/preview": (_q, b) => mockPreview(String(b?.path ?? "")),
   "/api/search/rebuild": () => { searchState.running = true; searchState.done = 0; searchState.todo = 18_422; return { ok: true, message: "Rebuilding the index." }; },
   "/api/cleanup/scan": () => {
     if (cleanupState.running) return { ok: false, message: "A scan is already running." };
@@ -824,4 +825,55 @@ export async function mockFetch(method: "GET" | "POST", url: string, body?: Raw)
   const h = (method === "GET" ? get : post)[u.pathname];
   if (!h) throw new MockHttpError(404);
   return JSON.parse(JSON.stringify(h(u.searchParams, body ?? {})));
+}
+
+/* ---------- File preview (fictional text) ---------- */
+const SOW_TEXT = `Statement of Work: Acme Rollout, Phase 3
+
+Purpose
+This statement of work describes the third phase of the Acme branch rollout, covering the remaining forty-two sites in the northern region. Work begins on 3 November and is expected to finish by the end of January.
+
+Scope
+The supplier installs and configures the standard branch kit at each site, migrates local file shares to the central store, and trains two staff members per branch. Network cabling and building works are out of scope and remain with Acme Facilities.
+
+Acceptance
+Each site is accepted when the checklist in Appendix B is signed by the branch manager. Defects found within ten working days are fixed at no extra cost.
+
+Fees and payment
+The fixed fee is invoiced in three equal parts: at kick-off, after twenty sites are accepted, and at final acceptance. Payment terms are thirty days from invoice.`;
+
+const AUDIT_TEXT = `Northwind Traders: Security Posture Audit, Draft Findings
+
+Summary
+The review covered identity, endpoint and backup controls across the head office and two warehouses. Overall the posture is reasonable, with three findings that need attention before the year-end board review.
+
+Finding 1: Shared administrator accounts
+Two warehouse servers are still managed through a single shared administrator login. We recommend named accounts with multi-factor sign-in.
+
+Finding 2: Backup restore tests
+Backups run nightly, but no restore has been tested since March. A quarterly restore test should be scheduled and recorded.
+
+Finding 3: Unpatched laptops
+Eleven laptops are more than sixty days behind on updates. Most belong to the field sales team, who rarely connect to the office network.`;
+
+const LONG_TEXT = Array.from({ length: 30 }, (_, i) =>
+  `Section ${i + 1}: Globex closing activities\n\nThe project team confirmed that all deliverables for work package ${i + 1} were handed over, signed off by the Globex steering group and archived in the shared project library. Outstanding risks were transferred to the operations owner, and the remaining budget was reconciled against the final purchase order. Lessons learned were captured in the retrospective and are summarised in the appendix.`,
+).join("\n\n");
+
+function mockPreview(path: string) {
+  const name = path.split(/[\\/]/).pop() ?? path;
+  const ext = (name.split(".").pop() ?? "").toLowerCase();
+  const base = { ok: true, path, name, ext, size: 240_000 + name.length * 7_000, modified: ago(name.length * 40), read_at: ago(name.length * 30), truncated: false, openable: true, note: "" };
+  const withText = (text: string, extra: Record<string, unknown> = {}) => ({ ...base, status: "ok", text, chars: text.length, ...extra });
+  if (/payslip/i.test(name)) return { ...base, status: "locked", text: "", chars: 0, note: "Password-protected: the agent does not open it." };
+  if (/globex_closing_report/i.test(name)) {
+    const text = LONG_TEXT.slice(0, 4000);
+    return { ...base, status: "ok", text, chars: 48_512, truncated: true };
+  }
+  if (/^scan|\.(png|jpe?g|tiff?|heic)$/i.test(name))
+    return withText(`ACME CORPORATION\nDelivery note no. 88213\n\nReceived 14 boxes of branch kit in good condition.\nSigned: J. Mor1and, Site lead\nDate: 02/1O/2026`, { status: "ocr", note: "This is a scan or a picture: the text was read by OCR and may have mistakes." });
+  if (["zip", "iso", "exe", "msi", "crdownload", "7z"].includes(ext))
+    return { ...base, status: "name_only", text: "", chars: 0, openable: false, read_at: null, note: "Not a kind of file the agent reads (or too big): only its name is known." };
+  if (/northwind|nw_/i.test(name) || ext === "docx") return withText(AUDIT_TEXT);
+  return withText(SOW_TEXT);
 }

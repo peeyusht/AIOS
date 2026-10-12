@@ -150,4 +150,11 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   by comparing content.
 - The work journal's "worked on" list only sees documents inside the PARA tree, and only on days the agent
   was running (earlier days show a file's last change only). Work done in Downloads or elsewhere is not in it.
+- Preview before filing (Inbox and Search, 12 Oct 2026) shows the text the index already holds
+  (`Index.preview`, POST `/api/search/preview`): 586 of 887 files in Downloads have text; the rest say why not.
+  It is text only. The user wants to see the real PDF/Word page in the console eventually ("step 2", agreed
+  but not built): that needs an endpoint that serves file bytes, which does not exist today. Design it with
+  care: files directly in a watched folder or in the index only, a short-lived one-time ticket (an embedded
+  viewer cannot send the token header), never cloud-only placeholders, and the CSP opened only as far as
+  embedding from 'self'. A browser cannot draw Word files: those need converting or stay text.
 - All seven planned phases are built. Nothing further is planned; the open items above are what is left.

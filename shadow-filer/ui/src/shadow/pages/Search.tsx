@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Database, ExternalLink, FolderSearch, RotateCcw, Search as SearchIcon } from "lucide-react";
+import { Eye, ChevronDown, Database, ExternalLink, FolderSearch, RotateCcw, Search as SearchIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,7 @@ import { bytes, when } from "@/lib/format";
 import type { SearchResponse } from "@/lib/types";
 import { Bar, Card, Confirm, EmptyState, Highlight, ListSkeleton, Mono, Notice, PageHeader, Segmented, act } from "../ui";
 import { cn } from "@/lib/utils";
+import { FilePreview } from "../FilePreview";
 
 const STATUS: Record<string, string> = {
   ocr: "Text from OCR", ocr_empty: "OCR found no text", locked: "Password-protected", name_only: "Name only",
@@ -24,6 +25,7 @@ export function SearchPage() {
   const [res, setRes] = useState<SearchResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
   const seq = useRef(0);
 
   useEffect(() => { sessionStorage.setItem("sf-q", q); }, [q]);
@@ -83,6 +85,7 @@ export function SearchPage() {
                     </div>
                   </div>
                   <div className="flex shrink-0 gap-1">
+                    <Button size="sm" variant="ghost" onClick={() => setPreviewPath(r.path)}><Eye /> Preview</Button>
                     {r.openable && <Button size="sm" variant="outline" onClick={() => act(() => api.searchOpen(r.path))}><ExternalLink /> Open</Button>}
                     <Button size="sm" variant="ghost" onClick={() => act(() => api.searchReveal(r.path))}><FolderSearch /> Show</Button>
                   </div>
@@ -93,6 +96,7 @@ export function SearchPage() {
         </ul>
       </div>
       <IndexPanel />
+      <FilePreview path={previewPath} onClose={() => setPreviewPath(null)} />
     </>
   );
 }

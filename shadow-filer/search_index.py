@@ -66,6 +66,13 @@ TYPE_GROUPS = {
     "slides": {".pptx", ".ppt", ".odp"},
     "pdf": {".pdf"},
 }
+PREVIEW_NOTE = {
+    "ocr": "This is a scan or a picture: the text was read by OCR and may have mistakes.",
+    "locked": "Password-protected: the agent does not open it.",
+    "name_only": "Not a kind of file the agent reads (or too big): only its name is known.",
+    "no_text": "No readable text was found in this file.",
+    "ocr_empty": "A scan or picture in which OCR found no text.",
+}
 OPENABLE = {".pdf", ".docx", ".doc", ".xlsx", ".xls", ".xlsm", ".csv", ".pptx", ".ppt", ".txt", ".md",
             ".rtf", ".odt", ".ods", ".odp", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".eml", ".msg",
             ".vsdx", ".json", ".xml", ".log", ".yaml", ".yml"}
@@ -149,6 +156,27 @@ def chunk_text(text: str, size: int, overlap: int, limit: int) -> list[str]:
         if end >= len(text):
             break
         i = max(end - overlap, i + 1)
+    return out
+
+
+def join_chunks(pieces: list[str], overlap: int = DEFAULTS["chunk_overlap"]) -> str:
+    """Put a file's stored passages back together. Neighbours overlap (see chunk_text), so the part of a
+    passage that repeats the end of the one before it is dropped. A passage starts `overlap` characters
+    before the end of the previous one (a few fewer once blanks are trimmed), so the repeat is looked for
+    at that length first: in text that repeats itself, the longest match would cut away too much."""
+    out = ""
+    for p in pieces:
+        p = p.strip()
+        if not p:
+            continue
+        if not out:
+            out = p
+            continue
+        k = next((n for n in range(min(overlap, len(out), len(p)), 11, -1) if out.endswith(p[:n])), 0)
+        if k:
+            out += p[k:]
+        else:   # cut at a paragraph or sentence: nothing repeats
+            out += ("\n\n" if not out.endswith("\n") else "") + p
     return out
 
 
@@ -768,6 +796,26 @@ class Index:
                 })
         return {"results": out, "semantic": semantic, "semantic_error": sem_error,
                 "ms": int((time.time() - t0) * 1000), "searched_files": len(meta)}
+
+    def preview(self, path: str) -> dict | None:
+        """The text already read from one indexed file, for looking at it before filing. Nothing is opened:
+        this is what the index holds. None if the file is not in the index."""
+        s = settings(self.cfg)
+        with self.lock:
+            f = self.conn.execute("SELECT path, name, ext, size, mtime_ns, status, chars, chunks, indexed_at, error "
+                                  "FROM files WHERE path=?", (path,)).fetchone()
+            if not f:
+                return None
+            rows = self.conn.execute("SELECT text FROM chunks WHERE path=? ORDER BY idx", (path,)).fetchall()
+        has_text = f["status"] in ("ok", "ocr")
+        pieces = [r["text"].split("\n", 1)[1] if "\n" in (r["text"] or "") else "" for r in rows] if has_text else []
+        text = join_chunks(pieces, s["chunk_overlap"])
+        return {"path": f["path"], "name": f["name"], "ext": f["ext"], "size": f["size"], "status": f["status"],
+                "modified": datetime.fromtimestamp(f["mtime_ns"] / 1e9).isoformat(timespec="seconds"),
+                "read_at": f["indexed_at"], "text": text, "chars": len(text),
+                # the index keeps the start of a long document, not all of it
+                "truncated": has_text and (len(rows) >= s["max_chunks_per_file"] or (f["chars"] or 0) >= s["max_chars_per_file"]),
+                "openable": f["ext"] in OPENABLE, "note": PREVIEW_NOTE.get(f["status"], "")}
 
     def is_indexed(self, path: str) -> dict | None:
         with self.lock:
