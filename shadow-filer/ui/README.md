@@ -52,6 +52,15 @@ own `#/inbox`-style routing, so it runs unchanged as a static page.
    own pages: the Turn on buttons and the result bar in `Network.tsx` (and `FirewallButton` in `remedy.tsx`), and
    the Network panel in `Dashboard.tsx`; the "Rules that let connections in" block in `Network.tsx`.
 
+## The fleet server's console
+`src/fleet/**`, `fleet.html` and `vite.fleet.config.ts` are a second application built from this tree: the
+console of the central server (`server/`, see `docs/architecture.md`). It was written locally on 12 Oct
+2026 in the existing style and is **not in Lovable**. It imports `src/shadow/ui.tsx`, `src/components/ui/**`,
+`src/lib/{format,hooks,utils}.ts` and `src/styles.css`, so a change to those (a copy from Lovable included)
+changes it too: after one, run `npm run build:fleet` (type-checks, writes `dist-fleet/`, which is not
+committed). The server's image runs that build itself. It has no demo data and no inline script (the
+server's CSP allows scripts only from the server).
+
 ## Rules the UI must keep
 - No external requests (fonts, CDNs, images, analytics): the agent's CSP is `default-src 'self'`.
 - `index.html` keeps `<meta name="shadow-token" content="__TOKEN__">`; the agent fills it in. With the literal

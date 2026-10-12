@@ -1,7 +1,9 @@
-# Fleet server (phase 1)
+# Fleet server (phases 1 and 2)
 
-The central server from `docs/architecture.md`: PCs enrol and report what is installed; an administrator
-sees the list of devices. No judging of flaws or compliance yet (phase 2), no remote actions (phase 5).
+The central server from `docs/architecture.md`: PCs enrol and report what is installed; the server judges
+each one (known flaws, end of support, the Cyber Essentials control areas); an administrator sees the
+fleet, each device and the evidence report in a web console. No sign-in with named users yet (phase 3), no
+remote actions (phase 5).
 
 Everything here runs in containers and is started with Docker Compose. Nothing needs to be installed on the
 machine except Docker.
@@ -10,16 +12,23 @@ machine except Docker.
 |---|---|---|
 | `db` | PostgreSQL 17, data in the `fleet-db` volume | always |
 | `init` | creates or updates the tables, sets the application role's password | once at start, then exits |
-| `api` | the API and the fleet page | always |
+| `api` | the API and the web console | always |
+| `worker` | keeps the public CVE, known-exploited and end-of-life lists (volume `fleet-ref`) and judges every device | always |
 | `manage` | admin commands | on demand |
 | `test` | the server's tests | on demand |
 
 ## Run it
 ```
 cd server
-docker compose up -d --build        # PostgreSQL on 127.0.0.1:5433, the API and fleet page on 127.0.0.1:8770
+docker compose up -d --build        # PostgreSQL on 127.0.0.1:5433, the API and console on 127.0.0.1:8770
 docker compose ps
+docker compose logs -f worker       # the first start downloads the lists: about 300 MB, about 9 minutes
 ```
+The worker is the only container that goes online, and only to download public lists from nvd.nist.gov,
+www.cisa.gov and endoflife.date; nothing about a customer or a device is in a request. Until the first
+download is complete devices are judged on their settings alone, and again when the lists are there.
+The image is built from the repository root (it shares the matching rules and the console's design with
+the agent), so run compose from this folder and let it find the Dockerfile.
 Both ports are reachable from this machine only. `docker compose down` stops everything and keeps the data;
 `docker compose down -v` also deletes the database.
 
@@ -45,23 +54,39 @@ services, firewall and installed programs, and a container sees only its own. On
 The agent refuses a plain `http://` server unless it is localhost. A PC on another machine needs the server
 behind HTTPS (phase 6 adds the proxy container).
 
+## What the console shows
+- **Overview**: how many devices pass each control area, which checks fail on which devices, flaws that are
+  being used in real attacks, devices that stopped reporting, the last 90 days.
+- **Devices** and one device: its checks with evidence (accept one with a reason, or withdraw that), known
+  flaws per program, programs with versions and support, firewall and listening ports, what it reported.
+- **Software**: every program in the organisation, on which devices and in which versions.
+- **Evidence**: the report for the organisation as text, its declarations, and the record of who did what.
+
+A device reports counts and settings, never account names, paths or addresses, so the server says "1 account
+does not require a password" and the PC's own console says which. `docker compose run --rm worker python -m
+app.worker --once` judges whatever is waiting and stops.
+
 ## Tests
 ```
 docker compose run --rm test
 ```
-They create a database of their own in the `db` container and drop it afterwards. The important ones try to
-read and write one organisation's rows as another, through the API and directly in SQL as the application's
-database role.
+They create a database of their own in the `db` container and drop it afterwards, and judge against a tiny
+made-up copy of the lists (nothing is downloaded). The important ones try to read and write one
+organisation's rows as another, through the API and directly in SQL as the API's and the worker's database
+roles.
 
 ## What protects what
-- **Between organisations:** row-level security in the database, forced, with the API connected as a role
-  that cannot bypass it (`schema.sql`). The schema owner must be a superuser or have BYPASSRLS, for the three
-  functions that turn a presented secret into an organisation.
+- **Between organisations:** row-level security in the database, forced, with the API and the worker each
+  connected as a role that cannot bypass it (`schema.sql`). The schema owner must be a superuser or have
+  BYPASSRLS, for the three functions that turn a presented secret into an organisation and the one that
+  tells the worker which devices are waiting (ids only). The worker's role cannot read keys, tokens or the
+  audit log; the API's role cannot create a judgement.
 - **Secrets:** tokens and keys are random; only their SHA-256 is stored. Each is printed once.
-- **Requests:** 5 MB limit, only the five known kinds of report, strict response headers.
+- **Requests:** 5 MB limit, only the five known kinds of report, strict response headers (scripts only from
+  the server itself). The console keeps the key for the browser tab only.
 - **Containers:** the API runs as an unprivileged user; the image that serves requests carries no test code.
 
 ## Not for production yet
-Default passwords (set `POSTGRES_PASSWORD` and `FLEET_APP_PASSWORD` in a `.env` file next to
+Default passwords (set `POSTGRES_PASSWORD`, `FLEET_APP_PASSWORD` and `FLEET_WORKER_PASSWORD` in a `.env` file next to
 `docker-compose.yml`), no TLS, no rate limiting, no backups, console access by a shared key instead of named
 users. These are phases 3 and 6.

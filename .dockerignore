@@ -1,0 +1,14 @@
+# The server image is built from the repository root, because it shares three modules and the console's
+# source with the agent. Everything is left out except what is named here: the agent folder holds personal
+# data (search.db, logs, config.yaml, a 400 MB cve.db) that must never reach an image.
+*
+!server/
+!shadow-filer/cve.py
+!shadow-filer/eol.py
+!shadow-filer/compliance.py
+!shadow-filer/ui/
+shadow-filer/ui/node_modules
+server/local-keys.txt
+server/.env
+**/__pycache__
+**/*.pyc
