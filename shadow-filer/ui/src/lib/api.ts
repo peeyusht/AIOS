@@ -141,6 +141,7 @@ export const api = {
   remedy: () => g<RemedyResponse>("/api/remedy"),
   remedyUpdate: (id: string) => p("/api/remedy/update", { id, terms_accepted: true }),
   remedyStop: (id: string) => p("/api/remedy/stop-service", { id }),
+  remedyFirewallOn: (profile: "all" | "Domain" | "Private" | "Public") => p("/api/remedy/firewall-on", { profile }),
   journal: (days = 30) => g<JournalResponse>("/api/journal?days=" + days),
   system: (refresh = false) => g<Raw>("/api/system" + (refresh ? "?refresh=1" : "")).then(adaptSystem),
 };

@@ -26,7 +26,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 | `services.py` | Windows services that are not part of Windows: program, account, running or not, ports listened on (and whether from the network), the installed application each belongs to. Read-only, local |
 | `cve.py` | Known vulnerabilities: a local copy of the public CVE lists (`cve.db`, NVD yearly files + CISA's known-exploited list) and which installed programs and services they name, by strict name and version matching. Optional, off by default; downloads are the online step, the comparison is local |
 | `network.py` | Network page (`/api/network`): interfaces and addresses, routing table, DNS/proxy/hosts, Windows Firewall and the Public/Private mark, shared folders, listening ports with their programs, open connections, the neighbour table, and findings. Read-only, passive, in memory only |
-| `remedy.py` | The only code that changes installed software or a service: Update one application (winget) and Stop one service, each one click, confirmed, logged in `remedy_log`. Off by default |
+| `remedy.py` | The only code that changes installed software or a service: Update one application (winget), Stop one service, and switch Windows Firewall on, each one click, confirmed, logged in `remedy_log`. Off by default |
 | `dashboard.py` | Dashboard (`/api/dashboard`): one summary put together from what the other modules already keep, plus the "needs attention" lines. Read-only, asks nothing new of Windows or the internet; a part that fails is replaced by `{error}` |
 | `journal.py` | Phase 7: work journal (Activity › Journal): per day, what arrived, was filed, was deleted, and which folders had documents added or changed. Built from existing tables + file dates; writes only its own `journal_touch` table |
 | `mover.py` | the only code that moves files; journal + undo |
@@ -99,7 +99,9 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   changes, except rapid numbering of 50 and up like browsers): the newest version on the installed line is
   offered instead (`apps.same_line`), or nothing; the agent's own Python is never updated; a service is
   stopped with `sc stop` through the Windows permission prompt, never disabled, and nothing is uninstalled
-  or reconfigured. The agent is not elevated and must stay that way.
+  or reconfigured. Windows Firewall can be switched ON (one profile or all, `netsh advfirewall set ... state
+  on`, asked for by the user on 12 Oct 2026) and never off: no command that switches it off, edits a rule or
+  changes a profile's defaults may be added without asking. The agent is not elevated and must stay that way.
 - The second online place is `cve.fetch`, only while `library.vulnerabilities` is on (off by default; asked
   for by the user on 12 Oct 2026, who chose the local copy over per-product lookups). It GETs fixed public
   files from `nvd.nist.gov` (yearly CVE files, then the "modified" file) and `www.cisa.gov` (known-exploited
@@ -250,8 +252,9 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   catalogue, not programs winget cannot identify), and nothing is updated for the user. Packaged apps have no
   size and no true install date (the package folder's creation day is shown). Changes are only known from
   the first scan on (12 Oct 2026) and only as of the day a scan noticed them.
-- Network: view only; nothing can be changed from the page (not the firewall, not a network's Public/Private
-  mark). No names for devices (no vendor lookup, no reverse DNS) and no per-connection traffic amounts.
+- Network: view only except for switching Windows Firewall on (through `remedy.py`); a network's
+  Public/Private mark, rules and shares cannot be changed from the page. The firewall button has run on demo
+  data only: on 12 Oct 2026 the user's firewall was still off on all profiles and switching it on was left to them. No names for devices (no vendor lookup, no reverse DNS) and no per-connection traffic amounts.
 - Dashboard: the first call after a restart takes about 6 s (system summary and Watch are built then), later
   ones 0.1 s; free disk space on it can be up to an hour old. Sensitive files are a count there, never what
   was found.

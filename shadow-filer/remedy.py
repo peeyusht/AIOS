@@ -8,6 +8,10 @@ by one click in the console and confirmed there, one at a time, each written to 
   stop     stop ONE running service the last Security comparison listed (`sc stop`, elevated through the
            normal Windows prompt). It is stopped, not disabled: Windows starts it again at the next boot if
            it is set to start automatically.
+  firewall switch Windows Firewall ON for one profile or all three (`netsh advfirewall set ... state on`,
+           elevated through the Windows prompt). On only: nothing here can switch it off, change a rule or
+           change what a profile allows. Windows' existing rules then apply: a program without an allow rule
+           stops accepting connections from other devices.
 
 Off unless `library.remediate` is on (allowed by the user on 12 Oct 2026). Rules that hold whatever the page
 sends: the application must be in the current list with an update that is not blocked; the caller must say
@@ -327,6 +331,91 @@ def start_stop(cfg: dict, service_id: str, log=None, stop=stop_elevated, wait: b
             _end(ok, msg)
             if log:
                 log.info("REMEDY stop %s: %s", "ok" if ok else "FAILED", msg)
+
+    if wait:
+        work()
+    else:
+        threading.Thread(target=work, daemon=True, name="remedy").start()
+    return {"ok": True, "started": True, "job": dict(state)}
+
+
+# --------------------------------------------------------------------------- Windows Firewall: on, never off
+FIREWALL = {"all": "allprofiles", "Domain": "domainprofile", "Private": "privateprofile", "Public": "publicprofile"}
+
+
+def _netsh() -> str:
+    return os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "netsh.exe")
+
+
+def firewall_state() -> dict:
+    """{'Domain': True, 'Private': False, ...} as Windows reports it now (no rights needed). {} if unknown."""
+    try:
+        r = subprocess.run([_netsh(), "advfirewall", "show", "allprofiles", "state"], capture_output=True, text=True,
+                           errors="replace", timeout=30, creationflags=CREATE_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    out, name = {}, None
+    for ln in (r.stdout or "").splitlines():
+        m = re.match(r"\s*(Domain|Private|Public) Profile", ln)
+        if m:
+            name = m.group(1)
+        m = re.match(r"\s*State\s+(ON|OFF)\s*$", ln)
+        if m and name:
+            out[name] = m.group(1) == "ON"
+    return out
+
+
+def firewall_on_elevated(profile: str) -> tuple:
+    """Switch one profile (or all) on, as administrator. (ok, message)."""
+    if os.name != "nt":
+        return False, "Only available on Windows."
+    if profile not in FIREWALL:
+        return False, "Unknown firewall profile."
+    got = _as_admin(_netsh(), f"advfirewall set {FIREWALL[profile]} state on", 60_000)
+    if got == "declined":
+        return False, "You declined the Windows permission prompt."
+    if isinstance(got, str):
+        return False, f"Windows would not start the command ({got})."
+    now = firewall_state()
+    want = list(now) if profile == "all" else [profile]
+    still = [p for p in want if now.get(p) is False]
+    if got != 0 or still:
+        return False, ("Windows Firewall is still off" + (f" for {', '.join(still)}" if still else "")
+                       + ". A policy set by an administrator or another security product may be holding it off.")
+    return True, ("Windows Firewall is on for " + ("all profiles" if profile == "all" else f"the {profile} profile")
+                  + ". Programs without an allow rule no longer accept connections from other devices.")
+
+
+def start_firewall_on(cfg: dict, profile: str, log=None, turn_on=firewall_on_elevated, wait: bool = False) -> dict:
+    """Start switching Windows Firewall on. There is no way to switch it off from here."""
+    if not enabled(cfg):
+        return {"ok": False, "message": "Changing things from the console is switched off in Settings."}
+    if profile not in FIREWALL:
+        return {"ok": False, "message": "Unknown firewall profile."}
+    label = "all profiles" if profile == "all" else f"{profile} profile"
+    if not _begin("firewall", "Windows Firewall", label):
+        return {"ok": False, "message": "Another update or stop is still running."}
+
+    def work():
+        ok, msg = False, ""
+        try:
+            if log:
+                log.info("REMEDY firewall on: %s", label)
+            ok, msg = turn_on(profile)
+            try:
+                import network
+                network.view(force=True, log=log)       # the Network page and the dashboard show the new state
+            except Exception as e:
+                if log:
+                    log.warning("refresh after firewall change failed: %s", e)
+        except Exception as e:
+            msg = f"Switching the firewall on failed: {str(e)[:200]}"
+        try:
+            _record(cfg["database"], "firewall", "Windows Firewall", label, "off", "on" if ok else "off", ok, msg)
+        finally:
+            _end(ok, msg)
+            if log:
+                log.info("REMEDY firewall %s: %s", "ok" if ok else "FAILED", msg)
 
     if wait:
         work()

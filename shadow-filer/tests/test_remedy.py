@@ -196,5 +196,30 @@ class StopTest(Base):
         self.assertEqual(remedy.view(self.cfg)["enabled"], True)
 
 
+class FirewallTest(Base):
+    def test_on_only_and_only_known_profiles(self):
+        on = mock.Mock(return_value=(True, "Windows Firewall is on for all profiles."))
+        with mock.patch("network.view"):
+            off = {**self.cfg, "library": {}}
+            self.assertIn("switched off", remedy.start_firewall_on(off, "all", turn_on=on, wait=True)["message"])
+            for bad in ("", "allprofiles state off", "public", "Public & calc", "off"):
+                self.assertIn("Unknown firewall profile", remedy.start_firewall_on(self.cfg, bad, turn_on=on, wait=True)["message"])
+            on.assert_not_called()
+            self.assertTrue(remedy.start_firewall_on(self.cfg, "all", turn_on=on, wait=True)["ok"])
+            on.assert_called_once_with("all")
+            h = remedy.history(self.cfg["database"])[0]
+            self.assertEqual((h["action"], h["name"], h["target"], h["before"], h["after"], h["ok"]),
+                             ("firewall", "Windows Firewall", "all profiles", "off", "on", 1))
+            remedy.start_firewall_on(self.cfg, "Private", wait=True,
+                                     turn_on=mock.Mock(return_value=(False, "You declined the Windows permission prompt.")))
+            self.assertEqual((remedy.state["ok"], remedy.history(self.cfg["database"])[0]["after"]), (False, "off"))
+        # the only commands that exist switch a profile ON; nothing in the module can switch one off
+        self.assertEqual(set(remedy.FIREWALL), {"all", "Domain", "Private", "Public"})
+        src = Path(remedy.__file__).read_text(encoding="utf-8")
+        self.assertIn('state on"', src)
+        self.assertNotIn("state off", src)
+        self.assertEqual(remedy.firewall_on_elevated("everything")[0], False)
+
+
 if __name__ == "__main__":
     unittest.main()

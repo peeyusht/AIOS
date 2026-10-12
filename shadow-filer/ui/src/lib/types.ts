@@ -21,7 +21,13 @@ export interface DashboardResponse {
   activity: Part<{ days: { date: string; arrived: number; filed: number; deleted: number; worked_files: number; apps: number }[];
     totals: { arrived: number; filed: number; deleted: number; worked_files: number; apps: number; auto_filed: number; deleted_bytes: number; active_days: number } }>;
   storage: Part<{ collected: string | null; volumes: { letter: string; label: string; bytes: number; free: number }[] }>;
-  remedy: Part<{ enabled: boolean; running: boolean; recent: { ts: string; action: "update" | "stop"; name: string; target: string; ok: number; message: string }[] }>;
+  /** What the Network page last found (absent on older agents). read_at null = not read yet. */
+  network?: Part<{ read_at: string | null; findings: { level: "danger" | "warning" | "info"; text: string; tab: string }[];
+    counts: { listening_network_other?: number; listening_network?: number; connections?: number; programs_connected?: number; devices?: number };
+    firewall: { state: "on" | "off" | "partly" | null; off: string[]; other: string[] } | null; virtual_up?: number;
+    interfaces: { name: string; kind: "ethernet" | "wifi" | "vpn"; speed: number; address: string | null; gateway: string | null; network: string | null;
+      category: "public" | "private" | "domainauthenticated" | null; internet: boolean; ssid?: string | null }[] }>;
+  remedy: Part<{ enabled: boolean; running: boolean; recent: { ts: string; action: "update" | "stop" | "firewall"; name: string; target: string; ok: number; message: string }[] }>;
 }
 
 export interface Candidate {
@@ -503,10 +509,10 @@ export interface SecurityResponse {
 
 /* --- Remediation: update an application, stop a service --- */
 export interface UpdatePlan { id: string; to: string; kind: "latest" | "same_line"; latest: string; blocked: string | null; }
-export interface RemedyJob { running: boolean; action: "update" | "stop" | null; name: string | null; target: string | null; started: string | null; finished: string | null; ok: boolean | null; message: string | null; }
+export interface RemedyJob { running: boolean; action: "update" | "stop" | "firewall" | null; name: string | null; target: string | null; started: string | null; finished: string | null; ok: boolean | null; message: string | null; }
 export interface RemedyResponse {
   enabled: boolean; job: RemedyJob;
-  history: { ts: string; action: "update" | "stop"; name: string; target: string; before: string; after: string; ok: number; message: string }[];
+  history: { ts: string; action: "update" | "stop" | "firewall"; name: string; target: string; before: string; after: string; ok: number; message: string }[];
 }
 
 /* --- Network: interfaces, routes, exposure, connections, devices --- */
@@ -529,6 +535,8 @@ export interface NetConnectionGroup { process: string; count: number; internet: 
 export interface NetDevice { address: string; mac: string; state: string; interface: string; gateway: boolean; family: "IPv4" | "IPv6"; }
 export interface NetworkResponse {
   read_at: string | null; error?: string; seconds?: number; computer?: string;
+  /** Turning the firewall on from the console is switched on in Settings. */
+  remediate?: boolean;
   adapters: NetAdapter[]; routes: NetRoute[];
   firewall: { name: string; enabled: boolean; inbound: string; outbound: string }[];
   other_firewalls?: string[];
