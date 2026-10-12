@@ -153,6 +153,8 @@ export function SettingsPage({ status }: { status: Status | null }) {
             <Num c={ctx} p="library.scan_hours" label="Rescan every" unit="hours" min={0} max={720} hint="How often the running agent rescans. 0 = only when you click Scan now." />
             <Sw c={ctx} p="library.check_signatures" label="Check who signed programs and installers" />
             <Sw c={ctx} p="library.applications" label="List the applications installed on this PC" hint="Names, versions and publishers from Windows. Nothing goes online and nothing is installed or removed." />
+            <Sw c={ctx} p="library.check_updates" label="Check for newer versions (goes online)" hint="Asks winget, Windows' package manager, which installed applications have a newer version. winget downloads its catalogue from Microsoft; nothing is updated for you." />
+            {!!ctx.get("library.check_updates") && <Num c={ctx} p="library.update_hours" label="Ask again every" unit="hours" min={1} max={720} />}
           </Section>
           <Section title="Interface">
             <Num c={ctx} p="ui.port" label="Port" min={1024} max={65535} restart />

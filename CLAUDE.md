@@ -22,7 +22,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 | `origin.py` | Phase 4: where a download came from (Zone.Identifier mark) as a filing signal; in memory only |
 | `watch.py` | Phase 5: dates that matter (expiry, due, valid until) and sensitive files in Downloads, read from `search.db` text; read-only |
 | `library.py` | Phase 6: firmware/VM catalogue, document version chains, look-alike pictures, program signatures; read-only, report in `library_report.json` |
-| `apps.py` | Applications (Library › Applications): programs installed on this PC with version, publisher, install date, size; what was installed, updated or removed between scans (`apps_history`). Reads the registry and the packaged-app list; read-only, never online |
+| `apps.py` | Applications (Library › Applications): programs installed on this PC with version, publisher, install date, size; what was installed, updated or removed between scans (`apps_history`). Reads the registry and the packaged-app list; read-only. Optional, off by default: asks `winget` which have a newer version (the one online step) |
 | `journal.py` | Phase 7: work journal (Activity › Journal): per day, what arrived, was filed, was deleted, and which folders had documents added or changed. Built from existing tables + file dates; writes only its own `journal_touch` table |
 | `mover.py` | the only code that moves files; journal + undo |
 | `autofile.py` | Phase 3 auto-filing, per-folder trust from the user's Inbox decisions |
@@ -69,11 +69,17 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   and firmware/VM images are judged by name, size and date alone. "Show" opens Explorer only for a path the
   last scan listed. File paths reach PowerShell on standard input, never on the command line. For a program
   it also reads the name and version the file states about itself (same Windows call as the signature).
-- `apps.py` is read-only and stays on this PC: it reads Windows' installed-programs lists (registry) and the
-  packaged-app list (one fixed PowerShell call, no arguments). It never installs, updates, removes or starts
-  anything, opens none of the user's files, and never goes online: checking for newer versions (`winget
-  upgrade`) would send the app list to outside sources, so ask before adding it. A list that cannot be read
-  keeps its previous entries (never "everything was removed"); the first scan records no changes.
+- `apps.py` is read-only: it reads Windows' installed-programs lists (registry) and the packaged-app list
+  (one fixed PowerShell call, no arguments). It never installs, updates, removes or starts anything and opens
+  none of the user's files. A list that cannot be read keeps its previous entries (never "everything was
+  removed"); the first scan records no changes.
+- The agent goes online in exactly one place: `apps.read_updates`, and only while `library.check_updates` is
+  on (off by default; asked for by the user on 12 Oct 2026). It runs `winget upgrade --source winget
+  --disable-interactivity` (`WINGET_ARGS`), which lists and never installs. Only the community catalogue is
+  asked: winget downloads that index from Microsoft and compares on this PC. Don't add the `msstore` source
+  (it is asked per package, which tells it what is installed), don't pass `--accept-source-agreements` /
+  `--accept-package-agreements` (agreeing to terms is the user's to do), and never run an upgrade or install:
+  the page only offers the command to copy. Ask before any other online step.
 - Never commit personal data: `*.db`, logs (including rotated `shadow.log.1`…), `cleanup_report.json`,
   `library_report.json`,
   `config.yaml` (see `.gitignore`).
@@ -92,7 +98,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - Restart the agent after Python changes: console Settings › Restart agent, or POST `/api/restart` with the
   `X-Shadow-Token` from the page's `<meta name="shadow-token">`. Static UI files need no restart.
 - Re-register the task (paths/flags changed): `powershell -ExecutionPolicy Bypass -File .\install_task.ps1`.
-- Useful CLI: `shadow_agent.py check | report | cleanup | search "<q>" | sysinfo | apps [--store]`.
+- Useful CLI: `shadow_agent.py check | report | cleanup | search "<q>" | sysinfo | apps [--store] [--updates]`.
 - Self-tests worth running after related changes: Settings › OCR › Test OCR (`/api/ocr/selftest`); Recycle Bin
   self-test `/api/cleanup/selftest` (creates and recycles a tiny file in the agent folder).
 - Tests: `.venv\Scripts\python -m unittest discover -s tests` (stdlib unittest, temp folders only). Run them
@@ -145,6 +151,13 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   one-gone-one-new under a name is an update and anything else is counted one by one. Matching an installer
   file to an installed application needs the same name or a shared prefix of 5+ letters ("git" alone is too
   short; "Go" must not match "GoodSync").
+- Newer versions (`apps.check_updates`, 12 Oct 2026, winget 1.29): the check takes 5-8 s. winget listed 31
+  rows, 2 of them a second package id for an application already listed; all 29 others were matched to an
+  installed application (28 by name, 1 packaged app by its package name). Matching on name and version found
+  only 23: winget writes some versions its own way ("3.11.1" for the registry's "3.11.1150.0", "< 17.14.6"
+  when unsure), so the version only decides between two entries of one name. winget also reported 2 packages
+  whose version it cannot determine; those are not listed (`--include-unknown` is not used). A row counts
+  only while the installed version is still the one the check saw.
 - Work journal (`journal.py`, built in 0.07 s): 497 files seen in 7 days of predictions, but 418 of those rows
   were written on 10–11 Oct by catch-up runs after reinstalling, so an arrival is dated by the file's own
   arrival time while it is still in Downloads (91 of 123 in the last 30 days) and by the day the agent noticed
@@ -172,7 +185,8 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - The Library page only lists. It does not move the 33.6 GB of firmware/VM images out of Downloads (unpacked
   appliance folders are not something `mover.py` moves), and a version chain is found by file name only, not
   by comparing content.
-- Applications: no check for newer versions (it would go online; not built, ask first). Packaged apps have no
+- Applications: the newer-versions list covers only what winget's community catalogue knows (not the Store
+  catalogue, not programs winget cannot identify), and nothing is updated for the user. Packaged apps have no
   size and no true install date (the package folder's creation day is shown). Changes are only known from
   the first scan on (12 Oct 2026) and only as of the day a scan noticed them.
 - The work journal's "worked on" list only sees documents inside the PARA tree, and only on days the agent

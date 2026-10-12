@@ -383,6 +383,12 @@ export interface InstalledApp {
   id: string; key: string; name: string; version: string; publisher: string;
   kind: "desktop" | "packaged"; from_store: boolean; scope: "machine" | "user"; arch: string;
   installed: string | null; date_is: "installed" | "changed"; size: number | null; location: string | null;
+  /** Newer version winget lists, or null (absent on older agents). */
+  available?: string | null; update_id?: string | null;
+}
+export interface AppUpdates {
+  enabled: boolean; hours: number; checked_at: string | null; listed_at: string | null; ok: boolean; error: string | null; count: number;
+  unmatched: { name: string; id: string; version: string; available: string }[];
 }
 export interface AppChange {
   ts: string; event: "installed" | "updated" | "removed";
@@ -394,6 +400,7 @@ export interface LibraryApplications {
   desktop_read: boolean; packaged_read: boolean;
   counts: { desktop: number; packaged: number; store: number; no_version: number; date_is_a_guess: number };
   total_bytes: number; sized: number;
+  updates?: AppUpdates | null;
 }
 export interface LibraryResponse {
   applications: LibraryApplications | null;

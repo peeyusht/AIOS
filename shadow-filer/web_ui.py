@@ -718,6 +718,12 @@ def _library_post(self, path: str, body: dict):
             return self._send(400, {"ok": False, "message": "The library is switched off in Settings."})
         started = library.Runner.start(cfg, Ctx.log)
         return self._send(200, {"ok": True, "started": started, "runner": library.Runner.state})
+    if path == "/api/library/check-updates":      # the one online step, and only when switched on in Settings
+        s = library.settings(cfg)
+        if not (s["enabled"] and s["applications"] and s["check_updates"]):
+            return self._send(400, {"ok": False, "message": "Checking for newer versions is switched off in Settings."})
+        started = library.Runner.start(cfg, Ctx.log, updates=True)
+        return self._send(200, {"ok": True, "started": started, "runner": library.Runner.state})
     if path == "/api/library/restore":
         library.restore_all(cfg["database"])
         return self._send(200, {"ok": True})

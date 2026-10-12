@@ -3,6 +3,7 @@ The registry and PowerShell are never touched here: made-up entries go in where 
 import shutil
 import sys
 import tempfile
+import threading
 import unittest
 from datetime import date, datetime
 from pathlib import Path
@@ -163,6 +164,114 @@ class ChangesTest(unittest.TestCase):
             self.assertIsNone(library.view({**self.cfg, "library": {"applications": False}})["applications"])
             self.assertIsNone(library.view({**self.cfg, "library": {"enabled": False}})["applications"])
         self.assertIn("library.applications", [f[0] for f in config_io.FIELDS])
+
+
+WINGET = """\r   - \r   \\ \rName                         Id                 Version        Available
+--------------------------------------------------------------------------
+7-Zip 24.08 (x64)            7zip.7zip          24.08          25.01
+Pine Runtime 3.12.4 (64-bit) Pine.Runtime.3.12  3.12.4         3.12.10
+Zoom Rooms                   Zoom.Rooms         7.1.9 (48550)  7.2.1 (48556)
+Sketch Pad                   Vendor.Sketch      2.1            2.2
+7-Zip 24.08 (x64)            7zip.7zip.Alpha    24.08          26.00
+Not Installed Here           Some.Thing         < 2.0          2.0
+6 upgrades available.
+2 package(s) have version numbers that cannot be determined. Use --include-unknown to see all results.
+"""
+
+
+def wait_for_scan():
+    for t in threading.enumerate():
+        if t.name == "library-scan":
+            t.join(10)
+
+
+class NewerVersionsTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="sf-test-"))
+        self.cfg = {"database": self.tmp / "t.db"}
+        self.raw = [zip_tool(), reg("pine", DisplayName="Pine Runtime 3.12.4 (64-bit)", DisplayVersion="3.12.4150.0"),
+                    reg("zoom", DisplayName="Zoom Rooms", DisplayVersion="7.1.9 (48550)")]
+        self.store = [{"id": "Vendor.Sketch_abc", "name": "Vendor.Sketch", "display": "Sketch Pad Pro",
+                       "version": "2.1", "signature": "Store"}]
+        apps.scan(self.cfg, desktop=lambda: self.raw, packaged=lambda: self.store, now=datetime(2026, 10, 1, 9))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def answer(self):
+        return lambda: {"ok": True, "error": None, "rows": apps.parse_upgrades(WINGET)}
+
+    def view(self, enabled=True):
+        return apps.with_updates(self.cfg, apps.view(self.cfg), enabled, 24)
+
+    def test_reading_the_table(self):
+        rows = apps.parse_upgrades(WINGET)
+        self.assertEqual([(r["name"], r["id"], r["version"], r["available"]) for r in rows][:3], [
+            ("7-Zip 24.08 (x64)", "7zip.7zip", "24.08", "25.01"),
+            ("Pine Runtime 3.12.4 (64-bit)", "Pine.Runtime.3.12", "3.12.4", "3.12.10"),
+            ("Zoom Rooms", "Zoom.Rooms", "7.1.9 (48550)", "7.2.1 (48556)"),      # a space inside a version
+        ])
+        self.assertEqual(len(rows), 6)                                            # the footer lines are not rows
+        self.assertEqual(apps.parse_upgrades("No installed package found matching input criteria.\n"), [])
+        # another language, and a fifth column when more than one catalogue is asked
+        other = "Nom       ID      Version Disponible Source\n" + "-" * 44 + "\nNotes     A.Notes 1.0     1.1        winget\n"
+        self.assertEqual(apps.parse_upgrades(other),
+                         [{"name": "Notes", "id": "A.Notes", "version": "1.0", "available": "1.1"}])
+
+    def test_which_application_a_row_is_about(self):
+        apps.check_updates(self.cfg, read=self.answer(), now=datetime(2026, 10, 1, 10))
+        v = self.view()
+        self.assertEqual({a["name"]: (a["available"], a["update_id"]) for a in v["apps"] if a["available"]}, {
+            "7-Zip 24.08 (x64)": ("25.01", "7zip.7zip"),                         # the second id for it is dropped
+            "Pine Runtime 3.12.4 (64-bit)": ("3.12.10", "Pine.Runtime.3.12"),    # winget writes the version its own way
+            "Zoom Rooms": ("7.2.1 (48556)", "Zoom.Rooms"),
+            "Sketch Pad Pro": ("2.2", "Vendor.Sketch"),                          # a packaged app, by its package name
+        })
+        u = v["updates"]
+        self.assertEqual((u["enabled"], u["count"], u["checked_at"], u["ok"]), (True, 4, "2026-10-01T10:00:00", True))
+        self.assertEqual([r["name"] for r in u["unmatched"]], ["Not Installed Here"])
+        self.assertIn("-> 25.01", apps.as_text(v))
+
+    def test_an_application_updated_since_the_check_is_no_longer_listed(self):
+        apps.check_updates(self.cfg, read=self.answer(), now=datetime(2026, 10, 1, 10))
+        self.raw[0] = zip_tool("25.01", "{new}")
+        apps.scan(self.cfg, desktop=lambda: self.raw, packaged=lambda: self.store, now=datetime(2026, 10, 2, 9))
+        v = self.view()
+        self.assertNotIn("7-Zip 25.01 (x64)", [a["name"] for a in v["apps"] if a["available"]])
+        self.assertEqual(v["updates"]["count"], 3)
+
+    def test_switched_off_shows_nothing_and_a_failed_check_keeps_the_list(self):
+        apps.check_updates(self.cfg, read=self.answer(), now=datetime(2026, 10, 1, 10))
+        off = self.view(enabled=False)
+        self.assertEqual((off["updates"]["enabled"], off["updates"]["count"], off["updates"]["unmatched"]),
+                         (False, 0, []))
+        self.assertTrue(all(a["available"] is None for a in off["apps"]))
+        apps.check_updates(self.cfg, read=lambda: {"ok": False, "error": "winget did not answer", "rows": []},
+                           now=datetime(2026, 10, 2, 10))
+        u = self.view()["updates"]
+        self.assertEqual((u["ok"], u["error"], u["count"], u["checked_at"], u["listed_at"]),
+                         (False, "winget did not answer", 4, "2026-10-02T10:00:00", "2026-10-01T10:00:00"))
+
+    def test_when_the_next_check_is_due(self):
+        self.assertTrue(apps.updates_due(self.cfg, 24, now=datetime(2026, 10, 1, 10)))       # never asked
+        apps.check_updates(self.cfg, read=self.answer(), now=datetime(2026, 10, 1, 10))
+        self.assertFalse(apps.updates_due(self.cfg, 24, now=datetime(2026, 10, 2, 9)))
+        self.assertTrue(apps.updates_due(self.cfg, 24, now=datetime(2026, 10, 2, 10)))
+
+    def test_off_by_default_and_nothing_is_ever_installed(self):
+        self.assertIs(library.settings({})["check_updates"], False)
+        self.assertEqual(library.settings({"library": {"update_hours": 0}})["update_hours"], 1)
+        self.assertEqual(apps.WINGET_ARGS[:3], ["upgrade", "--source", "winget"])   # lists; one catalogue only
+        self.assertFalse({"install", "--all", "-r", "--recurse", "--accept-source-agreements",
+                          "--accept-package-agreements"} & set(apps.WINGET_ARGS))
+        with mock.patch.object(apps, "check_updates") as asked, mock.patch.object(apps, "scan"), \
+                mock.patch.object(library, "scan"):
+            library.Runner.start({**self.cfg, "library": {}}, updates=True)       # switched off: never asked
+            wait_for_scan()
+            asked.assert_not_called()
+            library.Runner.start({**self.cfg, "library": {"check_updates": True}})
+            wait_for_scan()
+            asked.assert_called_once()
 
 
 class InstallerFilesTest(unittest.TestCase):
