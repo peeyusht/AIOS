@@ -509,6 +509,12 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/library":
                 import library
                 return self._send(200, library.view(cfg))
+            if u.path == "/api/dashboard":
+                import dashboard, mover, search_index, suggest
+                files = suggest.list_inbox(cfg, mover.dismissed(cfg), lambda p: sa.is_ignored(p, cfg))
+                idx = search_index.get()
+                return self._send(200, dashboard.build(cfg, {**Ctx.status, "model": cfg["ollama"]["model"]}, files,
+                                                       idx.stats() if idx else {"disabled": True}))
             if u.path == "/api/remedy":
                 import remedy
                 return self._send(200, remedy.view(cfg))

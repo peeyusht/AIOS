@@ -9,7 +9,7 @@ Ollama). Wants direct, skeptical engineering; push back when something is wrong.
 Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console). Console: http://127.0.0.1:8765.
 - Watches `%USERPROFILE%\Downloads`; PARA tree is `D:\Organized` (37 destinations at depth 2).
 - Ollama: `qwen3:4b` (filing guesses), `nomic-embed-text` (search + suggestions).
-- Console: **Inbox** (home; Waiting / Recent moves / Auto-filing), **Search**, **Cleanup**, **Watch** (Dates /
+- Console: **Dashboard** (home: what needs attention, key numbers, the week), **Inbox** (Waiting / Recent moves / Auto-filing), **Search**, **Cleanup**, **Watch** (Dates /
   Sensitive files), **Security** (Programs / Services), **Library** (Images / Versions / Pictures / Installers / Applications), **Activity** (Journal / Accuracy /
   Predictions / Log), **Settings** (form + System + Advanced YAML). Designed in Lovable.
 
@@ -26,6 +26,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 | `services.py` | Windows services that are not part of Windows: program, account, running or not, ports listened on (and whether from the network), the installed application each belongs to. Read-only, local |
 | `cve.py` | Known vulnerabilities: a local copy of the public CVE lists (`cve.db`, NVD yearly files + CISA's known-exploited list) and which installed programs and services they name, by strict name and version matching. Optional, off by default; downloads are the online step, the comparison is local |
 | `remedy.py` | The only code that changes installed software or a service: Update one application (winget) and Stop one service, each one click, confirmed, logged in `remedy_log`. Off by default |
+| `dashboard.py` | Dashboard (`/api/dashboard`): one summary put together from what the other modules already keep, plus the "needs attention" lines. Read-only, asks nothing new of Windows or the internet; a part that fails is replaced by `{error}` |
 | `journal.py` | Phase 7: work journal (Activity › Journal): per day, what arrived, was filed, was deleted, and which folders had documents added or changed. Built from existing tables + file dates; writes only its own `journal_touch` table |
 | `mover.py` | the only code that moves files; journal + undo |
 | `autofile.py` | Phase 3 auto-filing, per-folder trust from the user's Inbox decisions |
@@ -236,6 +237,9 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   catalogue, not programs winget cannot identify), and nothing is updated for the user. Packaged apps have no
   size and no true install date (the package folder's creation day is shown). Changes are only known from
   the first scan on (12 Oct 2026) and only as of the day a scan noticed them.
+- Dashboard: the first call after a restart takes about 6 s (system summary and Watch are built then), later
+  ones 0.1 s; free disk space on it can be up to an hour old. Sensitive files are a count there, never what
+  was found.
 - Update and Stop service: one at a time, no queue and no "update all". Programs winget lists no update for
   (Chrome, FortiClient on 12 Oct 2026) have no button. The MongoDB plan is 7.0.5 -> 7.0.28 (winget's latest is
   9.0.2); 25 plans are "latest", 3 stay on their line, 1 is refused (the agent's own Python 3.12).

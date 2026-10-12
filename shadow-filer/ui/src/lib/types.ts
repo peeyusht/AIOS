@@ -1,5 +1,29 @@
 export type Source = "rule" | "origin" | "name" | "similar" | "model";
 
+export type Part<T> = T | { error: string };
+export interface DashboardResponse {
+  generated_at: string;
+  attention: { level: "danger" | "warning" | "info"; text: string; to: string }[];
+  agent: Part<{ watching: boolean; model: string | null; model_ok: boolean; problem: string | null; restart_needed: boolean; started: string | null;
+    search: { files: number; queued: number; running: boolean; last_sweep: string | null; locked: number } | null }>;
+  inbox: Part<{ waiting: number; bytes: number; oldest_days: number | null; added_7d: number; auto_filing: boolean; auto_filed_24h: number }>;
+  cleanup: Part<{ scanned_at: string | null; safe: { count: number; bytes: number }; review: { count: number; bytes: number }; keep: { count: number; bytes: number } }>;
+  watch: Part<{ enabled: boolean; counts?: { soon: number; later: number; passed: number; sensitive: number }; scanned_at?: string;
+    next?: { name: string; date: string; days: number; kind: string }[] }>;
+  security: Part<{ enabled: boolean; scanned_at?: string | null; recognised?: number; installed?: number;
+    summary?: { apps_affected: number; cves: number; kev: number; critical: number; fix_available: number; services: number; services_running: number; services_exposed: number; services_affected: number };
+    top?: { name: string; version: string; cves: number; kev: number; critical: number; update_to: string | null }[];
+    exposed?: { name: string; ports: number[]; cves: number }[];
+    database?: { synced_at: string | null; cves: number; kev: number; error: string | null } }>;
+  apps: Part<{ enabled: boolean; scanned_at?: string | null; programs?: number; packaged?: number; updates_checked?: boolean; updates?: number;
+    updates_checked_at?: string | null; changes_7d?: number;
+    recent?: { ts: string; event: "installed" | "updated" | "removed"; name: string; old_version: string; new_version: string }[] }>;
+  activity: Part<{ days: { date: string; arrived: number; filed: number; deleted: number; worked_files: number; apps: number }[];
+    totals: { arrived: number; filed: number; deleted: number; worked_files: number; apps: number; auto_filed: number; deleted_bytes: number; active_days: number } }>;
+  storage: Part<{ collected: string | null; volumes: { letter: string; label: string; bytes: number; free: number }[] }>;
+  remedy: Part<{ enabled: boolean; running: boolean; recent: { ts: string; action: "update" | "stop"; name: string; target: string; ok: number; message: string }[] }>;
+}
+
 export interface Candidate {
   folder: string;
   source: Source;

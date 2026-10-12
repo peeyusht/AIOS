@@ -1,6 +1,6 @@
 /* Entirely fictional demo data with in-memory mutations, used when no agent token is present. */
 import type { SecApp, SecCve, SecService, SecurityResponse, AppChange, InstalledApp, LibraryApplications, JournalDay, JournalResponse, WatchDate, WatchSensitive, LibraryChain, LibraryInstaller, LibraryPictureGroup, LibraryProduct, LibraryPicture,
-  AutofileResponse,
+  AutofileResponse, DashboardResponse,
   CleanupHistoryRow,
   CleanupItem,
   CleanupResponse,
@@ -640,7 +640,51 @@ function securityAnswer(brief: boolean): SecurityResponse {
   return brief ? out : { ...out, apps, services };
 }
 
+function mockDashboard(): DashboardResponse {
+  const GB = MB * 1024;
+  const activity = [[3,1,0], [5,4,0], [0,0,0], [2,2,21], [6,3,0], [1,0,0], [4,2,1]].map(([arrived, filed, deleted], i) => {
+    const d = new Date(); d.setDate(d.getDate() - (6 - i));
+    return { date: iso(d).slice(0,10), arrived: arrived ?? 0, filed: filed ?? 0, deleted: deleted ?? 0, worked_files: [2,4,0,3,5,1,2][i] ?? 0, apps: i === 4 ? 2 : i === 1 ? 1 : 0 };
+  });
+  const sum = (key: "arrived" | "filed" | "deleted" | "worked_files" | "apps") => activity.reduce((n, d) => n + d[key], 0);
+  return {
+    generated_at: iso(now()),
+    attention: [
+      { level: "danger", text: "1 known flaw is being used in real attacks on software you have installed.", to: "/security" },
+      { level: "danger", text: "Tessellate Engine has known flaws and accepts connections from the network.", to: "/security" },
+      { level: "warning", text: "3 critical flaws in 3 installed programs.", to: "/security" },
+      { level: "warning", text: "2 dates are coming up in your documents; the next is in 4 days.", to: "/watch" },
+      { level: "info", text: "5 files with personal or financial details are sitting in Downloads.", to: "/watch" },
+      { level: "info", text: "18 files are waiting in the Inbox.", to: "/inbox" },
+      { level: "info", text: "4 installed applications have a newer version.", to: "/library" },
+      { level: "info", text: "12 files in Downloads look safe to remove.", to: "/cleanup" },
+    ],
+    agent: { watching: true, model: "demo-model:4b", model_ok: true, problem: null, restart_needed: false, started: ago(600), search: { files: 17389, queued: 0, running: false, last_sweep: ago(20), locked: 3 } },
+    inbox: { waiting: 18, bytes: 412 * MB, oldest_days: 41, added_7d: 6, auto_filing: false, auto_filed_24h: 0 },
+    cleanup: { scanned_at: ago(300), safe: { count: 12, bytes: 96 * MB }, review: { count: 2, bytes: 61 * MB }, keep: { count: 6, bytes: 9.3 * GB } },
+    watch: { enabled: true, scanned_at: ago(300), counts: { soon: 2, later: 4, passed: 3, sensitive: 5 }, next: [
+      { name: "Contoso-insurance-policy.pdf", date: iso(new Date(Date.now() + 4 * 86400000)).slice(0,10), days: 4, kind: "valid until" },
+      { name: "Northwind-support-renewal.pdf", date: iso(new Date(Date.now() + 19 * 86400000)).slice(0,10), days: 19, kind: "renewal" },
+    ] },
+    security: { enabled: true, scanned_at: ago(95), recognised: 5, installed: 10, summary: { apps_affected: 3, cves: 11, kev: 1, critical: 3, fix_available: 2, services: 6, services_running: 5, services_exposed: 2, services_affected: 2 },
+      top: [{ name: "Tessellate Containers", version: "4.94.0", cves: 4, kev: 1, critical: 1, update_to: null }, { name: "Pine Runtime", version: "3.12.4", cves: 5, kev: 0, critical: 1, update_to: "3.12.10" }, { name: "Northwind VPN Client", version: "7.4.3.4726", cves: 2, kev: 0, critical: 0, update_to: "7.4.4.4801" }],
+      exposed: [{ name: "Tessellate Engine", ports: [27017], cves: 4 }, { name: "Harbor Remote Service", ports: [7070], cves: 0 }], database: { synced_at: ago(180), cves: 385946, kev: 1739, error: null } },
+    apps: { enabled: true, scanned_at: ago(180), programs: 10, packaged: 3, updates_checked: true, updates: 4, updates_checked_at: ago(300), changes_7d: 3, recent: [
+      { ts: ago(2880), event: "updated", name: "Larkspur Browser (x64 en-US)", old_version: "157.0", new_version: "158.0" },
+      { ts: ago(2880), event: "updated", name: "Tessellate Containers", old_version: "4.93.1", new_version: "4.94.0" },
+      { ts: ago(7200), event: "installed", name: "Pine Runtime 3.13.0 (64-bit)", old_version: "", new_version: "3.13.150.0" },
+    ] },
+    activity: { days: activity, totals: { arrived: sum("arrived"), filed: sum("filed"), deleted: sum("deleted"), worked_files: sum("worked_files"), apps: sum("apps"), auto_filed: 2, deleted_bytes: 6.8 * GB, active_days: 6 } },
+    storage: { collected: ago(5), volumes: [{ letter: "C:", label: "", bytes: 500 * GB, free: 62 * GB }, { letter: "D:", label: "Data", bytes: 1024 * GB, free: 633 * GB }] },
+    remedy: { enabled: true, running: false, recent: [
+      { ts: ago(40), action: "update", name: "Harbor Remote", target: "9.8.1", ok: 1, message: "Updated Harbor Remote from 9.0.14 to 9.8.1." },
+      { ts: ago(1440), action: "update", name: "Kettle Archive", target: "25.01", ok: 0, message: "Not updated: You declined the Windows permission prompt. The installer needs administrator rights." },
+    ] },
+  };
+}
+
 const get: Record<string, Handler> = {
+  "/api/dashboard": () => mockDashboard(),
   "/api/security": (q) => securityAnswer(q.get("brief") === "1"),
   "/api/remedy": () => ({ enabled: !!(settingsRaw.library ?? {}).remediate, job: { ...remedyJob }, history: [] }),
   "/api/journal": (q) => journalFor(Math.max(1, Number(q.get("days")) || 30)),
