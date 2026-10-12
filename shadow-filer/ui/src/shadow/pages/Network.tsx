@@ -243,7 +243,11 @@ function Exposure({ d, remediate }: { d: NetworkResponse; remediate: boolean }) 
                   <span className="ml-auto"><FirewallButton profile={p.name as "Domain" | "Private" | "Public"} /></span>
                 )}
               </div>
-              <p className="mt-2 text-xs text-muted-foreground">incoming: {p.inbound.toLowerCase()} · outgoing: {p.outbound.toLowerCase()}</p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {p.enabled
+                  ? <>Incoming: {p.inbound.toLowerCase() === "block" ? "blocked unless a rule allows it" : "allowed"} · Outgoing: {p.outbound.toLowerCase() === "block" ? "blocked unless a rule allows it" : "allowed"}</>
+                  : <>When on: incoming {p.inbound.toLowerCase() === "block" ? "blocked unless a rule allows it" : "allowed"}, outgoing {p.outbound.toLowerCase() === "block" ? "blocked unless a rule allows it" : "allowed"}</>}
+              </p>
             </Card>
           ))}
         </div>

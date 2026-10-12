@@ -260,6 +260,17 @@ def _wifi(lines: list) -> dict:
     return out
 
 
+def _profile(f: dict) -> dict:
+    """A firewall profile with what it actually does. Windows answers 'NotConfigured' when nobody changed the
+    setting, which means its default applies: incoming connections blocked, outgoing allowed."""
+    def effective(v, default):
+        v = str(v or "")
+        return (default, True) if v.lower() in ("notconfigured", "") else (v, False)
+    inbound, in_def = effective(f.get("inbound"), "Block")
+    outbound, out_def = effective(f.get("outbound"), "Allow")
+    return {**f, "inbound": inbound, "outbound": outbound, "inbound_default": in_def, "outbound_default": out_def}
+
+
 def tidy(raw: dict) -> dict:
     """The raw answer as the page shows it, plus the findings worth a look."""
     by = lambda rows, key="index": {k: [r for r in _list(rows) if r.get(key) == k] for k in {r.get(key) for r in _list(rows)}}
@@ -364,7 +375,7 @@ def tidy(raw: dict) -> dict:
             hosts.append({"address": parts[0], "names": parts[1:]})
     px = raw.get("proxy") or {}
     out = {"read_at": datetime.now().isoformat(timespec="seconds"), "computer": raw.get("computer") or "",
-           "adapters": adapters, "routes": rt, "firewall": _list(raw.get("firewall")),
+           "adapters": adapters, "routes": rt, "firewall": [_profile(f) for f in _list(raw.get("firewall"))],
            "rules": rules_view(raw.get("rules")),
            "other_firewalls": [x for x in _list(raw.get("other_firewalls")) if x],
            "shares": shares, "listening": listening, "connections": connections, "devices": devices,
