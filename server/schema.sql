@@ -1,4 +1,4 @@
--- Fleet server, phases 1 to 3. Run as the database owner (see app/manage.py init). Safe to run again.
+-- Fleet server, phases 1 to 4. Run as the database owner (see app/manage.py init). Safe to run again.
 --
 -- Separation between organisations is enforced HERE, not only in the application: every table with customer
 -- data has org_id and row-level security, forced even for the table owner. The API connects as fleet_app,
@@ -88,6 +88,26 @@ ALTER TABLE devices ADD COLUMN IF NOT EXISTS judged_ref text;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS judged_day date;
 UPDATE devices d SET facts_at = COALESCE(d.last_seen, d.enrolled_at)
  WHERE d.facts_at IS NULL AND EXISTS (SELECT 1 FROM snapshots s WHERE s.device_id = d.id);
+
+-- Phase 4: a device proves who it is with a key pair it made itself. The server keeps the public half, which
+-- is no secret, and the last stamp the device signed (each request must carry a higher one). The key hashes
+-- of phase 1 are gone: a device enrolled then has to enrol again.
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS public_key text;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_stamp bigint NOT NULL DEFAULT 0;
+ALTER TABLE devices ALTER COLUMN key_hash DROP NOT NULL;
+UPDATE devices SET key_hash = NULL WHERE key_hash IS NOT NULL;
+
+-- Releases of the device agent that this server passes on to its devices. Not customer data: the same for
+-- every organisation, written only by the database owner (`manage release add`), read by the API. A release
+-- is believed by an agent only because of its signature, never because it is in this table.
+CREATE TABLE IF NOT EXISTS agent_releases (
+  version text PRIMARY KEY,
+  manifest text NOT NULL,
+  signature text NOT NULL,
+  package bytea NOT NULL,
+  published_at timestamptz NOT NULL DEFAULT now(),
+  withdrawn boolean NOT NULL DEFAULT false
+);
 
 -- The latest judgement of a device: known flaws, end of support, and the compliance checks.
 CREATE TABLE IF NOT EXISTS judgements (
@@ -236,6 +256,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON declarations, exceptions TO fleet_app;
 GRANT SELECT, UPDATE ON judgements TO fleet_app;          -- the API re-applies exceptions; only the worker judges
 GRANT SELECT, INSERT, UPDATE ON compliance_history TO fleet_app;
 GRANT SELECT ON reference_status TO fleet_app;
+GRANT SELECT ON agent_releases TO fleet_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON users, setup_links, sessions, recovery_codes, share_links TO fleet_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO fleet_app;
 
@@ -246,14 +267,16 @@ GRANT SELECT, INSERT, UPDATE ON judgements, compliance_history TO fleet_worker;
 GRANT SELECT, INSERT, UPDATE, DELETE ON reference_status TO fleet_worker;
 
 -- ---------------------------------------------------------------- the doors across organisations
--- The first three each take the SHA-256 of a presented secret and answer with the organisation it belongs
--- to, nothing else.
+-- auth_admin and redeem_token each take the SHA-256 of a presented secret and answer with the organisation
+-- it belongs to, nothing else. auth_device takes a device id and answers with its organisation and its
+-- public key, with which the caller then checks the request's signature.
 -- They run as their owner, who must be able to bypass row-level security (a superuser, or a role with
 -- BYPASSRLS): that is the only reason they can see past the policies.
 
-CREATE OR REPLACE FUNCTION auth_device(p_hash text) RETURNS TABLE (device_id uuid, org_id uuid)
+DROP FUNCTION IF EXISTS auth_device(text);
+CREATE OR REPLACE FUNCTION auth_device(p_id uuid) RETURNS TABLE (device_id uuid, org_id uuid, public_key text)
 LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp AS $$
-  SELECT d.id, d.org_id FROM devices d WHERE d.key_hash = p_hash
+  SELECT d.id, d.org_id, d.public_key FROM devices d WHERE d.id = p_id AND d.public_key IS NOT NULL
 $$;
 
 CREATE OR REPLACE FUNCTION auth_admin(p_hash text) RETURNS TABLE (key_id uuid, org_id uuid)
@@ -270,8 +293,8 @@ LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp AS $$
   RETURNING id, enrolment_tokens.org_id
 $$;
 
-REVOKE ALL ON FUNCTION auth_device(text), auth_admin(text), redeem_token(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION auth_device(text), auth_admin(text), redeem_token(text) TO fleet_app;
+REVOKE ALL ON FUNCTION auth_device(uuid), auth_admin(text), redeem_token(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION auth_device(uuid), auth_admin(text), redeem_token(text) TO fleet_app;
 
 -- Phase 3: four more doors, for people. Each answers with one row about the secret presented, nothing else.
 

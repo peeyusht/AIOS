@@ -1,0 +1,15 @@
+# What the installer's build may see: the agent's own files and the five modules it shares with the
+# file-organising agent. Never the release key, a certificate, or anything else from shadow-filer/ (which
+# holds personal data and the code that changes a PC).
+*
+!device-agent/agent.py
+!device-agent/winsvc.py
+!device-agent/selfupdate.py
+!device-agent/release.py
+!device-agent/build/make_msi.py
+!device-agent/build/requirements.txt
+!shadow-filer/fleet.py
+!shadow-filer/apps.py
+!shadow-filer/services.py
+!shadow-filer/network.py
+!shadow-filer/compliance.py

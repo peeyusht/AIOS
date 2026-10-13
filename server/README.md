@@ -1,4 +1,4 @@
-# Fleet server (phases 1 to 3)
+# Fleet server (phases 1 to 4)
 
 The central server from `docs/architecture.md`: PCs enrol and report what is installed; the server judges
 each one (known flaws, end of support, the Cyber Essentials control areas); an administrator sees the
@@ -55,7 +55,17 @@ an enrolment token.
 
 ## Enrol a PC
 The agent is the one part that is not a container and cannot be: it has to read the PC's own registry,
-services, firewall and installed programs, and a container sees only its own. On the PC, in `shadow-filer`:
+services, firewall and installed programs, and a container sees only its own.
+
+A customer's PC gets the device agent, a Windows service with its own installer (`../device-agent/README.md`):
+```
+msiexec /i ShadowFilerAgent-0.4.5.msi /qn SERVER=https://fleet.example.com TOKEN=<token>
+```
+Publish an installer on this server with `manage release add` (see that README) and admins can download it
+from the console (Access) and every enrolled agent updates itself to it. `manage release list` and
+`manage release withdraw <version>` are the other two.
+
+The file-organising agent on your own PC can report too. On the PC, in `shadow-filer`:
 ```
 .venv\Scripts\python shadow_agent.py fleet show                  # exactly what would be sent
 .venv\Scripts\python shadow_agent.py fleet enrol http://127.0.0.1:8770 <token>
@@ -93,6 +103,10 @@ roles.
   BYPASSRLS, for the three functions that turn a presented secret into an organisation and the one that
   tells the worker which devices are waiting (ids only). The worker's role cannot read keys, tokens or the
   audit log; the API's role cannot create a judgement.
+- **Devices:** a PC makes its own key pair when it enrols and signs every request; the server keeps the
+  public half. A request is refused if its clock is more than ten minutes off or not later than the last
+  one from that device. An agent installs an update only if it is signed with the release key, which is not
+  on this server (`../device-agent/release.py`); the database role of the API can read a release, not write one.
 - **Secrets:** tokens and keys are random; only their SHA-256 is stored. Each is shown once. Passwords are
   scrypt hashes. The authenticator secret has to be readable to check a code, so it is encrypted with
   `FLEET_SECRET_KEY`, which is given to the API container and never stored in the database.

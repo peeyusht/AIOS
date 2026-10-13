@@ -5,7 +5,9 @@ Ollama). Wants direct, skeptical engineering; push back when something is wrong.
 (commit, push to github.com/peeyusht/AIOS, keep `main` clean).
 
 ## What's here
-Two things. `shadow-filer/` is the agent and local console on one PC (below). `server/` is the central
+Three things. `shadow-filer/` is the agent and local console on one PC (below). `device-agent/` is what a
+customer installs (phase 4): a Windows service that only reads and reports, its installer built in a
+container (`device-agent/README.md`). `server/` is the central
 fleet server, phases 1 to 3 of `docs/architecture.md` (read that first for anything about several PCs):
 FastAPI + PostgreSQL, with enrolment and check-in, a worker that keeps the CVE and end-of-life lists and
 judges every device (flaws, end of support, the compliance checks), a web console, and named people who
@@ -13,7 +15,10 @@ sign in with a password and an authenticator code and have a role (`server/app/p
 built from the repository root because it shares `cve.py`, `eol.py`, `compliance.py` and the console's
 source (`shadow-filer/ui`, second entry `src/fleet`) with the agent; `/.dockerignore` lets in those and
 nothing else. A change to those three agent modules is therefore also a change to the server: run both
-test suites. The user wants everything on the server side built
+test suites. The device agent's installer copies `fleet.py`, `apps.py`, `services.py`, `network.py` and
+`compliance.py` (the list is in `device-agent/build/make_msi.py`), so a change to any of those five is also
+a change to what runs as SYSTEM on customers' PCs: run `device-agent/tests` too, and think about what the
+change does in an account that is not a person. The user wants everything on the server side built
 and run in containers (12 Oct 2026): `docker compose up -d --build` in `server/`, admin commands with
 `docker compose run --rm manage ...`, tests with `docker compose run --rm test`; no Python environment on
 the host for the server. New server parts (worker, proxy, console) are added as services in that compose
@@ -139,7 +144,19 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   nothing else. Every change is recorded under the person's name. A handler must not raise inside
   `db.org()` after writing something that has to stay (a failed sign-in is counted): leave the block first.
   Each new way to turn a presented secret into an organisation is one more SECURITY DEFINER function in
-  `schema.sql` (eight now) and one more thing to test from another organisation.
+  `schema.sql` (eight now; `auth_device` takes a device id and answers with its public key since phase 4) and one more thing to test from another organisation.
+- The device agent (`device-agent/`; decided by the user on 13 Oct 2026, don't relax without asking): it is
+  the reporter only. Nothing that changes a PC goes into its installer (`NEVER` in `build/make_msi.py`, and
+  a test that those modules are not even loaded); it listens on no port; nothing can send it a command. It
+  runs as SYSTEM, which is the exception to "the agent is not elevated" and is allowed for this program
+  alone because it only reads; its ProgramData folder is closed to other accounts and a folder it did not
+  make is set aside, not trusted. A device proves itself with a key pair made on the PC; the server gets the
+  public half, and no code may send, log or print the private half. Self-update is its one online step besides reporting, and
+  it asks only its own fleet server and installs only what `release.verify` accepts (signed
+  with the release key), only a higher version, only the file the signed manifest describes. The release
+  key's private half (`device-agent/keys/`, ignored by git and by both Docker builds) must never be
+  committed, copied into an image, put on a server or printed. Never add a second way for a server to make
+  an agent run or install something.
 - `compliance.py` reads and judges; it changes nothing on the PC and sends nothing. It writes only its own
   tables (`compliance_history`, `compliance_declared`, `compliance_accepted`). Things it cannot measure are
   declarations by the owner and must always be shown as declared, never as measured or passed. An accepted
@@ -305,7 +322,25 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   kind changed on every check-in, because of a timestamp, then short-lived UDP ports (40 of 58 UDP listeners
   were in the dynamic range), then discovery ports (mDNS 5353 coming and going). With those left out,
   repeated check-ins store nothing. Server tests: 7, including reads and writes across organisations
-  refused in SQL (9 with phase 3: sign-in, roles, people, share links).
+  refused in SQL (9 with phase 3: sign-in, roles, people, share links; 10 with phase 4: signed requests,
+  replay, agent releases).
+- Device agent, phase 4 (13 Oct 2026): the installer is 15.1 MB with 200 files and builds in a container in
+  about 20 s once the image exists. Unpacked and run as an ordinary account against the local server, the
+  first round (programs, services, network, settings, report) took 17 s and the report was 81 KB; a second
+  report stored nothing new. The agent fetched a 0.4.1 test release from the server, checked the signature
+  and the hash and stopped at the installer (a run by hand never installs). Installed as a service on
+  the user's PC the same day: enrolled from what the installer left within a minute, and its readings as
+  SYSTEM equal the file agent's field for field (17 settings; 85 programs, 20 of them per-user), except 88
+  packaged apps instead of 84 (everybody's) and 41 services instead of 40 (itself). The first two
+  self-updates each found a fault no test had: 0.4.0 to 0.4.1 "succeeded" and left no python.exe and no
+  service (wixl removes the old version first, after Windows Installer has decided the same-version files
+  need no copying; `make_msi.remove_old_version_last` moves that step to the end), and 0.4.2 to 0.4.3
+  replaced the files but left 0.4.2 running from memory (Windows Installer does not restart a service
+  whose program file did not change; the agent now ends its own process, `agent.make_way`, and Windows
+  starts it again after a minute). 0.4.4 to 0.4.5 then went through with nobody touching it: installer
+  started at 19:53:07, service back at 19:54:07, reporting as 0.4.5 at its next round. Re-test a real
+  update on an installed agent after any change to the installer or the service loop: the unit tests
+  cannot see either fault.
 - Fleet, phase 2 (12 Oct 2026): the worker's first download of the lists took about 9 minutes in the
   container (385,946 CVEs, 1,739 known exploited, 436 end-of-life products); judging this PC then takes
   0.6 s. The server's result for this PC equals the agent's own on the same day: 36 of 85 programs
@@ -346,7 +381,16 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   catalogue, not programs winget cannot identify), and nothing is updated for the user. Packaged apps have no
   size and no true install date (the package folder's creation day is shown). Changes are only known from
   the first scan on (12 Oct 2026) and only as of the day a scan noticed them.
-- Fleet server: phases 1 to 3. It runs on localhost with default passwords, a default `FLEET_SECRET_KEY`
+- Device agent: installed as a service on one PC only, the user's (see Measured numbers); the user's PC
+  now reports twice to "Home lab", as the file agent and as the service. Not tried: a PC with several
+  people, a domain or Entra ID account, Windows Home, a PC with BitLocker on, a release that changes the
+  bundled Python (a DLL of a lower version would not be replaced), uninstalling. For about a minute during
+  an update the service is not running. The installer is not signed for Windows (no certificate), the release key has no password and
+  sits on this PC, every device takes a new release at once (no rings, no choice per organisation), the PC's
+  key is sealed with DPAPI rather than kept in the TPM, an enrolment token lies in the registry for up to a
+  minute, and uninstalling leaves the ProgramData folder. As a service it cannot ask winget, judges the
+  person by the last signed-in account, and counts only direct members of Administrators.
+- Fleet server: phases 1 to 4. It runs on localhost with default passwords, a default `FLEET_SECRET_KEY`
   and no TLS, so only this PC can enrol, and it has only ever held one device: the fleet views (several devices per check, versions of
   one program across PCs) have run on made-up data in the tests only. Sign-in was clicked through once in
   the browser with a throwaway account (set password, authenticator set-up, recovery codes, add a person,

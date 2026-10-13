@@ -1,0 +1,8 @@
+# The release key (private half), any code-signing certificate and built installers never go into the repository.
+keys/
+*.pem
+*.pfx
+*.p12
+dist/
+__pycache__/
+*.pyc

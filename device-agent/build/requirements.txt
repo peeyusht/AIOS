@@ -1,0 +1,6 @@
+# The Windows packages put into the installer, each pinned to one file by its hash (recorded 13 Oct 2026 from
+# PyPI). `cryptography` signs this PC's requests and checks a release's signature; the other two are what it
+# needs to load.
+cryptography==44.0.0 --hash=sha256:708ee5f1bafe76d041b53a4f95eb28cdeb8d18da17e597d46d7833ee59b97ede
+cffi==2.1.1 --hash=sha256:f53e442b08449d42821fa4a4fba000095af9f62742a500f978a9f557ec44339a
+pycparser==3.11 --hash=sha256:51d5a8ba2be0bbe440b99d2112604c95bbbc3c2748a64260186c541e1729cd80

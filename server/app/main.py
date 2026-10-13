@@ -2,8 +2,10 @@
 Fleet server: agents enrol and report what is installed; the worker judges each device (known flaws, end of
 support, the compliance checks); an administrator sees the fleet, each device, and the evidence report.
 
-Agents call:    POST /api/v1/enrol      a one-time token -> a device id and key
-                POST /api/v1/checkin    the device key   -> stores what changed since the last report
+Agents call (app/agents.py: every request is signed with the device's own key):
+                POST /api/v1/enrol      a one-time token and the device's public key -> a device id
+                POST /api/v1/checkin    stores what changed since the last report
+                GET  /api/v1/agent/release, /agent/package/{version}     a newer agent, signed with the release key
 Console calls (a signed-in person, see app/people.py for signing in, roles, people and share links; an
 organisation key can read but change nothing):
                 GET  /api/v1/fleet                      the dashboard: control areas, what fails where, history
@@ -13,6 +15,7 @@ organisation key can read but change nothing):
                 POST /api/v1/declarations               what the organisation states about what cannot be measured
                 POST /api/v1/devices/{id}/exceptions    accept a failing check with a reason, or withdraw that
                 GET  /api/v1/audit
+                GET  /api/v1/agent/installer            the newest agent installer, for whoever may add a PC
 With a share link:  GET /api/v1/shared                  the organisation's evidence, read-only, until the link expires
 Anyone:         GET  /healthz, and the console at /
 
@@ -21,17 +24,17 @@ Nothing can send a command to a device: that is phase 5. See docs/architecture.m
 """
 import hashlib
 import json
-import secrets
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from psycopg.types.json import Jsonb
 
-from . import db, judge, people
+from . import agents, db, judge, people
+from .agents import device
 from .people import editor, reader
 
 KINDS = ("device", "apps", "services", "network", "posture")
@@ -50,6 +53,7 @@ async def lifespan(_app):
 
 app = FastAPI(title="Shadow Filer fleet server", version="0.2.0", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.include_router(people.router)
+app.include_router(agents.router)
 if (CONSOLE / "assets").is_dir():
     app.mount("/assets", StaticFiles(directory=CONSOLE / "assets"), name="assets")
 
@@ -73,14 +77,6 @@ def _bearer(authorization: str | None) -> str:
     if not authorization or not authorization.lower().startswith("bearer ") or len(authorization) < 20:
         raise HTTPException(401, "A key is required.")
     return authorization[7:].strip()
-
-
-def device(authorization: str | None = Header(default=None)) -> dict:
-    with db.anon() as c:
-        row = c.execute("SELECT * FROM auth_device(%s)", (db.digest(_bearer(authorization)),)).fetchone()
-    if not row:
-        raise HTTPException(401, "Unknown device key.")
-    return row
 
 
 def _text(v, limit: int = 200) -> str:
@@ -128,29 +124,43 @@ def console_page():
 
 @app.post("/api/v1/enrol")
 async def enrol(request: Request):
-    """Swap a valid enrolment token for a device identity. The device key is shown once and never stored."""
-    body = await request.json()
-    token, name = _text(body.get("token"), 200), _text(body.get("name"), 100)
+    """Swap a valid enrolment token for a device identity. The device sends the public half of a key pair it
+    made, and signs this request with the private half to show it holds it. The server never has a secret of
+    the device's."""
+    try:
+        body = json.loads(await request.body())
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        raise HTTPException(400, "A token and a device name are required.")
+    token, name, key = _text(body.get("token"), 200), _text(body.get("name"), 100), _text(body.get("public_key"), 100)
     if not token or not name:
         raise HTTPException(400, "A token and a device name are required.")
+    try:
+        agents.public_key(key)
+    except ValueError:
+        raise HTTPException(400, "This agent is too old for this server: it did not send a device key. Install the current agent.") from None
+    agents.check_signature(key, request, await request.body())       # before the token: a bad request must not use it up
     with db.anon() as c:
         row = c.execute("SELECT * FROM redeem_token(%s)", (db.digest(token),)).fetchone()
     if not row:
         raise HTTPException(403, "That enrolment token is not valid, has expired or has been used up.")
-    key = secrets.token_urlsafe(32)
     with db.org(row["org_id"]) as c:
-        dev = c.execute("INSERT INTO devices (org_id, name, key_hash, agent_version) VALUES (%s,%s,%s,%s) RETURNING id",
-                        (row["org_id"], name, db.digest(key), _text(body.get("agent_version"), 40))).fetchone()
+        dev = c.execute("INSERT INTO devices (org_id, name, public_key, agent_version) VALUES (%s,%s,%s,%s) RETURNING id",
+                        (row["org_id"], name, key, _text(body.get("agent_version"), 40))).fetchone()
         c.execute("INSERT INTO audit_log (org_id, actor, action, detail) VALUES (%s,%s,%s,%s)",
                   (row["org_id"], f"token:{row['token_id']}", "device.enrolled", Jsonb({"device": str(dev["id"]), "name": name})))
-    return {"device_id": str(dev["id"]), "device_key": key, "checkin_seconds": CHECKIN_SECONDS}
+    return {"device_id": str(dev["id"]), "checkin_seconds": CHECKIN_SECONDS}
 
 
 @app.post("/api/v1/checkin")
 async def checkin(request: Request, who: dict = Depends(device)):
     """Store what the device reports. A kind is stored only when it differs from the last one kept."""
-    body = await request.json()
-    snaps = body.get("snapshots")
+    try:
+        body = json.loads(await request.body())
+    except ValueError:
+        body = None
+    snaps = body.get("snapshots") if isinstance(body, dict) else None
     if not isinstance(snaps, dict) or any(k not in KINDS for k in snaps):
         raise HTTPException(400, f"snapshots must be an object with keys from {', '.join(KINDS)}.")
     stored = []
@@ -172,7 +182,21 @@ async def checkin(request: Request, who: dict = Depends(device)):
         c.execute("UPDATE devices SET last_seen = now(), agent_version = %s, summary = %s, "
                   "facts_at = CASE WHEN %s THEN clock_timestamp() ELSE facts_at END WHERE id = %s",
                   (_text(body.get("agent_version"), 40), Jsonb(summarise(latest)), bool(stored), who["device_id"]))
-    return {"ok": True, "stored": stored, "checkin_seconds": CHECKIN_SECONDS}
+    with db.anon() as c:      # only the number: the agent fetches and checks the signed manifest itself
+        newest = agents.latest_release(c)
+    return {"ok": True, "stored": stored, "checkin_seconds": CHECKIN_SECONDS, "agent_release": newest}
+
+
+@app.get("/api/v1/agent/installer")
+def agent_installer(who: dict = Depends(editor)):
+    """The newest agent installer, for the people who may add a PC. The same file a device would fetch."""
+    with db.anon() as c:
+        v = agents.latest_release(c)
+        row = c.execute("SELECT package FROM agent_releases WHERE version = %s", (v,)).fetchone() if v else None
+    if not row:
+        raise HTTPException(404, "This server has no agent installer on offer yet.")
+    return Response(bytes(row["package"]), media_type="application/x-msi",
+                    headers={"Content-Disposition": f'attachment; filename="ShadowFilerAgent-{v}.msi"'})
 
 
 def _iso(v):

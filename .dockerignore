@@ -6,6 +6,7 @@
 !shadow-filer/cve.py
 !shadow-filer/eol.py
 !shadow-filer/compliance.py
+!device-agent/release.py
 !shadow-filer/ui/
 shadow-filer/ui/node_modules
 server/local-keys.txt

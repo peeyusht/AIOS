@@ -1,7 +1,9 @@
-"""Fleet server, phases 1 to 3. Runs against a throwaway database in the PostgreSQL started by docker-compose
+"""Fleet server, phases 1 to 4. Runs against a throwaway database in the PostgreSQL started by docker-compose
 (127.0.0.1:5433); skipped when that is not running. The important tests are the ones that try to cross from
 one organisation to another: through the API, and directly in SQL as the application's database role.
 Phase 2 is judged against a tiny made-up copy of the reference lists; nothing is downloaded."""
+import base64
+import json
 import os
 import shutil
 import sys
@@ -12,6 +14,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -35,9 +38,12 @@ if READY:
     os.environ["DATABASE_URL"] = f"postgresql://fleet_app:{APP_PASSWORD}@{base.split('@', 1)[1]}/{NAME}"
     os.environ.setdefault("FLEET_SECRET_KEY", "ZGV2ZWxvcGVyLXBjLW9ubHktbm90LWEtc2VjcmV0ISE=")
     from fastapi.testclient import TestClient
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     import cve
     import eol
-    from app import auth, db, manage, people, worker
+    import release as rel
+    from app import agents, auth, db, manage, people, worker
     from app.main import app, MAX_BODY
 
 
@@ -52,6 +58,32 @@ def as_worker():
     finally:
         db.close()
         os.environ["DATABASE_URL"] = api_url
+
+
+class Device:
+    """A made-up PC: a key pair of its own, and the signature every agent puts on every request."""
+    def __init__(self):
+        self.key, self.id, self.stamp = Ed25519PrivateKey.generate(), None, int(time.time() * 1000)
+
+    @property
+    def public(self) -> str:
+        return base64.b64encode(self.key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)).decode()
+
+    def headers(self, method, path, body=b"", stamp=None, device=None) -> dict:
+        if stamp is None:
+            self.stamp += 1
+            stamp = self.stamp
+        h = {"X-Stamp": str(stamp), "X-Signature": base64.b64encode(self.key.sign(agents.signed_text(method, path, stamp, body))).decode()}
+        if device or self.id:
+            h["X-Device"] = device or self.id
+        return h
+
+    def post(self, http, path, obj=None, content=None, **how):
+        body = content if content is not None else json.dumps(obj).encode()
+        return http.post(path, content=body, headers=self.headers("POST", path, body, **how))
+
+    def get(self, http, path, **how):
+        return http.get(path, headers=self.headers("GET", path, **how))
 
 
 PASSWORD = "four unrelated words here"
@@ -151,24 +183,39 @@ class ServerTest(unittest.TestCase):
     def auth(self, key):
         return {"Authorization": "Bearer " + key}
 
-    def enrol(self, token, name="DEMO-PC"):
-        return self.http.post("/api/v1/enrol", json={"token": token, "name": name, "agent_version": "0.1"})
+    def enrol(self, token, name="DEMO-PC", pc=None):
+        pc = pc or Device()
+        r = pc.post(self.http, "/api/v1/enrol", {"token": token, "name": name, "agent_version": "0.1", "public_key": pc.public})
+        if r.status_code == 200:
+            pc.id = r.json()["device_id"]
+        return r
+
+    def checkin(self, pc, snapshots, version="0.1"):
+        return pc.post(self.http, "/api/v1/checkin", {"agent_version": version, "snapshots": snapshots})
 
     def test_1_enrol_and_report(self):
-        r = self.enrol(self.token_a)
-        self.assertEqual(r.status_code, 200, r.text)
-        key, dev = r.json()["device_key"], r.json()["device_id"]
-        type(self).key_a, type(self).dev_a = key, dev
-        with manage.connect() as c:      # only hashes are stored: neither the token nor the key is in the database
-            everything = " ".join(str(x) for row in c.execute("SELECT key_hash FROM devices UNION ALL SELECT token_hash FROM enrolment_tokens UNION ALL SELECT key_hash FROM admin_keys") for x in row)
-        for secret in (key, self.token_a, self.admin_a):
+        pc = Device()
+        # an agent that sends no key of its own, or cannot show it holds the key it sends, is turned away
+        # before the token is looked at, so neither try uses the token up
+        old = self.http.post("/api/v1/enrol", json={"token": self.token_a, "name": "OLD-PC", "agent_version": "0.1"})
+        self.assertEqual((old.status_code, "too old" in old.json()["detail"]), (400, True))
+        body = json.dumps({"token": self.token_a, "name": "LIAR-PC", "public_key": pc.public}).encode()
+        self.assertEqual(self.http.post("/api/v1/enrol", content=body, headers=Device().headers("POST", "/api/v1/enrol", body)).status_code, 401)
+        r = self.enrol(self.token_a, pc=pc)
+        self.assertEqual((r.status_code, "device_key" in r.json()), (200, False), r.text)     # the server hands out no secret
+        dev = pc.id
+        type(self).pc_a, type(self).dev_a = pc, dev
+        with manage.connect() as c:      # tokens and console keys as hashes only; of a device only the public half of its key
+            everything = " ".join(str(x) for row in c.execute("SELECT public_key FROM devices UNION ALL SELECT key_hash FROM devices UNION ALL SELECT token_hash FROM enrolment_tokens UNION ALL SELECT key_hash FROM admin_keys") for x in row)
+        for secret in (self.token_a, self.admin_a):
             self.assertNotIn(secret, everything)
-        r = self.http.post("/api/v1/checkin", headers=self.auth(key), json={"agent_version": "0.1", "snapshots": SNAP})
+        self.assertIn(pc.public, everything)
+        r = self.checkin(pc, SNAP)
         self.assertEqual((r.status_code, sorted(r.json()["stored"])), (200, ["apps", "device", "network", "posture"]))
-        r = self.http.post("/api/v1/checkin", headers=self.auth(key), json={"agent_version": "0.1", "snapshots": SNAP})
+        r = self.checkin(pc, SNAP)
         self.assertEqual(r.json()["stored"], [])                         # nothing changed: nothing kept
         changed = {**SNAP, "posture": {**SNAP["posture"], "drives_encrypted": True}}
-        r = self.http.post("/api/v1/checkin", headers=self.auth(key), json={"agent_version": "0.2", "snapshots": changed})
+        r = self.checkin(pc, changed, "0.2")
         self.assertEqual(r.json()["stored"], ["posture"])
         fleet = self.http.get("/api/v1/devices", headers=self.auth(self.admin_a)).json()
         d = fleet["devices"][0]
@@ -188,21 +235,41 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.enrol(self.token_a, "").status_code, 400)
 
     def test_3_bad_requests(self):
-        for headers in ({}, {"Authorization": "Bearer nope"}, self.auth("x" * 43), self.auth(self.admin_a)):
-            self.assertEqual(self.http.post("/api/v1/checkin", headers=headers, json={"snapshots": {}}).status_code, 401)
-        self.assertEqual(self.http.get("/api/v1/devices", headers=self.auth(self.key_a)).status_code, 401)   # a device key is not a console key
-        bad = self.http.post("/api/v1/checkin", headers=self.auth(self.key_a), json={"snapshots": {"files": {}}})
+        pc, path, empty = self.pc_a, "/api/v1/checkin", json.dumps({"snapshots": {}}).encode()
+        for headers in ({}, {"Authorization": "Bearer nope"}, self.auth("x" * 43), self.auth(self.admin_a), {"X-Device": self.dev_a},
+                        {"X-Device": "not-an-id", "X-Stamp": "1", "X-Signature": "AAAA"}):
+            self.assertEqual(self.http.post(path, headers=headers, content=empty).status_code, 401, headers)
+        # signed by some other key in this device's name; signed for a different body; an unknown device
+        self.assertEqual(self.http.post(path, content=empty, headers=Device().headers("POST", path, empty, device=self.dev_a)).status_code, 401)
+        self.assertEqual(self.http.post(path, content=b'{"snapshots": {"device": {"name": "X"}}}', headers=pc.headers("POST", path, empty)).status_code, 401)
+        self.assertEqual(self.http.post(path, content=empty, headers=pc.headers("POST", path, empty, device=str(uuid.uuid4()))).status_code, 401)
+        self.assertEqual(self.http.post(path, content=empty, headers=pc.headers("POST", "/api/v1/enrol", empty)).status_code, 401)    # signed for another call
+        # a request works once: the same one again is refused, and so is one with an older stamp or a clock far off
+        once = pc.headers("POST", path, empty)
+        self.assertEqual([self.http.post(path, content=empty, headers=once).status_code for _ in range(2)], [200, 401])
+        self.assertEqual(self.http.post(path, content=empty, headers=pc.headers("POST", path, empty, stamp=pc.stamp - 5)).status_code, 401)
+        for off in (-3600_000, 3600_000):
+            late = self.http.post(path, content=empty, headers=pc.headers("POST", path, empty, stamp=pc.stamp + off))
+            self.assertEqual((late.status_code, "clock" in late.json()["detail"]), (401, True))
+        self.assertEqual(self.checkin(pc, {}).status_code, 200)                       # and the device itself carries on
+        self.assertEqual(pc.get(self.http, "/api/v1/devices").status_code, 401)       # a device's signature opens no console call
+        bad = self.checkin(pc, {"files": {}})
         self.assertEqual(bad.status_code, 400)                                        # only the five known kinds
-        self.assertEqual(self.http.post("/api/v1/checkin", headers=self.auth(self.key_a), json={"snapshots": {"apps": "text"}}).status_code, 400)
-        big = self.http.post("/api/v1/checkin", headers=self.auth(self.key_a), content=b"x" * (MAX_BODY + 1))
+        self.assertEqual(self.checkin(pc, {"apps": "text"}).status_code, 400)
+        self.assertEqual(pc.post(self.http, path, content=b"[1, 2]").status_code, 400)
+        big = pc.post(self.http, path, content=b"x" * (MAX_BODY + 1))
         self.assertEqual(big.status_code, 413)
         self.assertEqual(self.http.get("/healthz").json(), {"ok": True})
         page = self.http.get("/")
         self.assertEqual((page.status_code, "default-src 'self'" in page.headers["content-security-policy"]), (200, True))
 
     def test_4_one_organisation_cannot_see_another(self):
-        other = self.enrol(self.token_b, "GLOBEX-PC").json()
-        self.http.post("/api/v1/checkin", headers=self.auth(other["device_key"]), json={"snapshots": {"device": {"name": "GLOBEX-PC"}}})
+        pc_b = Device()
+        other = self.enrol(self.token_b, "GLOBEX-PC", pc=pc_b).json()
+        self.assertEqual(self.checkin(pc_b, {"device": {"name": "GLOBEX-PC"}}).status_code, 200)
+        # a device of one organisation cannot report as a device of another
+        planted = json.dumps({"snapshots": {"device": {"name": "TAKEN"}}}).encode()
+        self.assertEqual(self.http.post("/api/v1/checkin", content=planted, headers=pc_b.headers("POST", "/api/v1/checkin", planted, device=self.dev_a)).status_code, 401)
         # through the API
         a = self.http.get("/api/v1/devices", headers=self.auth(self.admin_a)).json()
         b = self.http.get("/api/v1/devices", headers=self.auth(self.admin_b)).json()
@@ -265,7 +332,7 @@ class ServerTest(unittest.TestCase):
         self.assertEqual((sw[0]["name"], sw[0]["exploited"], sw[0]["ended"], sw[0]["versions"][0]["devices"][0]["name"]), ("Kettle Archive", 1, True, "DEMO-PC"))
         # new facts send the device round again; the other organisation's judgement is its own
         fixed = {**SNAP, "posture": {**SNAP["posture"], "daily_account_is_admin": False}}
-        self.http.post("/api/v1/checkin", headers=self.auth(self.key_a), json={"agent_version": "0.2", "snapshots": fixed})
+        self.checkin(self.pc_a, fixed, "0.2")
         with as_worker():
             self.assertEqual(worker.round_(self.lists, self.today), 1)
         j = self.http.get("/api/v1/devices", headers=self.auth(self.admin_a)).json()["devices"][0]["judgement"]
@@ -276,7 +343,7 @@ class ServerTest(unittest.TestCase):
     def test_6_exceptions_declarations_and_the_report(self):
         url = f"/api/v1/devices/{self.dev_a}/exceptions"
         self.assertEqual(self.owner_b.post(url, json={"check_id": "fw.on", "reason": "x"}).status_code, 404)
-        self.assertEqual(self.http.post(url, headers=self.auth(self.key_a), json={"check_id": "fw.on", "reason": "x"}).status_code, 401)
+        self.assertEqual(self.pc_a.post(self.http, url, {"check_id": "fw.on", "reason": "x"}).status_code, 401)
         self.assertEqual(self.http.post(url, headers=self.auth(self.admin_a), json={"check_id": "fw.on", "reason": "x"}).status_code, 403)   # a key only reads
         for bad, status in (({"check_id": "'; DROP", "reason": "x"}, 400), ({"check_id": "zz.nothing", "reason": "x"}, 404)):
             self.assertEqual(self.owner_a.post(url, json=bad).status_code, status)
@@ -478,6 +545,62 @@ class ServerTest(unittest.TestCase):
         for a in ("user.added", "user.disable", "user.reset_second_factor", "share_link.created", "share_link.withdrawn", "enrolment_token.created",
                   "device.removed", "password.changed", "signin", "mfa.set_up"):
             self.assertIn(a, actions)
+
+    def test_9a_agent_releases(self):
+        """The server passes a release of the agent on; it cannot make one, and only a device can fetch one."""
+        key = Ed25519PrivateKey.generate()
+        pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+        ours = (rel.public_of(pem),)
+        pack = {v: b"installer " + v.encode() for v in ("0.9.0", "0.10.0")}
+        text = {v: rel.manifest(v, f"ShadowFilerAgent-{v}.msi", pack[v]) for v in pack}
+        sig = {v: rel.sign(text[v], pem) for v in pack}
+        self.assertIsNone(self.checkin(self.pc_a, {}).json()["agent_release"])
+        with manage.connect() as c:
+            with self.assertRaises(ValueError):                 # signed with a key that is not the release key
+                manage.add_release(c, text["0.9.0"], sig["0.9.0"], pack["0.9.0"])
+            with mock.patch.object(rel, "RELEASE_KEYS", ours):
+                with self.assertRaises(ValueError):             # a signature for another manifest
+                    manage.add_release(c, text["0.9.0"], sig["0.10.0"], pack["0.9.0"])
+                with self.assertRaises(ValueError):             # not the installer the manifest describes
+                    manage.add_release(c, text["0.9.0"], sig["0.9.0"], pack["0.10.0"])
+                with self.assertRaises(ValueError):             # a manifest changed after it was signed
+                    manage.add_release(c, text["0.9.0"].replace("0.9.0", "9.9.0"), sig["0.9.0"], pack["0.9.0"])
+                for v in pack:
+                    self.assertEqual(manage.add_release(c, text[v], sig[v], pack[v]), v)
+        self.assertEqual(self.checkin(self.pc_a, {}).json()["agent_release"], "0.10.0")        # compared as numbers, not as text
+        # the folder the build leaves is read the same way by `manage release add`
+        for v in pack:
+            (self.tmp / f"ShadowFilerAgent-{v}.msi").write_bytes(pack[v])
+            (self.tmp / f"ShadowFilerAgent-{v}.json").write_text(text[v], encoding="utf-8")
+            (self.tmp / f"ShadowFilerAgent-{v}.sig").write_text(sig[v] + "\n", encoding="ascii")
+        self.assertEqual(manage.release_from_folder(self.tmp, "0.9.0"), (text["0.9.0"], sig["0.9.0"], pack["0.9.0"]))
+        self.assertRaises(SystemExit, manage.release_from_folder, self.tmp)                         # two releases: say which
+        # an admin can fetch the installer from the console; an auditor, a device and a stranger cannot
+        max_, _, _ = person(self.org_a, "max@acme.example", "admin")
+        nia, _, _ = person(self.org_a, "nia@acme.example", "auditor")
+        got = max_.get("/api/v1/agent/installer")
+        self.assertEqual((got.status_code, got.content, "ShadowFilerAgent-0.10.0.msi" in got.headers["content-disposition"]), (200, pack["0.10.0"], True))
+        self.assertEqual((max_.get("/api/v1/access").json()["agent_release"], nia.get("/api/v1/access").json()["agent_release"]), ("0.10.0", None))
+        self.assertEqual([nia.get("/api/v1/agent/installer").status_code, self.http.get("/api/v1/agent/installer").status_code,
+                          self.pc_a.get(self.http, "/api/v1/agent/installer").status_code], [403, 401, 401])
+        got = self.pc_a.get(self.http, "/api/v1/agent/release").json()
+        self.assertEqual(rel.verify(got["manifest"], got["signature"], ours)["version"], "0.10.0")
+        self.assertRaises(ValueError, rel.verify, got["manifest"], got["signature"])                # the real release key did not sign it
+        self.assertEqual(self.pc_a.get(self.http, "/api/v1/agent/package/0.10.0").content, pack["0.10.0"])
+        for path in ("/api/v1/agent/release", "/api/v1/agent/package/0.10.0"):                     # devices only
+            self.assertEqual([self.http.get(path).status_code, self.http.get(path, headers=self.auth(self.admin_a)).status_code], [401, 401])
+        self.assertEqual([self.pc_a.get(self.http, f"/api/v1/agent/package/{v}").status_code for v in ("1.0.0", "..", "0.10")], [404, 404, 404])
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):      # the API's database role can read a release, never write one
+            with db.anon() as c:
+                c.execute("UPDATE agent_releases SET package = 'x'")
+        with as_worker():
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                with db.anon() as c:
+                    c.execute("SELECT version FROM agent_releases")
+        with manage.connect() as c:
+            c.execute("UPDATE agent_releases SET withdrawn = true WHERE version = '0.10.0'")
+        self.assertEqual(self.checkin(self.pc_a, {}).json()["agent_release"], "0.9.0")
+        self.assertEqual(self.pc_a.get(self.http, "/api/v1/agent/package/0.10.0").status_code, 404)
 
 
 if __name__ == "__main__":

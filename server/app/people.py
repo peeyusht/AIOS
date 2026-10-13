@@ -330,6 +330,9 @@ def access(who: dict = Depends(reader)):
         tokens = c.execute("SELECT id, label, max_uses, uses, expires_at, created_at FROM enrolment_tokens "
                            "WHERE expires_at > now() AND uses < max_uses ORDER BY created_at DESC").fetchall() if manage else []
         keys = c.execute("SELECT count(*) AS n FROM admin_keys").fetchone()["n"] if manage else 0
+    from . import agents
+    with db.anon() as c:
+        agent = agents.latest_release(c) if manage else None
     now = datetime.now(timezone.utc)
     return {"me": {"email": who["email"], "name": who["name"], "role": who["role"], "id": str(who["user_id"]) if who["user_id"] else None},
             "users": [{"id": str(u["id"]), "email": u["email"], "name": u["name"], "role": u["role"], "disabled": u["disabled"],
@@ -339,7 +342,7 @@ def access(who: dict = Depends(reader)):
                              "expires_at": _iso(x["expires_at"]), "opened": x["opened"], "last_opened": _iso(x["last_opened"]),
                              "state": "withdrawn" if x["revoked_at"] else "expired" if x["expires_at"] <= now else "active"} for x in links],
             "enrolment_tokens": [{"id": str(t["id"]), "label": t["label"], "uses_left": t["max_uses"] - t["uses"], "expires_at": _iso(t["expires_at"])} for t in tokens],
-            "organisation_keys": keys, "roles": list(auth.ROLES), "setup_days": auth.SETUP_DAYS, "session_hours": auth.SESSION_HOURS}
+            "organisation_keys": keys, "agent_release": agent, "roles": list(auth.ROLES), "setup_days": auth.SETUP_DAYS, "session_hours": auth.SESSION_HOURS}
 
 
 @router.post("/users")

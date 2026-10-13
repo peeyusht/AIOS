@@ -43,19 +43,84 @@ NOISE = re.compile(r"\((?:x64|x86|64-bit|32-bit|arm64|user|remove only)\)|\b(?:x
 
 
 # --------------------------------------------------------------------------- reading
+_system = None
+
+
+def running_as_system() -> bool:
+    """Is this process the Windows SYSTEM account? True only for the device agent's service (device-agent/),
+    which then has to look at people's settings and programs from the outside."""
+    global _system
+    if _system is None:
+        _system = False
+        if os.name == "nt":
+            try:
+                import ctypes
+                from ctypes import wintypes
+                adv, k32 = ctypes.WinDLL("advapi32", use_last_error=True), ctypes.WinDLL("kernel32", use_last_error=True)
+                k32.GetCurrentProcess.restype = wintypes.HANDLE
+                adv.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+                adv.GetTokenInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+                adv.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
+                k32.LocalFree.argtypes = [ctypes.c_void_p]
+                k32.CloseHandle.argtypes = [wintypes.HANDLE]
+                token = wintypes.HANDLE()
+                if adv.OpenProcessToken(k32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):      # TOKEN_QUERY
+                    try:
+                        size = wintypes.DWORD()
+                        adv.GetTokenInformation(token, 1, None, 0, ctypes.byref(size))             # 1: TokenUser
+                        buf = ctypes.create_string_buffer(size.value)
+                        if adv.GetTokenInformation(token, 1, buf, size, ctypes.byref(size)):
+                            sid = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p))[0]             # the first field points at the SID
+                            text = wintypes.LPWSTR()
+                            if adv.ConvertSidToStringSidW(sid, ctypes.byref(text)):
+                                _system = text.value == "S-1-5-18"
+                                k32.LocalFree(ctypes.cast(text, ctypes.c_void_p))
+                    finally:
+                        k32.CloseHandle(token)
+            except (OSError, AttributeError, ValueError):
+                _system = False
+    return _system
+
+
+PERSON_SID = re.compile(r"S-1-(?:5-21|12-1)-[\d-]+")      # a local or domain account, or a work account in Entra ID
+
+
+def loaded_users() -> list:
+    """The accounts whose part of the registry is loaded right now (signed in, or running something)."""
+    import winreg
+    out = []
+    with winreg.OpenKey(winreg.HKEY_USERS, "") as top:
+        for i in range(winreg.QueryInfoKey(top)[0]):
+            try:
+                sid = winreg.EnumKey(top, i)
+            except OSError:
+                break
+            if PERSON_SID.fullmatch(sid):
+                out.append(sid)
+    return out
+
+
 def read_desktop() -> list | None:
-    """Raw entries of the three registry lists. None when the registry cannot be read (not Windows)."""
+    """Raw entries of the three registry lists. None when the registry cannot be read (not Windows). As the
+    SYSTEM account there is no "my" list: the per-user list of every signed-in account is read instead, and
+    each such entry is marked with its `owner`, which stays inside the agent."""
     try:
         import winreg
     except ImportError:
         return None
-    views = ((winreg.HKEY_LOCAL_MACHINE, winreg.KEY_WOW64_64KEY, "machine", "64-bit"),
-             (winreg.HKEY_LOCAL_MACHINE, winreg.KEY_WOW64_32KEY, "machine", "32-bit"),
-             (winreg.HKEY_CURRENT_USER, 0, "user", ""))
-    out, opened = [], 0
-    for hive, flag, scope, arch in views:
+    views = [(winreg.HKEY_LOCAL_MACHINE, UNINSTALL, winreg.KEY_WOW64_64KEY, "machine", "64-bit", None),
+             (winreg.HKEY_LOCAL_MACHINE, UNINSTALL, winreg.KEY_WOW64_32KEY, "machine", "32-bit", None)]
+    if running_as_system():
         try:
-            top = winreg.OpenKey(hive, UNINSTALL, 0, winreg.KEY_READ | flag)
+            views += [(winreg.HKEY_USERS, sid + "\\" + UNINSTALL, 0, "user", "", sid) for sid in loaded_users()]
+        except OSError:
+            pass
+    else:
+        views.append((winreg.HKEY_CURRENT_USER, UNINSTALL, 0, "user", "", None))
+    out, opened = [], 0
+    for hive, path, flag, scope, arch, owner in views:
+        try:
+            top = winreg.OpenKey(hive, path, 0, winreg.KEY_READ | flag)
         except OSError:
             continue
         opened += 1
@@ -72,7 +137,8 @@ def read_desktop() -> list | None:
                 except OSError:
                     continue
                 out.append({"id": f"{scope}{arch[:2]}:{sub}", "scope": scope, "arch": arch, "values": vals,
-                            "changed": changed / 1e7 - 11644473600})   # 100 ns since 1601 -> Unix time
+                            "changed": changed / 1e7 - 11644473600,    # 100 ns since 1601 -> Unix time
+                            **({"owner": owner} if owner else {})})
     return out if opened else None
 
 
@@ -81,7 +147,10 @@ $ErrorActionPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $start = @{}
 foreach ($a in Get-StartApps) { $fam = ($a.AppID -split '!')[0]; if (-not $start.ContainsKey($fam)) { $start[$fam] = $a.Name } }
-$out = foreach ($p in Get-AppxPackage) {
+# as the SYSTEM account (the device agent's service) there are no packages of "this user": everyone's are listed
+$mine = ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -ne 'S-1-5-18')
+$packages = if ($mine) { Get-AppxPackage } else { Get-AppxPackage -AllUsers }
+$out = foreach ($p in $packages) {
   if ($p.IsFramework -or $p.IsResourcePackage -or $p.IsBundle -or "$($p.SignatureKind)" -eq 'System') { continue }
   $m = (Get-AppxPackageManifest $p).Package.Properties
   $made = ''
@@ -181,11 +250,12 @@ def _pretty(package: str) -> str:
 
 
 def packaged_apps(raw: list) -> list:
-    out = []
+    out, seen = [], set()
     for p in raw:
         fam = _text(p.get("id"))
-        if not fam:
+        if not fam or (fam, _text(p.get("version"))) in seen:      # the same package for a second person
             continue
+        seen.add((fam, _text(p.get("version"))))
         m = re.search(r'(?:^|,\s*)CN=("([^"]+)"|[^,]+)', _text(p.get("subject")))
         cn = (m.group(2) or m.group(1)).strip() if m else ""
         if re.fullmatch(r"[0-9A-Fa-f-]{30,}", cn):      # a Store publisher id, not a name
