@@ -121,6 +121,7 @@ function ChangePassword() {
       <label className="block min-w-48 flex-1 space-y-1.5"><span className="text-sm font-medium">Current password</span><Input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" className="h-9" /></label>
       <label className="block min-w-48 flex-1 space-y-1.5"><span className="text-sm font-medium">New password (12 characters or more)</span><Input type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" className="h-9" /></label>
       <Button type="submit" variant="outline" disabled={busy || !current || next.length < 12}>{busy && <Spin />}Change password</Button>
+      {next.length > 0 && next.length < 12 && <p className="w-full text-xs text-warning">That is {next.length} character{next.length === 1 ? "" : "s"}: {12 - next.length} more needed.</p>}
     </form>
   );
 }

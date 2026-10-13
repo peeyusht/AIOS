@@ -163,6 +163,7 @@ export function SetPassword({ token }: { token: string }) {
   }
   if (!who) return <Frame title="Set your password"><div className="flex justify-center py-8"><Spin /></div></Frame>;
   const mismatch = b.length > 0 && a !== b;
+  const short = a.length > 0 && a.length < who.min_password ? who.min_password - a.length : 0;
   return (
     <Frame title="Set your password" foot="The link works once. Nobody else, not even the person who invited you, ever sees your password.">
       <p className="mb-3 text-sm text-muted-foreground">For <span className="font-medium text-foreground">{who.email}</span>.</p>
@@ -172,7 +173,8 @@ export function SetPassword({ token }: { token: string }) {
         <label className="block space-y-1.5"><span className="text-sm font-medium">The same again</span>
           <Input type="password" value={b} onChange={(e) => setB(e.target.value)} autoComplete="new-password" /></label>
         <p className="text-xs text-muted-foreground">At least {who.min_password} characters. A few unrelated words are strong and easy to type.</p>
-        {mismatch && <Notice tone="warn">The two do not match.</Notice>}
+        {short > 0 && <Notice tone="warn">That is {a.length} character{a.length === 1 ? "" : "s"}: {short} more needed.</Notice>}
+        {mismatch && !short && <Notice tone="warn">The two do not match.</Notice>}
         {f.error && <Notice tone="danger">{f.error}</Notice>}
         <Button type="submit" disabled={f.busy || a.length < who.min_password || a !== b} className="w-full">{f.busy ? <Spin /> : <KeyRound />}Set password</Button>
       </form>
