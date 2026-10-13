@@ -15,6 +15,7 @@ import { Card, Confirm, ListSkeleton, LoadError, Notice, PageHeader, Segmented, 
 import { api, type Access, type Person, type Role, type UserAction } from "../api";
 import { Section } from "../parts";
 import { ROLE_ABOUT, ROLE_LABEL, useCan } from "../session";
+import { PasswordPolicy, passwordProblem } from "./SignIn";
 
 const ROLES: Role[] = ["auditor", "admin", "owner"];
 const roleOptions = ROLES.map((r) => ({ value: r, label: ROLE_LABEL[r] }));
@@ -106,22 +107,27 @@ function PersonRow({ u, mine, canManage, onDo }: { u: Person; mine: boolean; can
   );
 }
 
-function ChangePassword() {
+function ChangePassword({ email }: { email: string }) {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
+    const problem = !current ? "Type your current password as well." : passwordProblem(next, null, email, 12);
+    setError(problem);
+    if (problem) return;
     setBusy(true);
     try { await api.changePassword(current, next); toast.success("Password changed. Other browsers were signed out."); setCurrent(""); setNext(""); }
-    catch (err) { toast.error((err as Error).message); } finally { setBusy(false); }
+    catch (err) { setError((err as Error).message); } finally { setBusy(false); }
   };
   return (
     <form onSubmit={save} className="flex flex-wrap items-end gap-3 px-5 py-4">
       <label className="block min-w-48 flex-1 space-y-1.5"><span className="text-sm font-medium">Current password</span><Input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" className="h-9" /></label>
-      <label className="block min-w-48 flex-1 space-y-1.5"><span className="text-sm font-medium">New password (12 characters or more)</span><Input type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" className="h-9" /></label>
-      <Button type="submit" variant="outline" disabled={busy || !current || next.length < 12}>{busy && <Spin />}Change password</Button>
-      {next.length > 0 && next.length < 12 && <p className="w-full text-xs text-warning">That is {next.length} character{next.length === 1 ? "" : "s"}: {12 - next.length} more needed.</p>}
+      <label className="block min-w-48 flex-1 space-y-1.5"><span className="text-sm font-medium">New password</span><Input type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" className="h-9" /></label>
+      <Button type="submit" variant="outline" disabled={busy || !next}>{busy && <Spin />}Change password</Button>
+      {error && <Notice tone="danger" className="w-full">{error}</Notice>}
+      {next && <div className="w-full"><PasswordPolicy password={next} email={email} min={12} /></div>}
     </form>
   );
 }
@@ -238,7 +244,7 @@ export function AccessPage() {
           )}
 
           <Section title="Your account" sub={<>{d.me.email} · {ROLE_LABEL[d.me.role]}: {ROLE_ABOUT[d.me.role]}</>}>
-            <Card className="rounded-lg"><ChangePassword /></Card>
+            <Card className="rounded-lg"><ChangePassword email={d.me.email ?? ""} /></Card>
             <p className="text-sm text-muted-foreground">You are signed out after 2 hours without activity, and after {d.session_hours} hours at the latest. Lost your authenticator app? An owner can let you set up a new one.</p>
           </Section>
         </div>
