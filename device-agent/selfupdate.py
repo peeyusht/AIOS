@@ -5,7 +5,8 @@ After a report the server names the newest agent version it offers. If that is h
 running, the agent fetches the release's manifest and checks it the way release.py describes: signed with the
 release key (whose private half is on no server), for this product, for a version higher than its own. Only
 then does it fetch the installer, check its size and SHA-256 against the signed manifest, and hand it to
-Windows Installer, which stops the service, replaces the files and starts it again.
+Windows Installer. The agent then ends its own process; Windows Installer replaces the files, and Windows
+starts the service again a minute later, from the new files (agent.make_way).
 
 What a server can do with this, even one that was broken into: offer a real release, or none. It cannot make
 the agent install anything else, and it cannot take the agent back to an older release.
@@ -26,7 +27,7 @@ TRIES, WAIT_HOURS = 3, 6
 
 
 def run_installer(package: Path, log_file: Path) -> None:
-    """Hand the installer to Windows Installer, silently, and let go: it will stop this service."""
+    """Hand the installer to Windows Installer, silently, and let go."""
     msiexec = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "msiexec.exe")
     args = [msiexec, "/i", str(package), "/qn", "/norestart", "/l*v", str(log_file)]
     flags = 0x00000008 | 0x00000200          # no console of ours, a process group of its own

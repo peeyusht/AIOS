@@ -328,10 +328,19 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   about 20 s once the image exists. Unpacked and run as an ordinary account against the local server, the
   first round (programs, services, network, settings, report) took 17 s and the report was 81 KB; a second
   report stored nothing new. The agent fetched a 0.4.1 test release from the server, checked the signature
-  and the hash and stopped at the installer (a run by hand never installs). NOT measured: the agent as an
-  installed service. Installing needs an administrator's yes, so the service wrapper, the readings made as
-  SYSTEM (other people's programs, BitLocker through Windows' own list, the last signed-in account's lock
-  setting) and the update through Windows Installer have run only as far as the tests can reach.
+  and the hash and stopped at the installer (a run by hand never installs). Installed as a service on
+  the user's PC the same day: enrolled from what the installer left within a minute, and its readings as
+  SYSTEM equal the file agent's field for field (17 settings; 85 programs, 20 of them per-user), except 88
+  packaged apps instead of 84 (everybody's) and 41 services instead of 40 (itself). The first two
+  self-updates each found a fault no test had: 0.4.0 to 0.4.1 "succeeded" and left no python.exe and no
+  service (wixl removes the old version first, after Windows Installer has decided the same-version files
+  need no copying; `make_msi.remove_old_version_last` moves that step to the end), and 0.4.2 to 0.4.3
+  replaced the files but left 0.4.2 running from memory (Windows Installer does not restart a service
+  whose program file did not change; the agent now ends its own process, `agent.make_way`, and Windows
+  starts it again after a minute). 0.4.4 to 0.4.5 then went through with nobody touching it: installer
+  started at 19:53:07, service back at 19:54:07, reporting as 0.4.5 at its next round. Re-test a real
+  update on an installed agent after any change to the installer or the service loop: the unit tests
+  cannot see either fault.
 - Fleet, phase 2 (12 Oct 2026): the worker's first download of the lists took about 9 minutes in the
   container (385,946 CVEs, 1,739 known exploited, 436 end-of-life products); judging this PC then takes
   0.6 s. The server's result for this PC equals the agent's own on the same day: 36 of 85 programs
@@ -372,8 +381,11 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   catalogue, not programs winget cannot identify), and nothing is updated for the user. Packaged apps have no
   size and no true install date (the package folder's creation day is shown). Changes are only known from
   the first scan on (12 Oct 2026) and only as of the day a scan noticed them.
-- Device agent: never yet installed as a service (see Measured numbers); the first install on a real PC is
-  the test. The installer is not signed for Windows (no certificate), the release key has no password and
+- Device agent: installed as a service on one PC only, the user's (see Measured numbers); the user's PC
+  now reports twice to "Home lab", as the file agent and as the service. Not tried: a PC with several
+  people, a domain or Entra ID account, Windows Home, a PC with BitLocker on, a release that changes the
+  bundled Python (a DLL of a lower version would not be replaced), uninstalling. For about a minute during
+  an update the service is not running. The installer is not signed for Windows (no certificate), the release key has no password and
   sits on this PC, every device takes a new release at once (no rings, no choice per organisation), the PC's
   key is sealed with DPAPI rather than kept in the TPM, an enrolment token lies in the registry for up to a
   minute, and uninstalling leaves the ProgramData folder. As a service it cannot ask winget, judges the

@@ -59,7 +59,7 @@ services, firewall and installed programs, and a container sees only its own.
 
 A customer's PC gets the device agent, a Windows service with its own installer (`../device-agent/README.md`):
 ```
-msiexec /i ShadowFilerAgent-0.4.0.msi /qn SERVER=https://fleet.example.com TOKEN=<token>
+msiexec /i ShadowFilerAgent-0.4.5.msi /qn SERVER=https://fleet.example.com TOKEN=<token>
 ```
 Publish an installer on this server with `manage release add` (see that README) and admins can download it
 from the console (Access) and every enrolled agent updates itself to it. `manage release list` and

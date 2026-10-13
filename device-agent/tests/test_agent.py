@@ -238,6 +238,37 @@ class AgentTest(Base):
         with mock.patch("apps.read_desktop", return_value=machine), mock.patch("apps.running_as_system", return_value=False):
             self.assertEqual(agent.read_desktop(self.cfg), machine)
 
+    def test_an_update_takes_effect_by_leaving(self):
+        left = []
+
+        def leave(log, why):
+            left.append(why)
+        app = self.tmp / "app"
+        app.mkdir()
+        (app / "agent.py").write_text('import os\nVERSION = "9.9.9"\n', encoding="utf-8")
+        self.assertEqual((agent.version_on_disk(app), agent.version_on_disk(self.tmp / "none"), agent.version_on_disk()), ("9.9.9", None, agent.VERSION))
+        self.enrol()
+        sent = []
+        with mock.patch.object(fleet, "checkin", side_effect=lambda *a, **k: sent.append(1) or {"ok": True}), \
+                mock.patch.object(apps, "scan", return_value=None):
+            # newer files on the disk than the code that is running: leave before doing anything else
+            with mock.patch.object(agent, "version_on_disk", return_value="9.9.9"):
+                agent.tick(self.cfg, self.tmp, LOG, installed=True, leave=leave)
+                self.assertEqual((len(left), sent, "9.9.9 is installed" in left[0]), (1, [], True))
+                agent.tick(self.cfg, self.tmp, LOG, installed=False, leave=leave)          # a run by hand never does
+                self.assertEqual((len(left), sent), (1, [1]))
+            # the installer was started: leave, so the files are free and the new ones get loaded
+            fleet._save(self.cfg, last_tried=None)
+            with mock.patch.object(selfupdate, "maybe", return_value="installing 9.9.9"):
+                agent.tick(self.cfg, self.tmp, LOG, installed=True, leave=leave)
+            self.assertEqual((len(left), left[-1]), (2, "the installer has been started"))
+            fleet._save(self.cfg, last_tried=None)
+            for did in ("up to date", "failed: no", "waiting before trying again"):
+                with mock.patch.object(selfupdate, "maybe", return_value=did):
+                    agent.tick(self.cfg, self.tmp, LOG, installed=True, leave=leave)
+                fleet._save(self.cfg, last_tried=None)
+            self.assertEqual(len(left), 2)
+
     @unittest.skipUnless(os.name == "nt", "Windows only")
     def test_a_folder_somebody_else_made_is_not_believed(self):
         folder = self.tmp / "ShadowFiler Agent"

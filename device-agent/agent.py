@@ -29,6 +29,7 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -46,7 +47,7 @@ import fleet  # noqa: E402
 import network  # noqa: E402
 import selfupdate  # noqa: E402
 
-VERSION = "0.4.0"
+VERSION = "0.4.5"
 SERVICE = "ShadowFilerAgent"
 NAME = "ShadowFiler Agent"
 REG_KEY = r"SOFTWARE\ShadowFiler Agent"
@@ -254,7 +255,31 @@ def enrol_if_asked(cfg: dict, log, registry=_registry, now: datetime | None = No
 
 
 # --------------------------------------------------------------------------- the service's work
-def tick(cfg: dict, folder: Path, log, installed: bool) -> None:
+def version_on_disk(app: Path = HERE) -> str | None:
+    """The version of the agent.py that is installed now, which after an update is not the one running."""
+    try:
+        found = re.search(r'^VERSION = "(\d+\.\d+\.\d+)"$', (app / "agent.py").read_text(encoding="utf-8"), re.M)
+    except OSError:
+        return None
+    return found.group(1) if found else None
+
+
+def make_way(log, why: str) -> None:
+    """End this process without telling Windows the service stopped, so that Windows starts it again in a
+    minute (settle_service set that up). This is how an update takes effect: Windows Installer replaces the
+    files but does not restart a service whose program file did not change, which on 13 Oct 2026 left 0.4.2
+    running from memory with 0.4.3 on the disk. Leaving also frees the files while they are replaced."""
+    log.info("%s; leaving so that Windows starts the service again", why)
+    logging.shutdown()
+    os._exit(3)
+
+
+def tick(cfg: dict, folder: Path, log, installed: bool, leave=make_way) -> None:
+    if installed:
+        on_disk = version_on_disk()
+        if on_disk and on_disk != VERSION:
+            leave(log, f"version {on_disk} is installed and this is still {VERSION}")
+            return
     if not fleet.status(cfg)["enrolled"]:
         enrol_if_asked(cfg, log)
     if not fleet.due(cfg):
@@ -271,6 +296,8 @@ def tick(cfg: dict, folder: Path, log, installed: bool) -> None:
         did = selfupdate.maybe(cfg, VERSION, folder / "updates", log=log, installed=installed)
         if did not in ("up to date", "off", "waiting before trying again"):
             log.info("update: %s", did)
+        if installed and did.startswith("installing "):
+            leave(log, "the installer has been started")
 
 
 def work(stop: threading.Event, folder: Path, installed: bool) -> None:

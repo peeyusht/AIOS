@@ -132,6 +132,28 @@ def wxs(work: Path, version: str) -> str:
 """
 
 
+def remove_old_version_last(msi: Path) -> None:
+    """An upgrade must take the old version away AFTER the new one is in place. wixl schedules it first, and
+    Windows Installer has by then already decided that python.exe and every DLL "are there, same version,
+    need no copying": it then removes them with the old version, and the service with them. That is what the
+    first self-update did on 13 Oct 2026 (0.4.0 to 0.4.1: installed "successfully", no python.exe, no service).
+    Removed last, the old version only gives up what the new one does not share."""
+    table = Path("/tmp/InstallExecuteSequence.idt")
+    text = subprocess.run(["msiinfo", "export", str(msi), "InstallExecuteSequence"], check=True, capture_output=True, text=True).stdout
+    lines = text.splitlines()
+    final = next(int(x.split("\t")[2]) for x in lines if x.startswith("InstallFinalize\t"))
+    moved = f"RemoveExistingProducts\t\t{final + 100}"
+    fixed = [moved if x.startswith("RemoveExistingProducts\t") else x for x in lines]
+    if fixed == lines:
+        sys.exit("The installer has no RemoveExistingProducts step to move: upgrades would not work.")
+    table.write_bytes(("\r\n".join(fixed) + "\r\n").encode("ascii"))
+    subprocess.run(["msibuild", str(msi), "-i", str(table)], check=True)
+    after = subprocess.run(["msiinfo", "export", str(msi), "InstallExecuteSequence"], check=True, capture_output=True, text=True).stdout
+    if moved not in after.splitlines():
+        sys.exit("The upgrade step could not be moved to the end of the installer.")
+
+
+
 def main() -> None:
     src, out, keys = Path("/src"), Path("/out"), Path("/keys")
     work = Path("/tmp/stage")
@@ -141,6 +163,7 @@ def main() -> None:
     msi = out / f"ShadowFilerAgent-{version}.msi"
     out.mkdir(parents=True, exist_ok=True)
     subprocess.run(["wixl", "-a", "x64", "-o", str(msi), str(desc)], check=True)
+    remove_old_version_last(msi)
     n = sum(1 for p in work.rglob("*") if p.is_file())
     print(f"{msi.name}: {msi.stat().st_size / 1e6:.1f} MB, {n} files, version {version}")
 

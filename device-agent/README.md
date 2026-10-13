@@ -51,7 +51,7 @@ and three Windows wheels from PyPI.
 
 Make an enrolment token in the console (Access), then on the PC, from an administrator's prompt:
 ```
-msiexec /i ShadowFilerAgent-0.4.0.msi /qn SERVER=https://fleet.example.com TOKEN=sfe_...
+msiexec /i ShadowFilerAgent-0.4.5.msi /qn SERVER=https://fleet.example.com TOKEN=sfe_...
 ```
 or install first and enrol later:
 ```
@@ -79,6 +79,14 @@ docker compose run --rm manage release withdraw 0.4.1
 report and installs it; an agent never goes back to an older version, tries a version at most three times,
 and reports its version with every check-in (the console's device list shows it).
 
+How an update takes effect: the agent starts Windows Installer and ends its own process; the files are
+replaced; Windows starts the service again after a minute (the service's recovery setting). Two faults were
+found only by doing this for real (13 Oct 2026), so **after any change to `build/make_msi.py` or the service
+loop, install the previous version on a PC and let it update itself before publishing**:
+- the old version must be removed after the new one is in place (`remove_old_version_last`), or Windows
+  Installer deletes `python.exe` and the service;
+- Windows Installer does not restart a service whose program file is unchanged, hence the agent leaving.
+
 ## Try it without installing
 
 ```
@@ -93,7 +101,7 @@ With `--data` the agent runs as you, keeps its state in that folder and never in
 ```
 ..\shadow-filer\.venv\Scripts\python -m unittest discover -s tests
 ```
-13 tests: what a release must be, every way an update is refused, enrolment from what the installer left,
+14 tests: what a release must be, every way an update is refused, enrolment from what the installer left,
 a person's settings and programs outlasting their signing out, the folder that somebody else made, and what
 the installer holds. The server's side (signed requests, replay, releases) is in `../server/tests`.
 
@@ -106,3 +114,5 @@ the installer holds. The server's side (signed requests, replay, releases) is in
   was running.
 - The PC's private key is sealed by Windows for SYSTEM (DPAPI), not held in the TPM.
 - Everybody gets a release at once: no rings, no per-organisation choice.
+- Tried on one PC with one person. Not tried: several people on a PC, domain or Entra ID accounts, Windows
+  Home, BitLocker on, a release that changes the bundled Python, uninstalling.
