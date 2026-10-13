@@ -13,6 +13,7 @@ admin keys and enrolment tokens are made here. Each secret is printed once and o
   python -m app.manage secret-key                    a key for FLEET_SECRET_KEY (encrypts second-factor secrets)
 """
 import argparse
+import json
 import os
 import secrets
 import sys
@@ -67,6 +68,35 @@ def create_token(c, org, uses: int = 1, days: int = 7, label: str = "") -> str:
     return token
 
 
+def add_release(c, manifest_text: str, signature: str, package: bytes) -> str:
+    """Offer a release of the device agent to this server's devices. Refused unless it is signed with the
+    release key and the installer is the one the manifest describes: a server should not hand out what no
+    agent would accept."""
+    import release as rel
+    m = rel.verify(manifest_text, signature)
+    rel.check_package(m, package)
+    c.execute("INSERT INTO agent_releases (version, manifest, signature, package) VALUES (%s,%s,%s,%s) "
+              "ON CONFLICT (version) DO UPDATE SET manifest = EXCLUDED.manifest, signature = EXCLUDED.signature, "
+              "package = EXCLUDED.package, published_at = now(), withdrawn = false",
+              (m["version"], manifest_text, signature, package))
+    return m["version"]
+
+
+def release_from_folder(folder: Path, version: str | None = None) -> tuple:
+    """(manifest text, signature, installer bytes) of the release in a folder as the build leaves it."""
+    found = sorted(folder.glob(f"*{version}.json" if version else "*.json"))
+    if len(found) != 1:
+        sys.exit(f"Expected one release manifest (*.json) in {folder}, found {len(found)}. Name the version with --version.")
+    text = found[0].read_text(encoding="utf-8")
+    sig = found[0].with_suffix(".sig")
+    try:
+        name = json.loads(text)["file"]
+        package = (folder / Path(str(name)).name).read_bytes()
+        return text, sig.read_text(encoding="ascii").strip(), package
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        sys.exit(f"The release in {folder} is not complete (manifest, .sig and the .msi it names): {e}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="python -m app.manage")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -88,6 +118,10 @@ def main() -> None:
     t.add_argument("--uses", type=int, default=1)
     t.add_argument("--days", type=int, default=7)
     t.add_argument("--label", default="")
+    r = sub.add_parser("release", help="offer a signed release of the device agent to this server's devices")
+    r.add_argument("action", choices=["add", "list", "withdraw"])
+    r.add_argument("what", nargs="?", default="", help="add: the folder the build wrote; withdraw: the version")
+    r.add_argument("--version", default="")
     a = ap.parse_args()
     if a.cmd == "secret-key":       # needs no database
         from cryptography.fernet import Fernet
@@ -115,6 +149,25 @@ def main() -> None:
             base = (os.environ.get("PUBLIC_URL") or "http://127.0.0.1:8770").rstrip("/")
             print(f"{a.email} is {a.role} of {a.org!r}. Their link to set a password (works once, for {auth.SETUP_DAYS} days):")
             print(f"{base}/#/setup/{token}")
+        elif a.cmd == "release":
+            if a.action == "add":
+                if not a.what:
+                    sys.exit("Usage: manage release add <folder with the .msi, .json and .sig>")
+                try:
+                    v = add_release(c, *release_from_folder(Path(a.what), a.version or None))
+                except ValueError as e:
+                    sys.exit(f"Not published: {e}")
+                print(f"Release {v} is on offer. Each device asks at its next report and installs it if it is newer than what it runs.")
+            elif a.action == "withdraw":
+                n = c.execute("UPDATE agent_releases SET withdrawn = true WHERE version = %s", (a.what,)).rowcount
+                print(f"Release {a.what} is no longer offered." if n else f"No release {a.what!r}.")
+                print("A PC that already installed it keeps it: an agent never goes back to an older version.")
+            else:
+                rows = c.execute("SELECT version, published_at, withdrawn, octet_length(package) FROM agent_releases ORDER BY published_at").fetchall()
+                for v, at, gone, size in rows:
+                    print(f"{v}  {at:%Y-%m-%d %H:%M}  {size / 1e6:.1f} MB{'  withdrawn' if gone else ''}")
+                if not rows:
+                    print("No releases.")
         elif a.cmd == "list":
             for name, n in c.execute("SELECT o.name, count(d.id) FROM organisations o LEFT JOIN devices d ON d.org_id = o.id GROUP BY o.name ORDER BY o.name"):
                 print(f"{name}: {n} device(s)")

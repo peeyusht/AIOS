@@ -1,0 +1,21 @@
+# Builds the device agent's installer in a container:
+#
+#   docker compose run --rm --build build        ->  dist/ShadowFilerAgent-<version>.msi  (+ .json and .sig)
+#
+# keys/ is read-only inside the container and is never part of the image:
+#   keys/release-key.private.pem   signs the release manifest (without it no agent takes the build as an update)
+#   keys/codesign.pfx              optional: a code-signing certificate, with CODESIGN_PASSWORD in the environment
+name: aios-agent-build
+
+services:
+  build:
+    build: {context: .., dockerfile: device-agent/build/Dockerfile}
+    image: aios-agent-build
+    network_mode: none          # the build itself needs no network; signing with a timestamp server would
+    environment:
+      AGENT_VERSION: ${AGENT_VERSION:-}             # only for trying an upgrade; a real release changes agent.py
+      CODESIGN_PASSWORD: ${CODESIGN_PASSWORD:-}
+      CODESIGN_TIMESTAMP: ${CODESIGN_TIMESTAMP:-}
+    volumes:
+      - ./dist:/out
+      - ./keys:/keys:ro

@@ -1,8 +1,9 @@
 # Architecture: from one PC to a managed fleet
 
-Status on 12 Oct 2026: the single-PC product is built (`shadow-filer/`). Phases 1 to 3 of the central
-server are built (`server/`, and `shadow-filer/fleet.py` on the agent). Phases 4 to 6 are planned, not
-started.
+Status on 13 Oct 2026: the single-PC product is built (`shadow-filer/`). Phases 1 to 3 of the central
+server are built (`server/`, and `shadow-filer/fleet.py` on the agent). Phase 4 is built except for Windows'
+own code signing, which needs a certificate we do not have (`device-agent/`). Phases 5 and 6 are planned,
+not started.
 
 ## What the product is
 
@@ -49,7 +50,13 @@ says which.
 ## Components
 
 **Agent** (`shadow-filer/`). Today a user-mode process started by Task Scheduler. `fleet.py` adds enrolment
-and a check-in loop. From phase 4 it runs as a Windows service with a signed installer and self-update.
+and a check-in loop.
+
+**Device agent** (`device-agent/`, phase 4). What a customer installs: a Windows service that only reads and
+reports. It shares five modules with the agent above (`fleet.py`, `apps.py`, `services.py`, `network.py`,
+`compliance.py`) and holds none of the code that changes a PC. One installer (.msi, built in a container)
+carries its own Python. It runs as SYSTEM, keeps its key and state in a folder closed to other accounts,
+listens on no port, and installs newer versions of itself when they are signed with the release key.
 
 **API service** (`server/app/main.py`, FastAPI). Three groups of calls: agents (`/api/v1/enrol`,
 `/api/v1/checkin`), console (`/api/v1/devices`, ...), and health. Stateless; any number can run behind the
@@ -111,7 +118,9 @@ Phase 3 tables:
 | `recovery_codes` | eight per person, hashed, each good once |
 | `share_links` | read-only links for someone without an account, with expiry and a count of openings |
 
-Phase 5 adds `commands` and `command_results`.
+Phase 4 adds `agent_releases` (the agent installers this server passes on; the same for every organisation,
+written only by `manage release add`) and two columns on `devices`: the device's public key and the last
+stamp it signed. Phase 5 adds `commands` and `command_results`.
 
 **Separation between customers** is enforced by the database, not only by the application. Every table with
 customer data has an `org_id` and row-level security with `FORCE ROW LEVEL SECURITY`; the API connects as a
@@ -125,10 +134,19 @@ customer's data. `server/tests/test_server.py` proves it by querying one organis
 ## Identity and trust
 
 - **Enrolment.** An administrator creates a token for an organisation (limited uses, an expiry). The agent
-  presents it once and receives a device id and a random 256-bit device key. The server stores only SHA-256
-  hashes of tokens and keys.
-- **Check-in.** The agent sends its key as a bearer credential over TLS. Phase 4 replaces this with a key
-  pair generated on the device (the private key never leaves it) and requests signed by it.
+  makes a key pair (Ed25519), presents the token and the public half once, signs that request to show it
+  holds the other half, and receives a device id. The server stores the token's SHA-256 and the public key:
+  nothing with which somebody could pose as the device.
+- **Check-in.** Every request from a device is signed: the method, the path, the device's clock and the
+  hash of the body. The clock must be within ten minutes of the server's and later than the last one that
+  device used, so a request read off the wire cannot be sent again. The private key stays on the PC, sealed
+  by Windows for the account the agent runs as.
+- **Agent releases.** A release is an installer, a manifest (version, file, size, SHA-256) and a signature
+  over the manifest made with the release key, whose private half is kept off every server. An agent
+  installs only what that key signed, only a higher version than its own, only a file that matches the
+  manifest. The server passes releases on and cannot make one: one that was broken into can withhold an
+  update, not replace it. This is the one way anything gets installed on a PC through the server, and the
+  agent asks for it; there is still no command channel.
 - **Console.** Named people. Each signs in with an address and password, then a code from an authenticator
   app (required for everyone; eight one-time recovery codes for a lost phone). Roles: **auditor** reads,
   **admin** also accepts checks, records declarations, makes share links and enrolment tokens and removes
@@ -170,14 +188,18 @@ result is in the audit log. The local console remains the place an owner can ref
 
 ## Hard parts, known in advance
 
-- **A service cannot see per-user things**: programs installed for one user, the lock setting, AutoPlay. The
-  service agent needs a per-user helper or has to read each user's registry hive.
-- **winget does not run normally as a service.** Remote updates need another mechanism or a workaround. This
-  is untested and the least certain piece of the plan.
+- **A service cannot see per-user things**: programs installed for one user, the lock setting, AutoPlay.
+  Solved in phase 4 without a helper: the service reads the registry part of each signed-in account, takes
+  the account that signed in last as "the person", and keeps the last reading for accounts that have signed
+  out. The cost: a program somebody installed for themselves is unknown until they sign in once.
+- **winget does not run normally as a service.** The device agent therefore does not report which programs
+  have a newer version. Remote updates (phase 5) need another mechanism; still the least certain piece.
 - **Custody of customers' inventories**: backups, breach responsibility, data-protection law per country.
 - **A compromised server could push commands to every PC**, which is why commands are signed, narrow and
   re-checked on the device.
-- **Code signing.** Unsigned agents are flagged by antivirus and cannot be updated safely in the field.
+- **Code signing.** Two separate things. Updates are safe without a certificate: they are checked against
+  our own release key. But the installer is not signed for Windows until we buy a certificate, so Windows
+  shows "unknown publisher" and an antivirus may distrust it.
 
 ## Phases
 
@@ -186,12 +208,12 @@ result is in the audit log. The local console remains the place an owner can ref
 | 1. Pipeline proof | server, database, enrolment, the user-mode agent uploading inventory, a fleet device list | built |
 | 2. Central judging | CVE, end-of-life and compliance on the server; per-device pages and a fleet dashboard; the evidence report per device and per organisation | built |
 | 3. Organisations and roles | sign-in with multi-factor, owner / admin / auditor roles, share link | built |
-| 4. Service agent and installer | runs as a service, signed, self-updating, per-user helper, device key pair | not started |
+| 4. Service agent and installer | runs as a service, self-updating from signed releases, per-user facts without a helper, device key pair | built; Windows code signing waits for a certificate |
 | 5. Remote actions | signed command queue, audit, approvals | not started |
 | 6. Hardening | TLS proxy, rate limits, backups, monitoring, penetration test, published data list | not started |
 
-Phases 1 to 3 are enough to show a broker or a first customer. Phase 4 should wait until someone has said
-the report is worth paying for.
+Phases 1 to 3 are enough to show a broker or a first customer. Phase 4 was built on 13 Oct 2026 at the
+owner's request, before anybody had said the report is worth paying for.
 
 ## Decisions taken (12 Oct 2026)
 

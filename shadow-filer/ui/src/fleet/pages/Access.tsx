@@ -1,7 +1,7 @@
 /* Who has access and through what: people and their roles, share links for someone without an account,
    enrolment tokens for PCs, and your own password. */
 import { useState, type ReactNode } from "react";
-import { Copy, Link2, MonitorSmartphone, UserPlus, X } from "lucide-react";
+import { Copy, Download, Link2, MonitorSmartphone, UserPlus, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -156,7 +156,7 @@ export function AccessPage() {
   }); };
   const addToken = (e: React.FormEvent) => { e.preventDefault(); void run(async () => {
     const r = await api.addEnrolmentToken(tokenLabel.trim(), Number(uses) || 1, 7);
-    setOnce({ title: "Enrolment token", value: r.enrolment_token, about: <>On each PC: <span className="path">shadow_agent.py fleet enrol {window.location.origin} &lt;token&gt;</span>. Good for {r.uses} PC{r.uses === 1 ? "" : "s"}, for {r.days} days.</> });
+    setOnce({ title: "Enrolment token", value: r.enrolment_token, about: <>On each PC, from an administrator's prompt: <span className="path">msiexec /i ShadowFilerAgent-{d?.agent_release ?? "x.y.z"}.msi /qn SERVER={window.location.origin} TOKEN=&lt;token&gt;</span>. On a PC that already has the agent: <span className="path">sfagent enrol {window.location.origin} &lt;token&gt;</span>. Good for {r.uses} PC{r.uses === 1 ? "" : "s"}, for {r.days} days.</> });
     setTokenLabel("");
   }); };
   const QUESTION: Record<string, (u: Person, role?: Role) => [string, string, string]> = {
@@ -220,7 +220,8 @@ export function AccessPage() {
           )}
 
           {isAdmin && (
-            <Section title="Enrolment tokens" sub="A token lets a PC join this organisation. Tokens that are used up or expired are not listed.">
+            <Section title="Enrolment tokens" sub="A token lets a PC join this organisation. Tokens that are used up or expired are not listed."
+              actions={d.agent_release ? <Button asChild variant="outline" size="sm"><a href="/api/v1/agent/installer" download><Download />Agent installer {d.agent_release}</a></Button> : undefined}>
               <Card className="rounded-lg">
                 {d.enrolment_tokens.length > 0 && (
                   <div className="divide-y">

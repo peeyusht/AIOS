@@ -1,5 +1,7 @@
 """Fleet: enrolment, check-in, and above all WHAT is sent. Made-up PC facts go in full of things that must
 never leave (account names, paths, addresses); the test checks none of them come out. No server is contacted."""
+import base64
+import hashlib
 import json
 import shutil
 import sys
@@ -75,33 +77,61 @@ class FleetTest(unittest.TestCase):
     def test_enrol_checkin_leave(self):
         calls = []
 
-        def send(url, body, key=None):
-            calls.append((url, key, sorted(body)))
-            if url.endswith("/enrol"):
-                return {"device_id": "dev-1", "device_key": "KEY-ONE", "checkin_seconds": 900}
-            return {"ok": True, "stored": ["apps", "device"]}
+        def send(server, path, body=None, sign=None):
+            data = json.dumps(body).encode()
+            calls.append((server + path, sign("POST", path, data), body, data))
+            if path.endswith("/enrol"):
+                return {"device_id": "dev-1", "checkin_seconds": 900}
+            return {"ok": True, "stored": ["apps", "device"], "agent_release": "0.9.0"}
         self.assertFalse(fleet.due(self.cfg))                                  # not enrolled: never
         self.assertEqual(fleet.checkin(self.cfg, send=send)["message"], "This PC is not enrolled.")
         st = fleet.enrol(self.cfg, "https://fleet.example.com/", "sfe_token", send=send, now=datetime(2026, 10, 12, 9))
         self.assertEqual((st["enrolled"], st["server"], st["device_id"]), (True, "https://fleet.example.com", "dev-1"))
-        self.assertNotIn("KEY-ONE", json.dumps(st))                            # the key is never handed to the console
-        self.assertEqual(calls[0], ("https://fleet.example.com/api/v1/enrol", None, ["agent_version", "name", "token"]))
+        url, head, body, data = calls[0]
+        self.assertEqual((url, sorted(body), sorted(head)), ("https://fleet.example.com/api/v1/enrol",
+                                                             ["agent_version", "name", "public_key", "token"], ["X-Signature", "X-Stamp"]))
+        # the PC made the key pair: the server is sent the public half, and a signature only the private half can make
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        public = Ed25519PublicKey.from_public_bytes(base64.b64decode(body["public_key"]))
+
+        def check(head, method, path, data):
+            text = f"SFv1\n{method}\n{path}\n{head['X-Stamp']}\n{hashlib.sha256(data).hexdigest()}".encode()
+            public.verify(base64.b64decode(head["X-Signature"]), text)          # raises when it does not fit
+        check(head, "POST", "/api/v1/enrol", data)
+        # the private half is kept sealed, and is in nothing the console or the log is given
+        kept = fleet.state(self.cfg)["device_private"]
+        private = fleet._seal(base64.b64decode(kept), False)
+        self.assertEqual((len(private), private in base64.b64decode(kept)), (32, False))
+        self.assertNotIn(kept, json.dumps(st))
+        self.assertNotIn("device_private", json.dumps(st))
         self.assertRaises(RuntimeError, fleet.enrol, self.cfg, "https://other.example.com", "t", send)     # one server at a time
         self.assertTrue(fleet.due(self.cfg, now=datetime(2026, 10, 12, 9)))
         r = fleet.checkin(self.cfg, send=send, now=datetime(2026, 10, 12, 9, 1))
-        self.assertEqual((r["ok"], r["stored"], calls[-1][:2]), (True, ["apps", "device"], ("https://fleet.example.com/api/v1/checkin", "KEY-ONE")))
+        url, head, body, data = calls[-1]
+        self.assertEqual((r["ok"], r["stored"], r["release"], url), (True, ["apps", "device"], "0.9.0", "https://fleet.example.com/api/v1/checkin"))
+        self.assertEqual(head["X-Device"], "dev-1")
+        check(head, "POST", "/api/v1/checkin", data)
+        self.assertRaises(Exception, check, head, "POST", "/api/v1/checkin", data + b" ")      # one more byte and it no longer fits
+        sign = fleet.own_signer(self.cfg)
+        stamps = [int(sign("GET", "/x", b"")["X-Stamp"]) for _ in range(50)]
+        self.assertEqual(stamps, sorted(set(stamps)))                          # each request a later stamp than the one before
         self.assertFalse(fleet.due(self.cfg, now=datetime(2026, 10, 12, 9, 10)))
         self.assertTrue(fleet.due(self.cfg, now=datetime(2026, 10, 12, 9, 16)))
 
-        def down(url, body, key=None):
+        def down(server, path, body=None, sign=None):
             raise RuntimeError("The server could not be reached (timed out).")
         r = fleet.checkin(self.cfg, send=down, now=datetime(2026, 10, 12, 9, 20))
         self.assertEqual((r["ok"], fleet.status(self.cfg)["last_error"], fleet.status(self.cfg)["last_ok"]),
                          (False, "The server could not be reached (timed out).", "2026-10-12T09:01:00"))
         self.assertFalse(fleet.due(self.cfg, now=datetime(2026, 10, 12, 9, 25)))       # a failure is not retried every tick
         fleet.leave(self.cfg)
-        self.assertEqual((fleet.status(self.cfg)["enrolled"], fleet.state(self.cfg).get("device_key")), (False, None))
+        self.assertEqual((fleet.status(self.cfg)["enrolled"], fleet.state(self.cfg).get("device_private")), (False, None))
         self.assertFalse(fleet.due(self.cfg))
+        # a PC enrolled before key pairs has to enrol again, and is told so
+        fleet._save(self.cfg, server="https://fleet.example.com", device_id="dev-0", device_key="OLD-KEY")
+        st = fleet.status(self.cfg)
+        self.assertEqual((st["enrolled"], "enrol it again" in st["last_error"], fleet.due(self.cfg)), (False, True, False))
+        self.assertIn("enrol it again", fleet.checkin(self.cfg, send=send)["message"])
 
     def test_only_https(self):
         for ok in ("https://fleet.example.com", "https://fleet.example.com/base/", "http://localhost:8770", "http://127.0.0.1:8770"):

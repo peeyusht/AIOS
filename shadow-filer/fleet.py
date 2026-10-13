@@ -22,18 +22,30 @@ NEVER SENT, and `payload()` is built so they cannot slip in (it copies named fie
   list of neighbouring devices; the routing table; DNS servers and the hosts file; share names; the text of
   the update log.
 
-Transport: HTTPS only; a plain http:// server is refused unless it is localhost (development). The device
-key is kept in the agent's database (which is never committed); phase 4 replaces it with a key pair.
+Transport: HTTPS only; a plain http:// server is refused unless it is localhost (development).
+
+Identity: when it enrols, the PC makes a key pair of its own (Ed25519). The server gets the public half; the
+private half never leaves this PC and is kept in the agent's database, sealed by Windows for the account the
+agent runs as (DPAPI). Every request is signed (see `signer`), so the server holds nothing with which
+somebody could pose as this PC. `status()` never returns the key and it is never logged.
+
+Used by two programs: this file-organising agent, and the device agent that is installed on a customer's PC
+as a Windows service (device-agent/), which passes its own settings and its own reading of the PC to
+`payload()`.
 """
+import base64
+import hashlib
 import json
+import os
 import socket
 import sqlite3
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
-AGENT_VERSION = "0.1"
+AGENT_VERSION = "0.2"       # the device agent sets its own (device-agent/agent.py)
 CHECK_MINUTES = 15
 TIMEOUT = 30
 
@@ -55,17 +67,20 @@ def _steady(e: dict) -> bool:
     return e["reach"] == "network" and not (e["port"] >= 49152 and (e["proto"] == "UDP" or e["windows"]))
 
 
-def payload(cfg: dict) -> dict:
+def payload(cfg: dict, settings: dict | None = None, posture=None) -> dict:
     """Exactly what a check-in sends. Reads what the other modules already hold; asks Windows only for the
-    settings read the Compliance page also makes."""
+    settings read the Compliance page also makes. The device agent has no Library settings and reads the PC's
+    settings its own way, so it passes both in; what is picked out of them is the same either way."""
     import apps
     import compliance
-    import library
     import network
     import services
-    s = library.settings(cfg)
+    if settings is None:
+        import library
+        settings = library.settings(cfg)
+    s = settings
     snaps = {}
-    raw = compliance._posture()
+    raw = posture() if posture else compliance._posture()
     if raw:
         snaps["device"] = {"name": raw.get("computer") or "", "manufacturer": raw.get("manufacturer") or "", "model": raw.get("model") or "",
                            "serial": compliance.serial(raw.get("serial")), "windows": compliance.windows_name(raw),
@@ -151,9 +166,71 @@ def _save(cfg: dict, **values) -> None:
 def status(cfg: dict) -> dict:
     """What the console may show: never the key itself."""
     s = state(cfg)
-    return {"enrolled": bool(s.get("device_key")), "server": s.get("server"), "device_id": s.get("device_id"),
-            "enrolled_at": s.get("enrolled_at"), "last_ok": s.get("last_ok"), "last_error": s.get("last_error") or None,
-            "last_stored": s.get("last_stored")}
+    out = {"enrolled": bool(s.get("device_private")), "server": s.get("server"), "device_id": s.get("device_id"),
+           "enrolled_at": s.get("enrolled_at"), "last_ok": s.get("last_ok"), "last_error": s.get("last_error") or None,
+           "last_stored": s.get("last_stored")}
+    if s.get("device_key") and not out["enrolled"]:
+        out["last_error"] = "This PC was enrolled with an older agent. Run 'fleet leave', then enrol it again with a new token."
+    return out
+
+
+# --------------------------------------------------------------------------- the PC's own key
+def _seal(data: bytes, seal: bool) -> bytes:
+    """Windows keeps the key readable only for the account the agent runs as (DPAPI). Elsewhere: as it is."""
+    if os.name != "nt":
+        return data
+    import ctypes
+    from ctypes import wintypes
+
+    class Blob(ctypes.Structure):
+        _fields_ = [("n", wintypes.DWORD), ("p", ctypes.POINTER(ctypes.c_char))]
+    buf = ctypes.create_string_buffer(data, len(data))
+    src, out = Blob(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char))), Blob()
+    crypt = ctypes.WinDLL("crypt32", use_last_error=True)
+    fn = crypt.CryptProtectData if seal else crypt.CryptUnprotectData
+    if not fn(ctypes.byref(src), None, None, None, None, 0x1, ctypes.byref(out)):       # 0x1: never show a prompt
+        raise RuntimeError("Windows could not open this PC's fleet key (it belongs to another Windows account). Run 'fleet leave' and enrol again.")
+    try:
+        return ctypes.string_at(out.p, out.n)
+    finally:
+        free = ctypes.WinDLL("kernel32").LocalFree
+        free.argtypes = [ctypes.c_void_p]
+        free(ctypes.cast(out.p, ctypes.c_void_p))
+
+
+def new_key() -> tuple:
+    """(private half as 32 bytes, public half as text) of a new key pair."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    key = Ed25519PrivateKey.generate()
+    private = key.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
+    public = key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    return private, base64.b64encode(public).decode("ascii")
+
+
+def signer(private: bytes, device_id: str | None = None):
+    """Makes the three headers that prove a request comes from this PC: who, when, and a signature over the
+    method, the path, the time and the body's hash. The time only goes up, so the server can refuse a request
+    it has seen before."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    key, last = Ed25519PrivateKey.from_private_bytes(private), [0]
+
+    def headers(method: str, path: str, data: bytes) -> dict:
+        last[0] = stamp = max(int(time.time() * 1000), last[0] + 1)
+        text = f"SFv1\n{method.upper()}\n{path}\n{stamp}\n{hashlib.sha256(data).hexdigest()}".encode("utf-8")
+        h = {"X-Stamp": str(stamp), "X-Signature": base64.b64encode(key.sign(text)).decode("ascii")}
+        if device_id:
+            h["X-Device"] = device_id
+        return h
+    return headers
+
+
+def own_signer(cfg: dict):
+    """The signer for this PC's stored key. None when the PC is not enrolled."""
+    s = state(cfg)
+    if not s.get("device_private"):
+        return None
+    return signer(_seal(base64.b64decode(s["device_private"]), False), s.get("device_id"))
 
 
 # --------------------------------------------------------------------------- talking to the server
@@ -167,13 +244,21 @@ def check_server(server: str) -> str:
     return f"{u.scheme}://{u.netloc}{u.path.rstrip('/')}"
 
 
-def post(url: str, body: dict, key: str | None = None) -> dict:
-    data = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(url, data=data, method="POST", headers={
+def call(server: str, path: str, body: dict | None = None, sign=None, limit: int = 0):
+    """One request to the fleet server: POST with a body, GET without. `sign` is this PC's signer. With `limit`
+    the answer is a file of at most that many bytes and comes back as bytes; otherwise it is JSON."""
+    data = json.dumps(body).encode("utf-8") if body is not None else b""
+    method = "POST" if body is not None else "GET"
+    req = urllib.request.Request(server + path, data=data if body is not None else None, method=method, headers={
         "Content-Type": "application/json", "User-Agent": f"ShadowFiler-agent/{AGENT_VERSION}",
-        **({"Authorization": "Bearer " + key} if key else {})})
+        **(sign(method, path, data) if sign else {})})
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            if limit:
+                got = r.read(limit + 1)
+                if len(got) > limit:
+                    raise RuntimeError("The server sent more than was announced.")
+                return got
             return json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         try:
@@ -185,37 +270,43 @@ def post(url: str, body: dict, key: str | None = None) -> dict:
         raise RuntimeError(f"The server could not be reached ({getattr(e, 'reason', e)}).") from None
 
 
-def enrol(cfg: dict, server: str, token: str, send=post, now: datetime | None = None) -> dict:
-    """Join an organisation with a one-time token. From here on this PC reports to that server."""
+def enrol(cfg: dict, server: str, token: str, send=None, now: datetime | None = None) -> dict:
+    """Join an organisation with a one-time token. From here on this PC reports to that server. The key pair
+    is made here; the server is sent the public half and a signature that shows this PC holds the other."""
     if status(cfg)["enrolled"]:
         raise RuntimeError("This PC is already enrolled. Run 'fleet leave' first to enrol it somewhere else.")
     server = check_server(server)
-    got = send(server + "/api/v1/enrol", {"token": (token or "").strip(), "name": socket.gethostname(), "agent_version": AGENT_VERSION})
-    if not got.get("device_key") or not got.get("device_id"):
+    private, public = new_key()
+    got = (send or call)(server, "/api/v1/enrol", {"token": (token or "").strip(), "name": socket.gethostname(),
+                                         "agent_version": AGENT_VERSION, "public_key": public}, signer(private))
+    if not isinstance(got, dict) or not got.get("device_id"):
         raise RuntimeError("The server did not answer with a device identity.")
-    _save(cfg, server=server, device_id=got["device_id"], device_key=got["device_key"], last_error=None, last_ok=None,
-          enrolled_at=(now or datetime.now()).isoformat(timespec="seconds"))
+    _save(cfg, server=server, device_id=got["device_id"], device_private=base64.b64encode(_seal(private, True)).decode("ascii"),
+          device_key=None, last_error=None, last_ok=None, enrolled_at=(now or datetime.now()).isoformat(timespec="seconds"))
     return status(cfg)
 
 
 def leave(cfg: dict) -> None:
     """Forget the server and the key. The server keeps what it was sent; ask its administrator to delete it."""
-    _save(cfg, server=None, device_id=None, device_key=None, enrolled_at=None, last_ok=None, last_error=None, last_stored=None)
+    _save(cfg, server=None, device_id=None, device_key=None, device_private=None, enrolled_at=None, last_ok=None,
+          last_error=None, last_stored=None, last_tried=None, release=None)
 
 
-def checkin(cfg: dict, send=post, build=payload, now: datetime | None = None, log=None) -> dict:
+def checkin(cfg: dict, send=None, build=payload, now: datetime | None = None, log=None) -> dict:
     """Send the current picture. Failures are remembered and tried again at the next round; nothing is queued."""
     s = state(cfg)
-    if not s.get("device_key"):
-        return {"ok": False, "message": "This PC is not enrolled."}
+    if not s.get("device_private"):
+        return {"ok": False, "message": status(cfg)["last_error"] or "This PC is not enrolled."}
     stamp = (now or datetime.now()).isoformat(timespec="seconds")
     try:
         body = build(cfg)
-        got = send(s["server"] + "/api/v1/checkin", body, s["device_key"])
-        _save(cfg, last_ok=stamp, last_error=None, last_tried=stamp, last_stored=",".join(got.get("stored") or []) or "nothing changed")
+        got = (send or call)(s["server"], "/api/v1/checkin", body, own_signer(cfg))
+        # the newest agent version the server offers; only the device agent acts on it (device-agent/selfupdate.py)
+        _save(cfg, last_ok=stamp, last_error=None, last_tried=stamp, last_stored=",".join(got.get("stored") or []) or "nothing changed",
+              release=str(got.get("agent_release") or "")[:20] or None)
         if log:      # kinds only: nothing that was sent is repeated in the log
             log.info("fleet check-in: sent %s; the server kept %s", ", ".join(sorted(body["snapshots"])), ", ".join(got.get("stored") or []) or "nothing new")
-        return {"ok": True, "stored": got.get("stored") or [], "sent": sorted(body["snapshots"])}
+        return {"ok": True, "stored": got.get("stored") or [], "sent": sorted(body["snapshots"]), "release": got.get("agent_release")}
     except Exception as e:
         _save(cfg, last_error=str(e)[:300], last_tried=stamp)
         if log:
@@ -225,7 +316,7 @@ def checkin(cfg: dict, send=post, build=payload, now: datetime | None = None, lo
 
 def due(cfg: dict, now: datetime | None = None) -> bool:
     s = state(cfg)
-    if not s.get("device_key"):
+    if not s.get("device_private"):
         return False
     try:
         return (now or datetime.now()) - datetime.fromisoformat(s.get("last_tried") or "") >= timedelta(minutes=CHECK_MINUTES)

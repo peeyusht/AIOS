@@ -3,8 +3,8 @@
 # carries no test code.
 #
 # The build context is the repository root (see docker-compose.yml), because the server shares code with the
-# agent: its matching rules (cve.py, eol.py), its thresholds and control areas (compliance.py), and the
-# console's design (shadow-filer/ui). /.dockerignore lets in those files and nothing else from the agent.
+# agent: its matching rules (cve.py, eol.py), its thresholds and control areas (compliance.py), the check of
+# an agent release's signature (device-agent/release.py), and the console's design (shadow-filer/ui). /.dockerignore lets in those files and nothing else from the agent.
 
 # ---- the console: the same components and styles as the PC's own console, a second entry page
 FROM node:22-slim AS console
@@ -20,7 +20,7 @@ WORKDIR /srv
 COPY server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY server/schema.sql .
-COPY shadow-filer/cve.py shadow-filer/eol.py shadow-filer/compliance.py ./shared/
+COPY shadow-filer/cve.py shadow-filer/eol.py shadow-filer/compliance.py device-agent/release.py ./shared/
 COPY server/app ./app
 COPY --from=console /ui/dist-fleet ./app/console
 # /data/ref is the worker's volume: its copy of the public CVE and end-of-life lists

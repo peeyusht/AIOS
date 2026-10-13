@@ -51,6 +51,14 @@ function Power($sub, $set) {
   $l = $o | Where-Object { $_ -match 'Current AC Power Setting Index' } | Select-Object -First 1
   if ($l -match '0x([0-9a-fA-F]+)') { [Convert]::ToInt64($Matches[1], 16) } else { -1 }
 }
+# The device agent runs as a Windows service (SYSTEM), which has no settings of its own worth judging: there
+# the person's settings are those of the account that signed in last, read from that account's part of the
+# registry while it is loaded (user_hive says whether it was).
+$system = ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -eq 'S-1-5-18')
+$usid = ''
+if ($system) { $usid = "$(Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI' 'LastLoggedOnUserSID')" }
+$hkcu = if ($system) { "Registry::HKEY_USERS\$usid" } else { 'HKCU:' }
+$hive = if ($system) { [bool]($usid -and (Test-Path -LiteralPath $hkcu)) } else { $true }
 $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
 $bios = Get-CimInstance Win32_BIOS
 $cs = Get-CimInstance Win32_ComputerSystem
@@ -59,16 +67,22 @@ $av = @(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProd
   [pscustomobject]@{ name = "$($_.displayName)"; state = [long]$_.productState } })
 $mp = Get-MpComputerStatus
 $shell = New-Object -ComObject Shell.Application
+# Explorer's answer works for an ordinary account. Windows' own BitLocker list needs administrator rights and
+# is asked second: a service has no Explorer to ask. Its 0 / 1 / 2 (off, on, cannot tell) become 2 / 1 / 0.
+$bl = @{}
+foreach ($v in Get-CimInstance -Namespace root/cimv2/Security/MicrosoftVolumeEncryption -ClassName Win32_EncryptableVolume) {
+  if ($v.DriveLetter) { $bl["$($v.DriveLetter)"] = [int]$v.ProtectionStatus } }
 $drives = @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object {
-  [pscustomobject]@{ letter = "$($_.DeviceID)"; size = [long]$_.Size;
-    protection = [int]$shell.NameSpace($_.DeviceID).Self.ExtendedProperty('System.Volume.BitLockerProtection') } })
+  $p = [int]$shell.NameSpace($_.DeviceID).Self.ExtendedProperty('System.Volume.BitLockerProtection')
+  if ($p -eq 0 -and $bl.ContainsKey("$($_.DeviceID)")) { $p = @(2, 1, 0)[[Math]::Min(2, [Math]::Max(0, $bl["$($_.DeviceID)"]))] }
+  [pscustomobject]@{ letter = "$($_.DeviceID)"; size = [long]$_.Size; protection = $p } })
 $users = @(Get-LocalUser | ForEach-Object {
   [pscustomobject]@{ name = "$($_.Name)"; enabled = [bool]$_.Enabled; password_required = [bool]$_.PasswordRequired;
     last_logon = (Iso $_.LastLogon); sid = "$($_.SID)" } })
 $admins = @(Get-LocalGroupMember -SID 'S-1-5-32-544' | ForEach-Object {
-  [pscustomobject]@{ name = "$($_.Name)"; kind = "$($_.ObjectClass)" } })
-$who = & "$env:SystemRoot\System32\whoami.exe" /groups
-$desk = 'HKCU:\Control Panel\Desktop'
+  [pscustomobject]@{ name = "$($_.Name)"; kind = "$($_.ObjectClass)"; sid = "$($_.SID)" } })
+$who = if ($system) { '' } else { & "$env:SystemRoot\System32\whoami.exe" /groups }
+$desk = "$hkcu\Control Panel\Desktop"
 $out = [pscustomobject]@{
   computer = "$env:COMPUTERNAME"; user = "$env:USERNAME"; manufacturer = "$($cs.Manufacturer)"; model = "$($cs.Model)";
   serial = "$($bios.SerialNumber)"; edition = "$($cv.EditionID)"; display_version = "$($cv.DisplayVersion)";
@@ -79,12 +93,13 @@ $out = [pscustomobject]@{
   antivirus = $av; defender = [pscustomobject]@{ present = [bool]$mp; enabled = [bool]$mp.AntivirusEnabled;
     realtime = [bool]$mp.RealTimeProtectionEnabled; signature_age = if ($mp) { [int]$mp.AntivirusSignatureAge } else { -1 } };
   drives = $drives; users = $users; admins = $admins; admins_read = [bool]$admins;
-  me_admin = [bool]($who -match 'S-1-5-32-544');
+  me_admin = if ($system) { [bool]($usid -and (@($admins | ForEach-Object { $_.sid }) -contains $usid)) } else { [bool]($who -match 'S-1-5-32-544') };
+  as_system = $system; user_hive = $hive;
   screensaver = [pscustomobject]@{ active = "$(Reg $desk 'ScreenSaveActive')"; secure = "$(Reg $desk 'ScreenSaverIsSecure')";
     timeout = "$(Reg $desk 'ScreenSaveTimeOut')" };
   inactivity = [int](Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'InactivityTimeoutSecs');
   display_off = (Power 'SUB_VIDEO' 'VIDEOIDLE'); sleep_after = (Power 'SUB_SLEEP' 'STANDBYIDLE'); lock_on_wake = (Power 'SUB_NONE' 'CONSOLELOCK');
-  autoplay_off = [int](Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers' 'DisableAutoplay');
+  autoplay_off = [int](Reg "$hkcu\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers" 'DisableAutoplay');
   autorun_policy = [int](Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer' 'NoDriveTypeAutoRun');
   browser_policy = [pscustomobject]@{
     chrome_default = "$(Reg 'HKLM:\SOFTWARE\Policies\Google\Update' 'UpdateDefault')";

@@ -83,7 +83,7 @@ export interface Access {
   me: { email: string | null; name: string; role: Role; id: string | null };
   users: Person[]; share_links: ShareLink[];
   enrolment_tokens: { id: string; label: string; uses_left: number; expires_at: string }[];
-  organisation_keys: number; roles: Role[]; setup_days: number; session_hours: number;
+  organisation_keys: number; agent_release: string | null; roles: Role[]; setup_days: number; session_hours: number;
 }
 export interface Shared {
   organisation: string; label: string; expires_at: string; generated_at: string; devices: number; judged: number; all_passing: number;
