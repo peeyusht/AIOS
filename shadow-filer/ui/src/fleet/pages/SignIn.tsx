@@ -1,12 +1,12 @@
 /* Signing in: address and password, then a code from an authenticator app. The first time, the app is set up
    here and the recovery codes are shown once. Also the page a one-time link opens to set a password. */
 import { useEffect, useState, type ReactNode } from "react";
-import { Check, Copy, KeyRound, ShieldCheck, X } from "lucide-react";
+import { ArrowRight, Check, Copy, Eye, EyeOff, KeyRound, Lock, ShieldCheck, Smartphone, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { Card, Notice, Spin } from "@/shadow/ui";
+import { Notice, Spin } from "@/shadow/ui";
 import { api, type Stage } from "../api";
 import { refreshMe, signOut } from "../session";
 
@@ -20,21 +20,74 @@ export function Logo() {
   );
 }
 
-export function Frame({ title, children, foot, wide }: { title: string; children: ReactNode; foot?: ReactNode; wide?: boolean }) {
+/* The sign-in pages' brand panel: one deep shade of the console's blue, the same in light and dark mode. */
+const PANEL = "bg-[oklch(0.3_0.09_268)]";
+
+function PanelLogo({ size = 36 }: { size?: number }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-6 py-10 text-foreground">
-      <Card className={wide ? "w-full max-w-lg p-6" : "w-full max-w-md p-6"}>
-        <div className="mb-5 flex items-center gap-2.5">
-          <Logo />
-          <div className="leading-tight"><div className="font-semibold">Shadow Filer</div><div className="text-xs text-muted-foreground">fleet console</div></div>
-        </div>
-        <h1 className="mb-3 text-lg font-semibold">{title}</h1>
-        {children}
-        {foot && <div className="mt-4 text-xs leading-relaxed text-muted-foreground">{foot}</div>}
-      </Card>
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden>
+      <rect x="2" y="2" width="20" height="20" rx="6" fill="#fff" />
+      <path d="M7 9.5h4l1.2 1.5H17v6H7z" className="fill-[oklch(0.3_0.09_268)]" />
+    </svg>
+  );
+}
+
+const POINTS: { icon: typeof Eye; text: string }[] = [
+  { icon: Eye, text: "The agent reads and reports. It changes nothing on your PCs." },
+  { icon: ShieldCheck, text: "Everyone signs in with a password and an authenticator code." },
+  { icon: Lock, text: "Your organisation's data is kept apart from every other." },
+];
+
+function Panel() {
+  return (
+    <aside className={cn(PANEL, "relative hidden w-[520px] shrink-0 flex-col justify-between overflow-hidden px-14 py-12 text-white lg:flex")}>
+      <svg aria-hidden className="pointer-events-none absolute inset-0 size-full opacity-[.09]">
+        <defs><pattern id="sf-grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#fff" /></pattern></defs>
+        <rect width="100%" height="100%" fill="url(#sf-grid)" />
+      </svg>
+      <div className="relative flex items-center gap-3">
+        <PanelLogo />
+        <div className="leading-tight"><div className="text-[17px] font-semibold">Shadow Filer</div><div className="text-[13px] text-[#C3CBEC]">fleet console</div></div>
+      </div>
+      <div className="relative space-y-7">
+        <h2 className="text-[38px] font-semibold leading-[1.15] tracking-tight">Evidence that your PCs are looked after.</h2>
+        <p className="max-w-[380px] text-base leading-relaxed text-[#D3D9F2]">For cyber insurance and Cyber Essentials: what every PC runs, what is out of date, and which checks pass.</p>
+        <ul className="space-y-4 text-[15px] text-[#E6E9F7]">
+          {POINTS.map(({ icon: Icon, text }) => <li key={text} className="flex items-start gap-3"><Icon className="mt-0.5 size-5 shrink-0 text-[#9FB0F0]" aria-hidden />{text}</li>)}
+        </ul>
+      </div>
+      <div className="relative text-xs text-[#AEB8E2]">Shared computer? Sign out when you are done.</div>
+    </aside>
+  );
+}
+
+/** A sign-in step: brand panel on the left (wide screens), a banner above (narrow ones), the step on the right. */
+export function Frame({ title, intro, children, foot, wide }: { title: string; intro?: ReactNode; children: ReactNode; foot?: ReactNode; wide?: boolean }) {
+  return (
+    <div className="flex min-h-screen bg-background text-foreground">
+      <Panel />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className={cn(PANEL, "flex items-center gap-2.5 px-6 py-5 text-white lg:hidden")}>
+          <PanelLogo size={30} />
+          <div className="leading-tight"><div className="text-[15px] font-semibold">Shadow Filer</div><div className="text-xs text-[#C3CBEC]">fleet console</div></div>
+        </header>
+        <main className="flex flex-1 items-center justify-center px-6 py-10 sm:px-12">
+          <div className={cn("w-full", wide ? "max-w-lg" : "max-w-[400px]")}>
+            <div className="mb-7 space-y-2">
+              <h1 className="text-[28px] font-semibold tracking-tight">{title}</h1>
+              {intro && <p className="text-[15px] leading-relaxed text-muted-foreground">{intro}</p>}
+            </div>
+            {children}
+            {foot && <div className="mt-7 border-t pt-5 text-[13px] leading-relaxed text-muted-foreground">{foot}</div>}
+          </div>
+        </main>
+      </div>
     </div>
   );
 }
+
+const FIELD = "h-11 rounded-[10px] px-3.5 text-[15px]";
+const SUBMIT = "h-11 w-full rounded-[10px] text-[15px] font-semibold";
 
 function useForm() {
   const [busy, setBusy] = useState(false);
@@ -52,16 +105,25 @@ const StartAgain = () => <button className="text-primary hover:underline" onClic
 function Password({ onStage }: { onStage: (s: Stage) => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [show, setShow] = useState(false);
   const f = useForm();
   return (
-    <Frame title="Sign in" foot="An account is made by an owner of your organisation, who sends you a link to set your password.">
-      <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); void f.run(async () => onStage((await api.login(email.trim(), password)).stage)); }}>
-        <label className="block space-y-1.5"><span className="text-sm font-medium">Email address</span>
-          <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus autoComplete="username" required /></label>
-        <label className="block space-y-1.5"><span className="text-sm font-medium">Password</span>
-          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required /></label>
+    <Frame title="Sign in" intro="Use the email address your organisation invited."
+      foot="No account yet? An owner of your organisation makes one and sends you a link to set your password.">
+      <form className="space-y-[18px]" onSubmit={(e) => { e.preventDefault(); void f.run(async () => onStage((await api.login(email.trim(), password)).stage)); }}>
+        <label className="block space-y-2"><span className="text-sm font-semibold">Email address</span>
+          <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus autoComplete="username" placeholder="name@company.com" required className={FIELD} /></label>
+        <label className="block space-y-2"><span className="text-sm font-semibold">Password</span>
+          <span className="relative block">
+            <Input type={show ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required className={cn(FIELD, "pr-20")} />
+            <button type="button" onClick={() => setShow(!show)} aria-label={show ? "Hide password" : "Show password"}
+              className="absolute inset-y-0 right-1 flex items-center gap-1.5 px-3 text-[13px] font-semibold text-primary hover:underline">
+              {show ? <EyeOff className="size-4" aria-hidden /> : <Eye className="size-4" aria-hidden />}{show ? "Hide" : "Show"}
+            </button>
+          </span></label>
         {f.error && <Notice tone="danger">{f.error}</Notice>}
-        <Button type="submit" disabled={f.busy || !email.trim() || !password} className="w-full">{f.busy ? <Spin /> : <KeyRound />}Continue</Button>
+        <Button type="submit" disabled={f.busy || !email.trim() || !password} className={SUBMIT}>{f.busy ? <Spin /> : null}Continue{!f.busy && <ArrowRight />}</Button>
+        <p className="flex items-center gap-2.5 text-[13px] text-muted-foreground"><Smartphone className="size-4 shrink-0" aria-hidden />Next, a 6-digit code from your authenticator app.</p>
       </form>
     </Frame>
   );
@@ -76,13 +138,14 @@ function Code({ onDone }: { onDone: () => void }) {
     onDone();
   });
   return (
-    <Frame title="Your code" foot={<StartAgain />}>
-      <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
-        <label className="block space-y-1.5"><span className="text-sm font-medium">The 6-digit code from your authenticator app</span>
-          <Input value={code} onChange={(e) => setCode(e.target.value)} autoFocus inputMode="numeric" autoComplete="one-time-code" placeholder="123456" className="path text-base tracking-widest" /></label>
-        <p className="text-xs text-muted-foreground">No app at hand? Type one of your recovery codes instead. Each works once.</p>
+    <Frame title="Your code" intro="Open your authenticator app and type the 6-digit code it shows for this account." foot={<StartAgain />}>
+      <form className="space-y-[18px]" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+        <label className="block space-y-2"><span className="text-sm font-semibold">Code</span>
+          <Input value={code} onChange={(e) => setCode(e.target.value)} autoFocus inputMode="numeric" autoComplete="one-time-code" placeholder="000000"
+            className="path h-14 rounded-[10px] text-center text-2xl tracking-[0.4em]" /></label>
         {f.error && <Notice tone="danger">{f.error}</Notice>}
-        <Button type="submit" disabled={f.busy || code.trim().length < 6} className="w-full">{f.busy ? <Spin /> : <ShieldCheck />}Sign in</Button>
+        <Button type="submit" disabled={f.busy || code.trim().length < 6} className={SUBMIT}>{f.busy ? <Spin /> : <ShieldCheck />}Sign in</Button>
+        <p className="text-[13px] leading-relaxed text-muted-foreground">No phone at hand? Type one of your recovery codes instead. Each one works once.</p>
       </form>
     </Frame>
   );
@@ -207,16 +270,16 @@ export function SetPassword({ token }: { token: string }) {
     void f.run(async () => { await api.setup(token, a); setDone(true); });
   };
   return (
-    <Frame title="Set your password" foot="The link works once. Nobody else, not even the person who invited you, ever sees your password.">
-      <p className="mb-3 text-sm text-muted-foreground">For <span className="font-medium text-foreground">{who.email}</span>.</p>
-      <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); submit(); }}>
-        <label className="block space-y-1.5"><span className="text-sm font-medium">New password</span>
-          <Input type="password" value={a} onChange={(e) => { setA(e.target.value); f.setError(null); }} autoFocus autoComplete="new-password" /></label>
-        <label className="block space-y-1.5"><span className="text-sm font-medium">The same again</span>
-          <Input type="password" value={b} onChange={(e) => { setB(e.target.value); f.setError(null); }} autoComplete="new-password" /></label>
+    <Frame title="Set your password" intro={<>For <span className="font-medium text-foreground">{who.email}</span>.</>}
+      foot="The link works once. Nobody else, not even the person who invited you, ever sees your password.">
+      <form className="space-y-[18px]" onSubmit={(e) => { e.preventDefault(); submit(); }}>
+        <label className="block space-y-2"><span className="text-sm font-semibold">New password</span>
+          <Input type="password" value={a} onChange={(e) => { setA(e.target.value); f.setError(null); }} autoFocus autoComplete="new-password" className={FIELD} /></label>
+        <label className="block space-y-2"><span className="text-sm font-semibold">The same again</span>
+          <Input type="password" value={b} onChange={(e) => { setB(e.target.value); f.setError(null); }} autoComplete="new-password" className={FIELD} /></label>
         <PasswordPolicy password={a} email={who.email} min={who.min_password} />
         {f.error && <Notice tone="danger">{f.error}</Notice>}
-        <Button type="submit" disabled={f.busy || !a} className="w-full">{f.busy ? <Spin /> : <KeyRound />}Set password</Button>
+        <Button type="submit" disabled={f.busy || !a} className={SUBMIT}>{f.busy ? <Spin /> : <KeyRound />}Set password</Button>
       </form>
     </Frame>
   );
