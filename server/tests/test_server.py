@@ -384,6 +384,7 @@ class ServerTest(unittest.TestCase):
         x = {ch["id"]: ch for g in judge.assess({**SNAP, "posture": {**SNAP["posture"], **{k: None for k in lp}}}, None, None, {}, self.today)["controls"]
              for ch in g["checks"]}
         self.assertTrue(x["log.retention"]["detail"].startswith("The device could not read its Security log"))
+        self.assertEqual((x["log.retention"]["status"], x["log.audit"]["status"]), ("info", "info"))       # CE does not ask: a note
         self.assertNotIn("log.retention", acc())
         self.assertNotIn("upd.firmware", [ch["id"] for g in judge.assess(SNAP, None, None, {}, self.today)["controls"] for ch in g["checks"]])
         d = self.http.get(f"/api/v1/devices/{self.dev_a}", headers=self.auth(self.admin_a)).json()
