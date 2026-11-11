@@ -573,7 +573,7 @@ export interface ComplianceResponse {
   framework?: string; title?: string; scheme?: string; footer?: string; frameworks?: ComplianceFramework[];
   device: { name?: string; manufacturer?: string; model?: string; serial?: string; windows?: string; build?: string; user?: string };
   controls: ComplianceControl[];
-  declared: { key: string; title: string; about: string; answer: DeclaredAnswer; note: string; ts: string | null }[];
+  declared: { key: string; title: string; about: string; answer: DeclaredAnswer; note: string; ts: string | null; dated?: string }[];
   thresholds: Record<string, number>;
   summary: { controls_passing?: number; controls?: number; fail?: number; warn?: number; unknown?: number; passed?: number; accepted?: number;
     declared_yes?: number; declared_no?: number; declared_open?: number };

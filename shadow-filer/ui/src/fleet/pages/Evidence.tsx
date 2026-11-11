@@ -12,14 +12,15 @@ import { useCan } from "../session";
 
 const OPTS = [{ value: "yes", label: "Yes" }, { value: "no", label: "No" }, { value: "na", label: "Does not apply" }] as const;
 
-function DeclaredRow({ d, onSave, readOnly }: { d: Declared; onSave: (a: Answer, note: string) => void; readOnly: boolean }) {
+function DeclaredRow({ d, onSave, readOnly }: { d: Declared; onSave: (a: Answer, note: string, dated: string) => void; readOnly: boolean }) {
   const [note, setNote] = useState(d.note);
+  const [dated, setDated] = useState(d.dated ?? "");
   if (readOnly) {
     return (
       <div className="px-5 py-4">
         <div className="font-medium">{d.title}</div>
         <p className="text-sm text-muted-foreground">{d.about}</p>
-        <p className="mt-1 text-sm">Declared: <span className="font-medium">{d.answer ? OPTS.find((o) => o.value === d.answer)?.label : "not answered"}</span>{d.note && ` (${d.note})`}{d.ts && <span className="text-muted-foreground"> · {when(d.ts)}</span>}</p>
+        <p className="mt-1 text-sm">Declared: <span className="font-medium">{d.answer ? OPTS.find((o) => o.value === d.answer)?.label : "not answered"}</span>{d.dated && `, dated ${d.dated}`}{d.note && ` (${d.note})`}{d.ts && <span className="text-muted-foreground"> · {when(d.ts)}</span>}</p>
       </div>
     );
   }
@@ -28,13 +29,17 @@ function DeclaredRow({ d, onSave, readOnly }: { d: Declared; onSave: (a: Answer,
       <div className="min-w-0">
         <div className="font-medium">{d.title}</div>
         <p className="text-sm text-muted-foreground">{d.about}</p>
-        <Input value={note} onChange={(e) => setNote(e.target.value)} onBlur={() => note !== d.note && d.answer && onSave(d.answer, note)}
-          placeholder={d.answer ? "Note (optional)" : "Answer first, then add a note"} disabled={!d.answer} className="mt-2 h-8 max-w-md text-sm" aria-label={`Note for: ${d.title}`} />
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Input value={note} onChange={(e) => setNote(e.target.value)} onBlur={() => note !== d.note && d.answer && onSave(d.answer, note, dated)}
+            placeholder={d.answer ? "Note (optional)" : "Answer first, then add a note"} disabled={!d.answer} className="h-8 max-w-md text-sm" aria-label={`Note for: ${d.title}`} />
+          <Input type="date" value={dated} max={new Date().toISOString().slice(0, 10)} disabled={!d.answer} onChange={(e) => setDated(e.target.value)}
+            onBlur={() => dated !== (d.dated ?? "") && d.answer && onSave(d.answer, note, dated)} className="h-8 w-40 text-sm" aria-label={`Date for: ${d.title}`} title="The day this is about (the last test, drill or assessment); optional" />
+        </div>
       </div>
       <div className="flex flex-col items-start gap-1.5 min-[1000px]:items-end">
         <div className="flex items-center gap-2">
-          <Segmented label={d.title} value={(d.answer ?? "") as "yes"} onChange={(v) => onSave(d.answer === v ? null : v, note)} options={OPTS as unknown as { value: "yes"; label: string }[]} />
-          {d.answer && <button className="text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={() => onSave(null, "")}>Clear</button>}
+          <Segmented label={d.title} value={(d.answer ?? "") as "yes"} onChange={(v) => onSave(d.answer === v ? null : v, note, dated)} options={OPTS as unknown as { value: "yes"; label: string }[]} />
+          {d.answer && <button className="text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={() => onSave(null, "", "")}>Clear</button>}
         </div>
         <span className="text-xs text-muted-foreground">{d.ts ? `answered ${when(d.ts)}` : "not answered"}</span>
       </div>
@@ -54,7 +59,7 @@ const ACTION: Record<string, string> = {
 };
 const about = (e: AuditEntry) => {
   const d = e.detail as Record<string, string | null>;
-  if (e.action === "declaration.changed") return `${d.key}: ${d.answer ?? "cleared"}${d.note ? ` (${d.note})` : ""}`;
+  if (e.action === "declaration.changed") return `${d.key}: ${d.answer ?? "cleared"}${d.dated ? `, dated ${d.dated}` : ""}${d.note ? ` (${d.note})` : ""}`;
   if (e.action === "frameworks.changed") return `${((d.from as unknown as string[]) ?? []).join(", ")} → ${((d.to as unknown as string[]) ?? []).join(", ")}`;
   return [d.name, d.email, d.role, d.label, d.check, d.reason, d.left != null ? `${d.left} left` : null].filter(Boolean).join(" · ");
 };
@@ -88,8 +93,8 @@ export function EvidencePage() {
   const canEdit = useCan("admin");
   const d = q.data;
 
-  const declare = async (key: string, a: Answer, note: string) => {
-    try { await api.declare(key, a, note); await q.reload(); void log.reload(); } catch (e) { toast.error((e as Error).message); }
+  const declare = async (key: string, a: Answer, note: string, dated = "") => {
+    try { await api.declare(key, a, note, dated); await q.reload(); void log.reload(); } catch (e) { toast.error((e as Error).message); }
   };
   const report = async (how: "copy" | "save") => {
     setBusy(true);
@@ -128,7 +133,7 @@ export function EvidencePage() {
 
           <Section title="Declared by the organisation" sub="Things no program on a PC can measure. They apply to the whole organisation.">
             <Notice>These are your own statements. They are always shown as declared, never as measured.</Notice>
-            <Card className="divide-y rounded-lg">{d.declared.map((x) => <DeclaredRow key={x.key + (x.ts ?? "")} d={x} readOnly={!canEdit} onSave={(a, n) => void declare(x.key, a, n)} />)}</Card>
+            <Card className="divide-y rounded-lg">{d.declared.map((x) => <DeclaredRow key={x.key + (x.ts ?? "")} d={x} readOnly={!canEdit} onSave={(a, n, dt) => void declare(x.key, a, n, dt)} />)}</Card>
           </Section>
 
           <Section title="Record" sub="Sign-ins, enrolments, accepted exceptions, changed declarations and changes to who has access, each under the name of who did it. Entries cannot be edited or removed.">

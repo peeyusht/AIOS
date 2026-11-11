@@ -177,7 +177,8 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   framework does not ask for (USB storage and logs in Cyber Essentials, log retention in DPDP on an unlabelled
   device) is a note there even when it could not be read: it must never pull that framework's area down. Wording
   rules: the CERT-In baseline audit is something an MSME "may" have, never "mandatory"; the DPDP page is
-  "Rule 6 and 7 evidence", never "DPDP compliance"; our own mappings and numbers say so in the text.
+  "Rule 6 and 7 evidence", never "DPDP compliance"; our own mappings and numbers say so in the text. A
+  declaration can carry the date it is about (`dated`, a past day; agent column and server column).
 - `remedy.py` is the only code that changes installed software or a running service, and only while
   `library.remediate` is on (off by default; allowed by the user on 12 Oct 2026). Don't relax any of this
   without asking: one application or one service per click, never "all"; the page sends only WHICH listed

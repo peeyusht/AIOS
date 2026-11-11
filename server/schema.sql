@@ -153,6 +153,8 @@ CREATE TABLE IF NOT EXISTS declarations (
   PRIMARY KEY (org_id, key)
 );
 
+ALTER TABLE declarations ADD COLUMN IF NOT EXISTS dated date;   -- the day a declaration is about (11 Nov 2026)
+
 -- A failing check on one device that was accepted, with the reason. It keeps its failing mark.
 CREATE TABLE IF NOT EXISTS exceptions (
   org_id uuid NOT NULL REFERENCES organisations ON DELETE CASCADE,

@@ -234,7 +234,8 @@ def _reference(c) -> dict:
 
 
 def _declared(c, fw: str = "ce") -> list:
-    return judge.declared([{**r, "at": _iso(r["at"])} for r in c.execute("SELECT key, answer, note, at FROM declarations")], fw)
+    return judge.declared([{**r, "at": _iso(r["at"]), "dated": r["dated"].isoformat() if r["dated"] else ""}
+                           for r in c.execute("SELECT key, answer, note, at, dated FROM declarations")], fw)
 
 
 def _frameworks(c) -> list:
@@ -418,17 +419,20 @@ async def declare(request: Request, who: dict = Depends(editor)):
     """What the organisation states about things no program can measure. answer: yes | no | na | null (clears)."""
     body = await request.json()
     key, answer, note = _text(body.get("key"), 40), body.get("answer"), _text(body.get("note"), 500)
+    dated = judge.agent.valid_date(body.get("dated"))
     if key not in judge.KEYS or answer not in ("yes", "no", "na", None):
         raise HTTPException(400, "That is not one of the declared questions, or not an answer.")
+    if dated is None:
+        raise HTTPException(400, "The date must be a day that has passed (yyyy-mm-dd).")
     with db.org(who["org_id"]) as c:
         if answer is None:
             c.execute("DELETE FROM declarations WHERE key = %s", (key,))
         else:
-            c.execute("INSERT INTO declarations (org_id, key, answer, note, actor) VALUES (%s,%s,%s,%s,%s) "
-                      "ON CONFLICT (org_id, key) DO UPDATE SET answer = EXCLUDED.answer, note = EXCLUDED.note, at = now(), actor = EXCLUDED.actor",
-                      (who["org_id"], key, answer, note, _actor(who)))
+            c.execute("INSERT INTO declarations (org_id, key, answer, note, actor, dated) VALUES (%s,%s,%s,%s,%s,%s) "
+                      "ON CONFLICT (org_id, key) DO UPDATE SET answer = EXCLUDED.answer, note = EXCLUDED.note, at = now(), actor = EXCLUDED.actor, "
+                      "dated = EXCLUDED.dated", (who["org_id"], key, answer, note, _actor(who), dated or None))
         c.execute("INSERT INTO audit_log (org_id, actor, action, detail) VALUES (%s,%s,%s,%s)",
-                  (who["org_id"], _actor(who), "declaration.changed", Jsonb({"key": key, "answer": answer, "note": note})))
+                  (who["org_id"], _actor(who), "declaration.changed", Jsonb({"key": key, "answer": answer, "note": note, "dated": dated})))
     return {"ok": True}
 
 

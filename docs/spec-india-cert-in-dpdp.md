@@ -334,7 +334,10 @@ with an owner and a closed date. Covers VAA.1.
 side, never by the server: admin access exposed to WAN, default admin, firmware version against Fortinet's
 end-of-support list. Separate design; listed here so NES.1 has a path beyond a declaration.
 
-New declared questions (D), per profile: VPN with MFA (NES.3), CSK onboarding (EMS.3), monitoring tool
+New declared questions — BUILT 11 Nov 2026 (keys `vpn_mfa`, `csk`, `monitoring`, `logs_india`, `drills`,
+`continuity_plan`, `certin_directions`, `physical`, `risk_assessment`; CERT-In asks all nine, DPDP asks
+`continuity_plan` and `monitoring`). Every declaration, old and new, can carry a date (`dated`, a past day, on
+the PC and the server); the optional uploaded document waits for D-4. Original: new declared questions (D), per profile: VPN with MFA (NES.3), CSK onboarding (EMS.3), monitoring tool
 (LM.3), logs kept in India (LM.1), CERT-In drills (AT.2), continuity plan (DPBP.3), follow CERT-In directions
 (GC.4), physical access controls (PS.1), risk assessment date (VAA.2). Each declared answer gets an optional
 date and an optional uploaded document.

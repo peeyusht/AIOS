@@ -662,10 +662,10 @@ class Handler(BaseHTTPRequestHandler):
             import compliance
             db = cfg_now()["database"]
             if u.path == "/api/compliance/declare":
-                ok = compliance.declare(db, str(body.get("key", "")), body.get("answer"), str(body.get("note", "")))
+                ok = compliance.declare(db, str(body.get("key", "")), body.get("answer"), str(body.get("note", "")), body.get("dated"))
             else:
                 ok = compliance.accept(db, str(body.get("id", "")), body.get("reason"))
-            return self._send(200 if ok else 400, {"ok": ok, **({} if ok else {"message": "Unknown question or check."})})
+            return self._send(200 if ok else 400, {"ok": ok, **({} if ok else {"message": "Unknown question or check, or a date that is not a past day."})})
         if u.path in ("/api/remedy/update", "/api/remedy/stop-service", "/api/remedy/firewall-on"):
             # the calls that change the PC. The page sends only WHICH listed entry; what is run for it
             # (package, version, service name) comes from the agent's own lists in remedy.py
