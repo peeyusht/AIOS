@@ -5,6 +5,13 @@ export interface Release { version: string; date: string; title: string; items: 
 
 export const CHANGELOG: Release[] = [
   {
+    version: "1.6.0", date: "2026-11-11", title: "CERT-In vulnerability notes",
+    items: [
+      "Fleet: CERT-In's vulnerability notes are read once a day, and a PC's Security tab lists the notes that name a flaw found on it, each linking to cert-in.org.in.",
+      "Fleet: on the CERT-In Overview, high and critical notes that cover flaws on your PCs are listed under Needs attention.",
+    ],
+  },
+  {
     version: "1.5.0", date: "2026-11-11", title: "Version and changelog",
     items: [
       "The version and the build it came from are shown at the foot of the sidebar, on the PC's console and on the fleet console.",

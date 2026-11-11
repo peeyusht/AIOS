@@ -81,6 +81,20 @@ function SecurityTab({ d }: { d: DeviceDetail }) {
   const services = f.services.filter((x) => x.exposed || x.cves.length || x.running);
   return (
     <div className="space-y-6">
+      {(d.certin ?? []).length > 0 && (
+        <Section title="CERT-In vulnerability notes" sub="Notes from CERT-In that name a flaw found on this PC. Each opens on cert-in.org.in.">
+          <Card className="divide-y rounded-lg">
+            {(d.certin ?? []).map((n) => (
+              <div key={n.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-5 py-3 text-sm">
+                <a href={n.url} target="_blank" rel="noopener noreferrer" className="font-mono text-primary hover:underline">{n.id}</a>
+                <span className="font-medium">{n.title}</span>
+                {n.severity && <Badge variant={n.severity === "CRITICAL" ? "danger" : n.severity === "HIGH" ? "warning" : "muted"}>{n.severity.toLowerCase()}</Badge>}
+                <span className="text-muted-foreground">{n.issued} · {n.programs.join(", ")} · {n.cves.length} flaw{n.cves.length === 1 ? "" : "s"} found here</span>
+              </div>
+            ))}
+          </Card>
+        </Section>
+      )}
       <div className="grid grid-cols-4 gap-3 max-[1100px]:grid-cols-2">
         <Tile label="Used in real attacks" n={s.kev} tone={s.kev ? "text-destructive" : undefined} sub="on CISA's known-exploited list" />
         <Tile label="Critical" n={s.critical} tone={s.critical ? "text-warning" : undefined} sub="severity 9.0 or higher" />

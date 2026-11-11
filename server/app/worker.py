@@ -2,6 +2,8 @@
 The worker (phase 2): keeps one copy of the public reference lists and judges every device against them.
 
 Two jobs, in one process:
+  notes    With the lists, CERT-In's vulnerability notes (spec F-9): public pages on www.cert-in.org.in, read one
+           a second; a request names a year or a note id, nothing about a customer.
   lists    Once a day it downloads the CVE list (nvd.nist.gov), the known-exploited list (www.cisa.gov) and the
            end-of-life list (endoflife.date) into a SQLite file on its own volume. These are plain downloads
            of fixed public files: nothing about any customer or device is in a request. The first run reads
@@ -31,7 +33,7 @@ from pathlib import Path
 
 from psycopg.types.json import Jsonb
 
-from . import db, judge, mail
+from . import certin, db, judge, mail
 
 log = logging.getLogger("worker")
 REF = Path(os.environ.get("REFERENCE_DIR", "/data/ref"))
@@ -53,7 +55,8 @@ def ref_version(cfg: dict = CFG) -> str:
     if not cve.db_path(cfg).exists():
         return f"none|rules:{RULES}"
     s = cve.status(cfg)
-    return f"cve:{s['synced_at'] if s['complete'] else 'incomplete'}|eol:{eol.status(cfg)['synced_at']}|rules:{RULES}"
+    return (f"cve:{s['synced_at'] if s['complete'] else 'incomplete'}|eol:{eol.status(cfg)['synced_at']}"
+            f"|certin:{certin.status(cfg)['notes']}|rules:{RULES}")
 
 
 def publish_status(cfg: dict = CFG, syncing: bool = False) -> None:
@@ -79,6 +82,10 @@ def sync(cfg: dict = CFG) -> None:
         got = cve.sync(cfg, progress=lambda m: log.info("%s", m), log=log)
         eol.sync(cfg, log=log)
         log.info("lists: %d feed file(s) read, %d error(s)", len(got["feeds"]), len(got["errors"]))
+        try:                    # spec F-9: CERT-In's vulnerability notes (public pages; nothing about a customer)
+            certin.sync(cfg, log=log)
+        except Exception:
+            log.exception("CERT-In notes could not be read")
     except Exception:
         log.exception("the reference lists could not be updated")
     finally:
@@ -123,13 +130,14 @@ def judge_device(device_id, org_id, cfg: dict, ref: str, today, use_lists: bool 
     vul = judge.flaws(cfg, snaps) if use_lists else None
     sup = judge.support(cfg, snaps, today) if use_lists else None
     comp = judge.assess(snaps, vul, sup, accepted, today, labels)
-    summ = judge.summary(comp, vul, sup)
+    notes = certin.covering(cfg, vul) if use_lists else []
+    summ = judge.summary(comp, vul, sup, notes)
     with db.org(org_id) as c:
         c.execute("""INSERT INTO judgements (device_id, org_id, judged_at, ref, summary, security, compliance)
                      VALUES (%s,%s, now(), %s,%s,%s,%s)
                      ON CONFLICT (device_id) DO UPDATE SET judged_at = now(), ref = EXCLUDED.ref, summary = EXCLUDED.summary,
                        security = EXCLUDED.security, compliance = EXCLUDED.compliance""",
-                  (device_id, org_id, ref, Jsonb(summ), Jsonb({"flaws": vul, "support": sup}), Jsonb(comp)))
+                  (device_id, org_id, ref, Jsonb(summ), Jsonb({"flaws": vul, "support": sup, "certin": notes}), Jsonb(comp)))
         for fw, line in judge.history_lines(comp).items():
             c.execute("""INSERT INTO compliance_history (org_id, device_id, day, framework, line) VALUES (%s,%s,%s,%s,%s)
                          ON CONFLICT (device_id, day, framework) DO UPDATE SET line = EXCLUDED.line""",

@@ -131,7 +131,10 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   It is the only container that goes online: for the same three public downloads as the agent (NVD, CISA,
   endoflife.date), and, since the owner's decision D-3 of 11 Nov 2026 (spec F-3, `server/app/mail.py`), once a
   day for the DNS TXT records (SPF, DMARC, named DKIM selectors) of each organisation's own mail domain through
-  the container's resolver; that query names the domain and nothing else. Never add another request that carries
+  the container's resolver; that query names the domain and nothing else. With the lists it also reads CERT-In's
+  vulnerability notes (spec F-9, owner's yes 11 Nov 2026, `server/app/certin.py`): public HTML pages on
+  www.cert-in.org.in, one a second, a request naming a year or a note id; matched to devices by CVE id in the
+  worker. Never add another request that carries
   anything about a customer or a device, and never anything about a device at all.
   The server judges only what `fleet.payload()` sends (counts and true/false), so its evidence says how
   many, never who; do not widen the payload to make a server page nicer without asking. Declarations are

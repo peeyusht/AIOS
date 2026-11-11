@@ -43,7 +43,7 @@ if READY:
     import cve
     import eol
     import release as rel
-    from app import agents, auth, db, judge, mail, manage, people, worker
+    from app import agents, auth, certin, db, judge, mail, manage, people, worker
     from app.main import app, MAX_BODY
 
 
@@ -766,6 +766,37 @@ class ServerTest(unittest.TestCase):
         for a in ("user.added", "user.disable", "user.reset_second_factor", "share_link.created", "share_link.withdrawn", "enrolment_token.created",
                   "device.removed", "password.changed", "signin", "mfa.set_up"):
             self.assertIn(a, actions)
+
+    def test_9b_certin_notes(self):
+        """F-9: CERT-In's notes read from their pages (made-up pages here, no network) and matched to a device's CVEs."""
+        page = lambda code, cves: (f"<html><td>{code}</td><td>Multiple Vulnerabilities in Kettle Archive</td>"
+                                   "<p>Original Issue Date:November  10, 2026</p><p>Severity Rating: HIGH</p><p>Software Affected</p>"
+                                   "<li>Kettle Archive versions prior to 25.01</li><p>Overview</p><p>Text that mentions CVE-1999-0001.</p>"
+                                   "<p>CVE Name</p>" + "".join(f"<li>{c}</li>" for c in cves) + "<p>Disclaimer</p></html>")
+        n = certin.parse_note(page("CIVN-2026-0007", ["CVE-2026-0001", "CVE-2026-0009"]), "CIVN-2026-0007")
+        self.assertEqual((n["title"], n["issued"], n["severity"], n["affected"], n["cves"]),
+                         ("Multiple Vulnerabilities in Kettle Archive", "2026-11-10", "HIGH", ["Kettle Archive versions prior to 25.01"],
+                          ["CVE-2026-0001", "CVE-2026-0009"]))                  # only the CVE Name list, not the prose
+        self.assertIsNone(certin.parse_note("<html>Page Requested Currently Not available</html>", "CIVN-2026-0008"))
+        self.assertEqual(certin.list_codes("VLCODE=CIVN-2026-0002 VLCODE=CIVN-2026-0001 VLCODE=CIVN-2025-0400", 2026), ["CIVN-2026-0001", "CIVN-2026-0002"])
+        asked = []
+        def get(url):
+            asked.append(url)
+            if "VLNLIST02" in url:
+                return "VLCODE=CIVN-2026-0002"
+            code = url.split("VLCODE=")[1]
+            return page(code, ["CVE-2026-0001"]) if code in ("CIVN-2026-0001", "CIVN-2026-0002") else "<html>nothing</html>"
+        got = certin.sync(self.lists, get, self.today.replace(year=2026), pause=0)
+        self.assertEqual((got["added"], certin.status(self.lists)["notes"]), (2, 2))
+        self.assertTrue(all(u.startswith(certin.BASE + "?pageid=") for u in asked))     # only CERT-In's own pages
+        self.assertTrue(all("VLCODE=CIVN-" in u or "year=2026" in u for u in asked))   # a year or a note id, nothing else
+        asked.clear()
+        self.assertEqual(certin.sync(self.lists, get, self.today.replace(year=2026), pause=0)["added"], 0)
+        self.assertEqual(len(asked), 1)                                                # next day: the list only
+        cov = certin.covering(self.lists, {"apps": [{"name": "Kettle Archive", "cves": [{"id": "CVE-2026-0001"}]}, {"name": "Notes", "cves": []}]})
+        self.assertEqual([(c["id"], c["cves"], c["programs"]) for c in cov],
+                         [("CIVN-2026-0001", ["CVE-2026-0001"], ["Kettle Archive"]), ("CIVN-2026-0002", ["CVE-2026-0001"], ["Kettle Archive"])][::-1])
+        self.assertEqual(certin.covering(self.lists, None), [])
 
     def test_9a_agent_releases(self):
         """The server passes a release of the agent on; it cannot make one, and only a device can fetch one."""

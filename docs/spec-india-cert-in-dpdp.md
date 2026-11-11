@@ -129,7 +129,7 @@ actor)` with row-level security and a line in the isolation test.
 | PM.1 | Patch OS, applications, firmware | Windows monthly release within 14 days, auto-update on, CVEs, pending updates, browsers | M | **BUILT** `upd.windows`, `upd.automatic`, `upd.flaws`, `upd.pending`, `upd.browsers` |
 | | | F-8 BIOS/firmware version and date | M | **BUILT** 11 Nov 2026 `upd.firmware` (age; version shown on the PC only) |
 | PM.2 | Monitor vendor notices and CERT-In advisories | CVE + CISA KEV lists | S | **BUILT** (`cve.py`) |
-| | | F-9 CERT-In advisories matched to installed software | S | **NEW**. First check that CERT-In publishes something machine-readable; if not, drop it |
+| | | F-9 CERT-In advisories matched to installed software | S | **BUILT** 11 Nov 2026 (vulnerability notes, by CVE id; no feed exists, the pages are read) |
 | IM.1 | Documented incident response plan | Declared | D | **BUILT** `incident_plan` (as a question; no document, no date) |
 | IM.2 | Test the plan regularly | Last test date, reminder | W | **NEW** |
 | IM.3 | Report to CERT-In within 6 hours | F-21 incident register | W | **BUILT** 11 Nov 2026 (`incidents`, Incidents page) |
@@ -247,7 +247,13 @@ Original: Add `SMBIOSBIOSVersion` and `ReleaseDate` to the existing `Win32_BIOS`
 Fact `bios_date`. Check `upd.firmware`: warn if older than 3 years (our own number; say so). The maker's
 latest version cannot be known offline; do not claim "out of date".
 
-**F-9 CERT-In advisories (S) — INVESTIGATED 11 Nov 2026, NOT BUILT.** CERT-In publishes no feed (no RSS, Atom,
+**F-9 CERT-In advisories (S) — BUILT 11 Nov 2026** after the owner agreed to the new online step
+(`server/app/certin.py`, table `certin_note` in the worker's reference file). Daily with the lists: the year's
+list page (the 20 newest notes) and each new note's page; the first time, the year's notes by number, one a
+second, stopping after 15 numbers past the newest that do not exist. A note keeps its id, title, issue date,
+severity, "Software Affected" lines and the CVE ids under "CVE Name". A device's judgement lists the notes naming
+a CVE found on it (Security tab; high and critical ones on the CERT-In Overview). Advisories (CIAD) are not read:
+they rarely name CVEs. Investigation notes, kept: CERT-In publishes no feed (no RSS, Atom,
 JSON or CSV; checked on www.cert-in.org.in, where "Feed" appears only in "Feedback"). Vulnerability notes are HTML
 pages, readable without JavaScript, one per note (`s2cMainServlet?pageid=PUBVLNOTES01&VLCODE=CIVN-yyyy-nnnn`), with
 the note id, issue date, severity, "Software Affected" as prose, and CVE ids; lists are per year
