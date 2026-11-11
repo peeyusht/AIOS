@@ -26,6 +26,8 @@ import { CompliancePage } from "./pages/Compliance";
 import { LibraryPage } from "./pages/Library";
 import { ActivityPage } from "./pages/Activity";
 import { SettingsPage } from "./pages/Settings";
+import { ChangelogPage } from "./pages/Changelog";
+import { APP } from "@/version";
 
 export const INBOX_CHANGED = "sf-inbox-changed";
 export const WATCH_CHANGED = "sf-watch-changed";
@@ -90,7 +92,7 @@ const dashboardHash = () => window.location.hash.replace(/^#/, "") || "/dashboar
 export default function ShadowApp() {
   const path = useSyncExternalStore(subscribeHash, dashboardHash, () => "/dashboard");
   const requested = "/" + (path.split("/")[1] || "dashboard");
-  const section = NAV.some((item) => item.path === requested) ? requested : "/dashboard";
+  const section = NAV.some((item) => item.path === requested) || requested === "/changelog" ? requested : "/dashboard";
   const { dark, toggle } = useTheme();
   const mock = isMock();
   const [conn, setConn] = useState({ reachable: true, stale: false });
@@ -134,6 +136,7 @@ export default function ShadowApp() {
     case "/library": page = <LibraryPage />; break;
     case "/activity": page = <ActivityPage />; break;
     case "/settings": page = <SettingsPage status={s} />; break;
+    case "/changelog": page = <ChangelogPage />; break;
     default: page = <DashboardPage />;
   }
 
@@ -185,6 +188,9 @@ export default function ShadowApp() {
             <Button variant="ghost" size="icon" onClick={toggle} className="text-rail-foreground hover:bg-rail-active hover:text-rail-active-foreground" aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}>
               {dark ? <Sun /> : <Moon />}
             </Button>
+            {/* the release and the build, so a screenshot says which one it was; opens the changelog */}
+            <a href="#/changelog" onClick={(e) => go(e, "/changelog")} title={`${APP.label}${APP.builtAt ? ` — built ${new Date(APP.builtAt).toLocaleString()}` : ""}. What changed: Changelog.`}
+              className="font-mono text-[10px] tabular-nums text-rail-foreground/70 hover:text-rail-active-foreground hover:underline">v{APP.version}</a>
           </div>
         </aside>
 

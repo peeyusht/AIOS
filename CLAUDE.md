@@ -218,6 +218,12 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   `search.db` holds extracted text from personal documents (PAN, insurance, contracts).
 
 ## Working on it
+- Version and changelog (11 Nov 2026, the Anvay pattern): `shadow-filer/ui/package.json` "version" is the release of
+  both consoles, shown with the build's commit at the foot of each sidebar (`src/version.ts`, set by
+  `build-info.ts`; the server image gets `GIT_COMMIT` as a build argument) and opening the Changelog page. Every code
+  PR raises it and adds its entry at the top of `src/changelog.ts`, written for the people using the consoles;
+  docs-only PRs do not. Run `python scripts/check_version_bump.py` before merging; `tests/test_version.py` checks
+  that the version and the newest entry agree. The device agent keeps its own `VERSION` in `device-agent/agent.py`.
 - Python 3.12 venv: `shadow-filer\.venv` (copied from an old location: use `.venv\Scripts\python -m pip`,
   not `pip.exe`). Dependencies: `requirements.txt`. No numpy in the runtime (pure-Python vectors are fast enough).
 - UI: the user prefers to design in Lovable (project

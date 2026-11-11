@@ -9,7 +9,7 @@
 name: aios-fleet
 
 x-app: &app
-  build: {context: .., dockerfile: server/Dockerfile, target: app}      # the root: see Dockerfile
+  build: {context: .., dockerfile: server/Dockerfile, target: app, args: {GIT_COMMIT: "${GIT_COMMIT:-}"}}      # the root: see Dockerfile; GIT_COMMIT names the build in the console
   image: aios-fleet-app
 
 services:

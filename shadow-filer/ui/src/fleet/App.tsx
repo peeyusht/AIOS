@@ -17,6 +17,8 @@ import { EvidencePage } from "./pages/Evidence";
 import { IncidentsPage } from "./pages/Incidents";
 import { AccessPage } from "./pages/Access";
 import { SharedPage } from "./pages/Shared";
+import { ChangelogPage } from "@/shadow/pages/Changelog";
+import { APP } from "@/version";
 import { Logo, SetPassword, SignIn } from "./pages/SignIn";
 
 const NAV = [
@@ -52,13 +54,14 @@ function Shell({ path }: { path: string }) {
   const { me } = useSession();
   const { dark, toggle } = useTheme();
   const parts = path.split("/").filter(Boolean);
-  const section = NAV.some((n) => n.path === "/" + parts[0]) ? "/" + parts[0] : "/overview";
+  const section = NAV.some((n) => n.path === "/" + parts[0]) || parts[0] === "changelog" ? "/" + parts[0] : "/overview";
   let page: ReactNode;
   if (section === "/devices") page = parts[1] ? <DevicePage id={parts[1]} tab={parts[2]} key={parts[1]} /> : <DevicesPage />;
   else if (section === "/software") page = <SoftwarePage />;
   else if (section === "/evidence") page = <EvidencePage />;
   else if (section === "/incidents") page = <IncidentsPage />;
   else if (section === "/access") page = <AccessPage />;
+  else if (section === "/changelog") page = <ChangelogPage />;
   else page = <OverviewPage />;
   return (
     <>
@@ -86,6 +89,9 @@ function Shell({ path }: { path: string }) {
           <div className="mt-auto px-2 text-xs leading-relaxed text-muted-foreground">
             Judged on the server from what each PC reports. Nothing here can change a PC.
           </div>
+          {/* the release and the build, so a screenshot says which one it was; opens the changelog */}
+          <a href="#/changelog" className="-mx-3 mt-3 border-t border-sidebar-border px-5 pt-2.5 font-mono text-[11px] tabular-nums text-muted-foreground hover:text-foreground hover:underline"
+            title={`${APP.builtAt ? `Built ${new Date(APP.builtAt).toLocaleString()}. ` : ""}What changed: Changelog.`}>{APP.label}</a>
         </aside>
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="sticky top-0 z-20 flex h-12 items-center gap-3 border-b bg-background/85 px-6 backdrop-blur">
