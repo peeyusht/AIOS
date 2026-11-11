@@ -103,22 +103,28 @@ function ControlCard({ ctl, onAccept, onWithdraw }: { ctl: ComplianceControl; on
   );
 }
 
-function Declared({ d, onSave }: { d: ComplianceResponse["declared"][number]; onSave: (a: DeclaredAnswer, note: string) => void }) {
+function Declared({ d, onSave }: { d: ComplianceResponse["declared"][number]; onSave: (a: DeclaredAnswer, note: string, dated: string) => void }) {
   const [note, setNote] = useState(d.note);
+  const [dated, setDated] = useState(d.dated ?? "");
   const opts = [{ value: "yes", label: "Yes" }, { value: "no", label: "No" }, { value: "na", label: "Does not apply" }] as const;
-  const pick = (v: "yes" | "no" | "na") => onSave(d.answer === v ? null : v, note);
+  const pick = (v: "yes" | "no" | "na") => onSave(d.answer === v ? null : v, note, dated);
   return (
     <div data-print-row className="grid gap-3 px-5 py-4 min-[1000px]:grid-cols-[1fr_auto]">
       <div className="min-w-0">
         <div className="font-medium">{d.title}</div>
         <p className="text-sm text-muted-foreground">{d.about}</p>
-        <Input value={note} onChange={(e) => setNote(e.target.value)} onBlur={() => note !== d.note && onSave(d.answer, note)} placeholder="Note (optional)" className="mt-2 h-8 max-w-md text-sm" aria-label={`Note for: ${d.title}`} />
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Input value={note} onChange={(e) => setNote(e.target.value)} onBlur={() => note !== d.note && onSave(d.answer, note, dated)} placeholder="Note (optional)" className="h-8 max-w-md text-sm" aria-label={`Note for: ${d.title}`} />
+          <Input type="date" value={dated} max={new Date().toISOString().slice(0, 10)} disabled={!d.answer} onChange={(e) => setDated(e.target.value)}
+            onBlur={() => dated !== (d.dated ?? "") && d.answer && onSave(d.answer, note, dated)} className="h-8 w-40 text-sm" aria-label={`Date for: ${d.title}`} title="The day this is about (the last test, drill or assessment); optional" />
+        </div>
         {d.note && <p className="hidden text-sm print:block">Note: {d.note}</p>}
+        {d.dated && <p className="hidden text-sm print:block">Dated: {d.dated}</p>}
       </div>
       <div className="flex flex-col items-start gap-1.5 min-[1000px]:items-end">
         <div data-print-hide className="flex items-center gap-2">
           <Segmented label={d.title} value={(d.answer ?? "") as "yes"} onChange={(v) => pick(v)} options={opts as unknown as { value: "yes"; label: string }[]} />
-          {d.answer && <button className="text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={() => onSave(null, note)}>Clear</button>}
+          {d.answer && <button className="text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={() => onSave(null, note, "")}>Clear</button>}
         </div>
         <span className="hidden text-sm font-medium print:inline">Declared: {d.answer ? opts.find((o) => o.value === d.answer)?.label : "not answered"}</span>
         <span className="text-xs text-muted-foreground">{d.ts ? `answered ${when(d.ts)}` : "not answered"}</span>
@@ -226,7 +232,7 @@ export function CompliancePage() {
     if (await act(() => api.complianceAccept(accepting.id, reason.trim()))) q.reload();
   };
   const withdraw = async (c: ComplianceCheck) => { if (await act(() => api.complianceAccept(c.id, ""))) q.reload(); };
-  const declare = async (key: string, a: DeclaredAnswer, note: string) => { if (await act(() => api.complianceDeclare(key, a, note))) q.reload(); };
+  const declare = async (key: string, a: DeclaredAnswer, note: string, dated = "") => { if (await act(() => api.complianceDeclare(key, a, note, dated))) q.reload(); };
   const startAccept = (c: ComplianceCheck) => { setReason(""); setAccepting(c); };
 
   const dev = d?.device ?? {};
@@ -333,7 +339,7 @@ export function CompliancePage() {
                       <tr key={x.key} onClick={() => setPick({ kind: "declared", key: x.key })} className={cn("cursor-pointer border-b align-top last:border-b-0", on ? "bg-accent shadow-[inset_2px_0_0_var(--color-primary)]" : "hover:bg-muted/40")}>
                         <td className="whitespace-nowrap px-4 py-2"><span className="inline-flex min-w-[76px] items-center gap-1.5 rounded border border-dashed px-1.5 font-mono text-[11px] font-semibold leading-5 text-muted-foreground"><span aria-hidden>✎</span>{x.answer === "yes" ? "YES" : x.answer === "no" ? "NO" : x.answer === "na" ? "N/A" : "—"}</span></td>
                         <td className="px-2 py-2"><button className="text-left font-medium hover:underline" aria-pressed={on} onClick={(e) => { e.stopPropagation(); setPick({ kind: "declared", key: x.key }); }}>{x.title}</button></td>
-                        <td className="px-4 py-2 text-muted-foreground">{x.answer ? (x.note || `declared ${when(x.ts)}`) : "not answered"}</td>
+                        <td className="px-4 py-2 text-muted-foreground">{x.answer ? [x.dated && `dated ${x.dated}`, x.note || `declared ${when(x.ts)}`].filter(Boolean).join(" · ") : "not answered"}</td>
                       </tr>
                     );
                   })}
@@ -380,7 +386,7 @@ export function CompliancePage() {
             return (
               <Card className="rounded-lg">
                 <div className="px-5 pt-4"><span className="inline-flex items-center gap-1.5 rounded border border-dashed px-1.5 font-mono text-[11px] font-semibold leading-5 text-muted-foreground">✎ DECLARED</span></div>
-                <Declared key={x.key + (x.ts ?? "")} d={x} onSave={(a, n) => void declare(x.key, a, n)} />
+                <Declared key={x.key + (x.ts ?? "")} d={x} onSave={(a, n, dt) => void declare(x.key, a, n, dt)} />
                 <p className="px-5 pb-4 text-xs text-muted-foreground">Your own statement. It is shown as declared in the evidence, never as measured.</p>
               </Card>
             );
@@ -399,7 +405,7 @@ export function CompliancePage() {
           <div className="space-y-4">{controls.map((ctl) => <ControlCard key={ctl.key} ctl={ctl} onAccept={startAccept} onWithdraw={(c) => void withdraw(c)} />)}</div>
         </Section>
         <Section title="Declared by you" sub="Things a program on the PC cannot measure.">
-          <Card data-print-card className="divide-y rounded-lg">{d.declared.map((x) => <Declared key={x.key + (x.ts ?? "")} d={x} onSave={(a, n) => void declare(x.key, a, n)} />)}</Card>
+          <Card data-print-card className="divide-y rounded-lg">{d.declared.map((x) => <Declared key={x.key + (x.ts ?? "")} d={x} onSave={(a, n, dt) => void declare(x.key, a, n, dt)} />)}</Card>
         </Section>
         <Section title="History" sub="One line per control area, one square per day.">
           <Card data-print-card className="rounded-lg"><History data={d} /></Card>

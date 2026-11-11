@@ -919,7 +919,17 @@ QUESTIONS = {"mfa": "Multi-factor login is on for email and cloud services",
              "training": "Everyone who uses the PC has had security awareness training",
              "router": "The router's default password was changed and its firmware is current",
              "perimeter": "A firewall protects the office network at its edge (the router's own or a separate one)",
-             "admin_separate": "Administrator accounts are not used for email or browsing"}
+             "admin_separate": "Administrator accounts are not used for email or browsing",
+             # CERT-In and DPDP (spec section 5, new declared questions); each answer may carry a date
+             "vpn_mfa": "Remote access goes through a VPN with multi-factor login",
+             "csk": "The organisation is onboarded with the Cyber Swachhta Kendra (botnet cleaning centre)",
+             "monitoring": "A monitoring tool watches the network and privileged actions, and someone reviews it",
+             "logs_india": "Logs are kept within India",
+             "drills": "Staff took part in a CERT-In workshop or drill",
+             "continuity_plan": "There is a minimum business continuity plan",
+             "certin_directions": "CERT-In's and the regulators' directions are followed, with a named contact",
+             "physical": "Physical access to offices and equipment is controlled",
+             "risk_assessment": "A cyber security risk assessment was done"}
 
 DECLARED = (("mfa", QUESTIONS["mfa"], "Cyber Essentials v3.3: every cloud service must use it; without it the assessment fails. Insurers ask too."),
             ("backups", QUESTIONS["backups"], "Asked by insurers."),
@@ -979,7 +989,17 @@ FRAMEWORKS = {
                             ("incident_plan", "CERT-In IM.1: a documented incident response plan. Incidents are reported to CERT-In "
                                               "within 6 hours (directions under section 70B(6) of the IT Act)."),
                             ("training", "CERT-In AT.1: awareness training at least twice a year."),
-                            ("admin_separate", "CERT-In ACIM.4: administrator rights only when essential.")),
+                            ("admin_separate", "CERT-In ACIM.4: administrator rights only when essential."),
+                            ("vpn_mfa", "CERT-In NES.3: remote access over an encrypted VPN with multi-factor login."),
+                            ("csk", "CERT-In EMS.3: onboard with the Cyber Swachhta Kendra."),
+                            ("monitoring", "CERT-In LM.3: monitoring tools (recommended). Not measured by this product."),
+                            ("logs_india", "CERT-In LM.1: logs kept within Indian jurisdiction. Not measured: where logs are kept "
+                                           "cannot be seen from a PC."),
+                            ("drills", "CERT-In AT.2: take part in CERT-In workshops and drills. Give the date."),
+                            ("continuity_plan", "CERT-In DPBP.3: a minimum business continuity plan."),
+                            ("certin_directions", "CERT-In GC.4: follow CERT-In's and the regulators' directions."),
+                            ("physical", "CERT-In PS.1: physical access controls."),
+                            ("risk_assessment", "CERT-In VAA.2: a periodic risk assessment. Give the date.")),
                "footer": "This follows CERT-In's 15 elemental controls for MSMEs, as far as a PC can show them. CERT-In says an MSME "
                          "may have a yearly baseline audit by an empanelled auditor; this is not that audit and not a certificate."},
     "dpdp": {"title": "DPDP Rule 6", "scheme": "DPDP Rules 2025, Rule 6 and 7 (G.S.R. 846(E), in force 13 May 2027)",
@@ -1002,7 +1022,9 @@ FRAMEWORKS = {
                           ("incident_plan", "DPDP Rule 7: a breach is told to the Board and to the people affected, with a detailed "
                                             "report within 72 hours."),
                           ("mfa", "DPDP Rule 6(1)(b): access control over computer resources."),
-                          ("admin_separate", "DPDP Rule 6(1)(b): access control over computer resources.")),
+                          ("admin_separate", "DPDP Rule 6(1)(b): access control over computer resources."),
+                          ("continuity_plan", "DPDP Rule 6(1)(d): continued processing if personal data is compromised."),
+                          ("monitoring", "DPDP Rule 6(1)(c): logs, monitoring and review of access to personal data.")),
              "footer": "Rule 6 and 7 evidence only, as far as a PC can show it. Notice, consent, consent managers, the rights of data "
                        "principals, children's data and transfers abroad are not covered. Not a statement of DPDP compliance."}}
 DEFAULT_FRAMEWORKS = ("ce",)
@@ -1139,20 +1161,35 @@ def _conn(db_path):
         -- one line per day per framework ('2026-11-11|ce'); lines from before frameworks were Cyber Essentials
         UPDATE compliance_history SET day = day || '|ce' WHERE day NOT LIKE '%|%';
     """)
+    if "dated" not in {r[1] for r in c.execute("PRAGMA table_info(compliance_declared)")}:
+        c.execute("ALTER TABLE compliance_declared ADD COLUMN dated TEXT")      # the date a declaration is about (11 Nov 2026)
     return c
 
 
-def declare(db_path, key: str, answer: str | None, note: str = "") -> bool:
-    """answer: 'yes' | 'no' | 'na' | None (clears it). Only the questions some framework asks exist."""
-    if key not in declared_keys() or answer not in ("yes", "no", "na", None):
+def valid_date(s) -> str | None:
+    """'' for no date, the date for a yyyy-mm-dd date that is not in the future, None for anything else."""
+    if s in (None, ""):
+        return ""
+    try:
+        d = date.fromisoformat(str(s))
+    except ValueError:
+        return None
+    return d.isoformat() if len(str(s)) == 10 and d <= date.today() else None
+
+
+def declare(db_path, key: str, answer: str | None, note: str = "", dated: str | None = None) -> bool:
+    """answer: 'yes' | 'no' | 'na' | None (clears it). Only the questions some framework asks exist. `dated`: the day
+    the declaration is about (the last drill, test or assessment), never in the future; optional."""
+    dated = valid_date(dated)
+    if key not in declared_keys() or answer not in ("yes", "no", "na", None) or dated is None:
         return False
     c = _conn(db_path)
     try:
         if answer is None:
             c.execute("DELETE FROM compliance_declared WHERE key=?", (key,))
         else:
-            c.execute("INSERT OR REPLACE INTO compliance_declared VALUES (?,?,?,?)",
-                      (key, answer, (note or "").strip()[:500], datetime.now().isoformat(timespec="seconds")))
+            c.execute("INSERT OR REPLACE INTO compliance_declared (key, answer, note, ts, dated) VALUES (?,?,?,?,?)",
+                      (key, answer, (note or "").strip()[:500], datetime.now().isoformat(timespec="seconds"), dated))
         c.commit()
     finally:
         c.close()
@@ -1227,7 +1264,7 @@ def assess(cfg: dict, raw: dict, net: dict | None, vul: dict | None, appsv: dict
     # The PC itself has no labels: "holds personal data" is set on the fleet server (spec F-1).
     j = judge_framework(framework, checks, accepted)
     declared = [{"key": k, "title": QUESTIONS[k], "about": why, "answer": (said.get(k) or {}).get("answer"),
-                 "note": (said.get(k) or {}).get("note") or "", "ts": (said.get(k) or {}).get("ts")}
+                 "note": (said.get(k) or {}).get("note") or "", "ts": (said.get(k) or {}).get("ts"), "dated": (said.get(k) or {}).get("dated") or ""}
                 for k, why in FRAMEWORKS[framework]["declared"]]
     return {"assessed_at": datetime.now().isoformat(timespec="seconds"),
             "device": {"name": raw.get("computer") or "", "manufacturer": raw.get("manufacturer") or "", "model": raw.get("model") or "",
@@ -1351,7 +1388,8 @@ def as_text(v: dict) -> str:
     lines.append("DECLARED BY THE OWNER (not measured)")
     for q in v["declared"]:
         a = {"yes": "Yes", "no": "No", "na": "Does not apply", None: "Not answered"}[q["answer"]]
-        lines.append(f"  {a:<15} {q['title']}" + (f" ({q['note']})" if q["note"] else "") + (f" [{q['ts'][:10]}]" if q["ts"] else ""))
+        lines.append(f"  {a:<15} {q['title']}" + (f", dated {q['dated']}" if q.get("dated") else "") + (f" ({q['note']})" if q["note"] else "")
+                     + (f" [{q['ts'][:10]}]" if q["ts"] else ""))
     if v.get("patch_log"):
         lines += ["", "UPDATES AND CHANGES MADE FROM THE CONSOLE"]
         for h in v["patch_log"][:40]:

@@ -456,7 +456,8 @@ def declared(rows: list, fw: str = "ce") -> list:
     """The declared questions one framework asks, with the organisation's answers ({key, answer, note, at})."""
     said = {r["key"]: r for r in rows}
     return [{"key": k, "title": agent.QUESTIONS[k], "about": why, "answer": (said.get(k) or {}).get("answer"),
-             "note": (said.get(k) or {}).get("note") or "", "ts": (said.get(k) or {}).get("at")} for k, why in FRAMEWORKS[fw]["declared"]]
+             "note": (said.get(k) or {}).get("note") or "", "ts": (said.get(k) or {}).get("at"), "dated": (said.get(k) or {}).get("dated") or ""}
+            for k, why in FRAMEWORKS[fw]["declared"]]
 
 
 # --------------------------------------------------------------------------- as text
@@ -499,7 +500,8 @@ def report_text(org: str, when: str, devices: list, said: list, fw: str = "ce") 
     lines.append("DECLARED BY THE ORGANISATION (not measured)")
     for q in said:
         a = {"yes": "Yes", "no": "No", "na": "Does not apply", None: "Not answered"}[q["answer"]]
-        lines.append(f"  {a:<15} {q['title']}" + (f" ({q['note']})" if q["note"] else "") + (f" [{str(q['ts'])[:10]}]" if q["ts"] else ""))
+        lines.append(f"  {a:<15} {q['title']}" + (f", dated {q['dated']}" if q.get("dated") else "") + (f" ({q['note']})" if q["note"] else "")
+                     + (f" [{str(q['ts'])[:10]}]" if q["ts"] else ""))
     lines += ["", "Each PC reports counts and settings, never account names, file names or addresses, so some lines say how many "
                   "and not which.", FRAMEWORKS[fw]["footer"]]
     return "\n".join(lines) + "\n"

@@ -89,7 +89,7 @@ export const api = {
   compliance: (refresh = false, framework?: string) =>
     g<ComplianceResponse>("/api/compliance?" + new URLSearchParams({ ...(refresh ? { refresh: "1" } : {}), ...(framework ? { framework } : {}) })),
   complianceFrameworks: (frameworks: string[]) => p("/api/compliance/frameworks", { frameworks }),
-  complianceDeclare: (key: string, answer: DeclaredAnswer, note: string) => p("/api/compliance/declare", { key, answer, note }),
+  complianceDeclare: (key: string, answer: DeclaredAnswer, note: string, dated = "") => p("/api/compliance/declare", { key, answer, note, dated }),
   complianceAccept: (id: string, reason: string) => p("/api/compliance/accept", { id, reason }),
   network: (refresh = false) => g<NetworkResponse>("/api/network" + (refresh ? "?refresh=1" : "")),
   status: () => g<Status>("/api/status"),

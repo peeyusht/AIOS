@@ -477,6 +477,10 @@ class ServerTest(unittest.TestCase):
         self.assertEqual((f["framework"], [x["key"] for x in f["frameworks"] if x["shown"]]), ("certin", ["certin", "dpdp"]))
         self.assertEqual([q["key"] for q in f["declared"]].count("perimeter"), 1)            # CERT-In's own question
         self.assertEqual(self.owner_a.post("/api/v1/declarations", json={"key": "perimeter", "answer": "yes"}).status_code, 200)
+        self.assertEqual(self.owner_a.post("/api/v1/declarations", json={"key": "risk_assessment", "answer": "yes", "dated": "2999-01-01"}).status_code, 400)
+        self.assertEqual(self.owner_a.post("/api/v1/declarations", json={"key": "risk_assessment", "answer": "yes", "dated": "2026-08-01"}).status_code, 200)
+        q = {x["key"]: x for x in self.http.get("/api/v1/fleet", headers=self.auth(self.admin_a)).json()["declared"]}
+        self.assertEqual((q["risk_assessment"]["answer"], q["risk_assessment"]["dated"], q["perimeter"]["dated"]), ("yes", "2026-08-01", ""))
         self.assertEqual(self.http.get("/api/v1/fleet", headers=self.auth(self.admin_b)).json()["framework"], "ce")     # B's own choice
         t = self.http.get("/api/v1/report?framework=dpdp", headers=self.auth(self.admin_a)).json()["text"]
         for part in ("Judged against: DPDP Rules 2025", "6(1)(A) ENCRYPTION", "Rule 6 and 7 evidence", "Not a statement of DPDP compliance"):
@@ -484,7 +488,7 @@ class ServerTest(unittest.TestCase):
         t = self.http.get("/api/v1/report", headers=self.auth(self.admin_a)).json()["text"]
         self.assertIn("may have a yearly baseline audit", t)
         self.assertNotIn("mandatory", t.lower())
-        self.assertEqual(self.http.get("/api/v1/audit", headers=self.auth(self.admin_a)).json()["entries"][1]["action"], "frameworks.changed")
+        self.assertIn("frameworks.changed", [e["action"] for e in self.http.get("/api/v1/audit", headers=self.auth(self.admin_a)).json()["entries"][:4]])
         # F-1 labels: set by an admin or owner, recorded, and the device is judged again with it (DPDP encryption)
         lab = f"/api/v1/devices/{self.dev_a}/labels"
         self.assertEqual(self.http.post(lab, headers=self.auth(self.admin_a), json={"label": "personal_data", "on": True}).status_code, 403)

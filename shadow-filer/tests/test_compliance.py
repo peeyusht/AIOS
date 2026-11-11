@@ -385,6 +385,9 @@ class FrameworksTest(unittest.TestCase):
         self.assertEqual(compliance.shown_frameworks(db), ["certin", "dpdp"])
         self.assertTrue(compliance.accept(db, "acc.daily", "Sole user."))
         self.assertTrue(compliance.declare(db, "perimeter", "yes"))                       # CERT-In's own question
+        self.assertTrue(compliance.declare(db, "drills", "yes", "Tabletop", "2026-09-30"))   # with the date it is about
+        for bad in ("2999-01-01", "30/09/2026", "2026-9-30", "yesterday"):
+            self.assertFalse(compliance.declare(db, "risk_assessment", "yes", "", bad), bad)
         out = {}
         for k in compliance.FRAMEWORKS:
             v = compliance.assess(self.cfg, pc(me_admin=True, lockout_threshold=10), net(), VUL, APPS, TODAY, k)
@@ -395,9 +398,12 @@ class FrameworksTest(unittest.TestCase):
         self.assertEqual([g["key"] for g in out["dpdp"]["controls"]], ["enc", "access", "cont", "logs", "other"])
         self.assertEqual({k: [q["key"] for q in v["declared"]].count("perimeter") for k, v in out.items()}, {"ce": 0, "certin": 1, "dpdp": 0})
         self.assertEqual([q["answer"] for q in out["certin"]["declared"] if q["key"] == "perimeter"], ["yes"])
+        self.assertEqual([(q["answer"], q["dated"]) for q in out["certin"]["declared"] if q["key"] == "drills"], [("yes", "2026-09-30")])
+        self.assertEqual({k: len(v["declared"]) for k, v in out.items()}, {"ce": 7, "certin": 16, "dpdp": 7})
         self.assertEqual({g["key"]: g["status"] for g in out["certin"]["controls"]}, {"nes": "pass", "ems": "pass", "sc": "unknown", "pm": "fail", "rpp": "fail", "acim": "pass", "lm": "pass", "dpbp": "pass"})   # sc: no end-of-life list here
         t = {k: compliance.as_text(v) for k, v in out.items()}
         self.assertIn("Judged against: CERT-In Elemental Cyber Defense Controls", t["certin"])
+        self.assertIn("Staff took part in a CERT-In workshop or drill, dated 2026-09-30 (Tabletop)", t["certin"])
         self.assertIn("may have a yearly baseline audit", t["certin"])
         self.assertNotIn("mandatory", t["certin"].lower())
         self.assertIn("Rule 6 and 7 evidence", t["dpdp"])

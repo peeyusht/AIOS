@@ -54,7 +54,7 @@ export const api = {
   report: (d?: string, fw?: string) => request<{ text: string; generated_at: string }>("GET", (d ? `/api/v1/devices/${id(d)}/report` : "/api/v1/report") + (fw ? `?framework=${id(fw)}` : "")),
   setFrameworks: (frameworks: string[]) => request<{ ok: boolean }>("POST", "/api/v1/frameworks", { frameworks }),
   audit: () => request<{ entries: AuditEntry[] }>("GET", "/api/v1/audit"),
-  declare: (key: string, answer: Answer, note: string) => request<{ ok: boolean }>("POST", "/api/v1/declarations", { key, answer, note }),
+  declare: (key: string, answer: Answer, note: string, dated = "") => request<{ ok: boolean }>("POST", "/api/v1/declarations", { key, answer, note, dated }),
   accept: (d: string, check_id: string, reason: string) => request<{ ok: boolean }>("POST", `/api/v1/devices/${id(d)}/exceptions`, { check_id, reason }),
   removeDevice: (d: string) => request<{ ok: boolean }>("POST", `/api/v1/devices/${id(d)}/remove`),
   label: (d: string, label: Label, on: boolean) => request<{ ok: boolean }>("POST", `/api/v1/devices/${id(d)}/labels`, { label, on }),
@@ -162,7 +162,7 @@ export interface Reference {
   cve_synced_at: string | null; complete: boolean; cves: number; kev: number; eol_synced_at: string | null; eol_products: number;
   syncing: boolean; error: string | null;
 }
-export interface Declared { key: string; title: string; about: string; answer: Answer; note: string; ts: string | null }
+export interface Declared { key: string; title: string; about: string; answer: Answer; note: string; ts: string | null; dated?: string }
 export interface FleetDay { day: string; devices: number; all_passing: number; areas: Record<string, number> }
 export interface Fleet {
   organisation: string; generated_at: string; devices: number; judged: number; all_passing: number; silent_hours: number;
