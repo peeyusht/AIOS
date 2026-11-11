@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, CircleCheck, Copy, FolderPlus, FolderSearch, Inbox as InboxIcon,
-  RefreshCw, ShieldCheck, Undo2, Zap,
+  RefreshCw, Undo2, Zap,
   Eye,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { usePoll } from "@/lib/hooks";
 import { bytes, dateTime, pct, when, baseName } from "@/lib/format";
-import type { AutofileFolder, Candidate, InboxItem, InboxResponse } from "@/lib/types";
+import type { AutofileFolder, AutofileResponse, Candidate, InboxItem, InboxResponse } from "@/lib/types";
 import { Bar, Card, Confirm, EmptyState, ListSkeleton, LoadError, Mono, Notice, PageHeader, Spin, Tip, act } from "../ui";
 import { emitInboxChanged } from "../App";
 import { FilePreview } from "../FilePreview";
@@ -28,9 +28,9 @@ const PAGE = 25;
 export function InboxPage() {
   return (
     <>
-      <PageHeader title="Inbox" sub="New downloads, with a suggested home for each." />
+      <PageHeader title="Inbox" sub="New downloads, each with where it probably belongs. Nothing moves until you say so." />
       <Tabs defaultValue="waiting">
-        <TabsList className="mb-6">
+        <TabsList className="mb-4">
           <TabsTrigger value="waiting">Waiting</TabsTrigger>
           <TabsTrigger value="moves">Recent moves</TabsTrigger>
           <TabsTrigger value="auto">Auto-filing</TabsTrigger>
@@ -56,76 +56,112 @@ function Waiting() {
   const [offset, setOffset] = useState(0);
   const [preview, setPreview] = useState<string | null>(null);
   const q = usePoll(() => api.inbox(offset, PAGE), 30_000, [offset]);
-  const [autoOn, setAutoOn] = useState(false);
-  useEffect(() => { api.autofile().then((a) => setAutoOn(a.settings.enabled)).catch(() => {}); }, []);
+  const [auto, setAuto] = useState<AutofileResponse | null>(null);
+  const loadAuto = () => { api.autofile().then(setAuto).catch(() => {}); };
+  useEffect(loadAuto, []);
   useEffect(() => {
-    const h = () => q.reload();
+    const h = () => { q.reload(); loadAuto(); };
     window.addEventListener("sf-inbox-changed", h);
     return () => window.removeEventListener("sf-inbox-changed", h);
   }, [q]);
+  const autoOn = !!auto?.settings.enabled;
 
   const d = q.data;
-  const removeLocal = (path: string) => q.setData((cur) => cur && { ...cur, items: cur.items.filter((i) => i.path !== path), total: cur.total - 1 });
+  const items = d?.items ?? [];
+  const [sel, setSel] = useState<string | null>(null);
+  const current = items.find((i) => i.path === sel) ?? items[0] ?? null;
+  const removeLocal = (path: string) => {
+    const at = items.findIndex((i) => i.path === path);
+    const next = items[at + 1] ?? items[at - 1] ?? null;
+    setSel(next?.path ?? null);
+    q.setData((cur) => cur && { ...cur, items: cur.items.filter((i) => i.path !== path), total: cur.total - 1 });
+  };
+
+  // Keyboard: J/K or arrows move, 1-4 pick a folder, Enter files, S skips to the next one. Never while typing.
+  const actions = useRef<{ file: () => void; pick: (i: number) => void } | null>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.ctrlKey || e.metaKey || e.altKey || !current) return;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.closest("[role=dialog],[role=alertdialog],[data-radix-popper-content-wrapper]"))) return;
+      const at = items.findIndex((i) => i.path === current.path);
+      const move = (n: number) => { const it = items[Math.max(0, Math.min(items.length - 1, at + n))]; if (it) { setSel(it.path); listRef.current?.querySelector<HTMLElement>(`[data-path="${CSS.escape(it.path)}"]`)?.scrollIntoView({ block: "nearest" }); } };
+      if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); move(1); }
+      else if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); move(-1); }
+      else if (e.key === "s") { e.preventDefault(); move(1); }
+      else if (/^[1-4]$/.test(e.key)) { e.preventDefault(); actions.current?.pick(Number(e.key) - 1); }
+      else if (e.key === "Enter" && (!t || t === document.body || t.closest("[data-inbox-list]"))) { e.preventDefault(); actions.current?.file(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [items, current]);
+
+  const counts = { strong: 0, likely: 0, unsure: 0 };
+  for (const it of items) counts[strength(it)]++;
 
   return (
-    <div className="space-y-5">
-      <Notice tone="success" icon={<ShieldCheck />}>
-        {autoOn ? (
-          <><span className="font-medium">Folders you have proven are filed for you after the waiting time.</span> Everything else moves only when you click File it. Every move can be undone.</>
-        ) : (
-          <><span className="font-medium">Files move only when you click File it.</span> Every move can be undone.</>
-        )}
-      </Notice>
-
+    <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
           {d ? (
             <>
               <span className="font-medium text-foreground tabular">{d.total}</span> files waiting in Downloads
-              {d.examples && <> · suggestions learned from <span className="tabular">{d.examples.examples.toLocaleString()}</span> filed documents in <span className="tabular">{d.examples.folders}</span> folders</>}
+              {items.length > 0 && <> · <span className="tabular">{counts.strong}</span> strong · <span className="tabular">{counts.likely}</span> likely · <span className="tabular">{counts.unsure}</span> unsure</>}
+              {d.examples && <> · learned from <span className="tabular">{d.examples.examples.toLocaleString()}</span> filed documents</>}
             </>
-          ) : " "}
+          ) : " "}
         </p>
-        <Button variant="outline" size="sm" onClick={() => q.reload()} disabled={q.loading}>
-          <RefreshCw className={cn(q.loading && "animate-spin")} /> Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Badge variant={autoOn ? "info" : "muted"}><Zap className="size-3" /> Auto-filing {autoOn ? "on" : "off"}</Badge>
+          <Button variant="outline" size="sm" onClick={() => q.reload()} disabled={q.loading}>
+            <RefreshCw className={cn(q.loading && "animate-spin")} /> Refresh
+          </Button>
+        </div>
       </div>
 
-      <details className="group rounded-lg border bg-card px-4 py-2.5 text-sm">
-        <summary className="flex cursor-pointer list-none items-center gap-2 text-muted-foreground marker:hidden">
-          <ChevronDown className="size-4 transition-transform group-open:rotate-180" /> What does the percentage mean?
-        </summary>
-        <p className="mt-2 leading-relaxed text-muted-foreground">
-          It's how strongly your already-filed documents point to that folder. Tested on your own files:{" "}
-          <span className="text-success font-medium">95% and up was right 94 times in 100</span>, 50–70% about 7 in 10, and{" "}
-          <span className="text-warning font-medium">under 50% only 1 in 3</span> — so check those.
-        </p>
-      </details>
-
       {q.error && !d && <LoadError error={q.error} onRetry={q.reload} />}
-      {!d && !q.error && <ListSkeleton rows={4} h="h-36" />}
-      {d && d.items.length === 0 && (
+      {!d && !q.error && <ListSkeleton rows={4} h="h-24" />}
+      {d && items.length === 0 && (
         <EmptyState icon={<InboxIcon />} title="Nothing waiting">
           Downloads is tidy. New files will show up here with a suggested folder.
         </EmptyState>
       )}
-      {d && d.items.length > 0 && (
-        <ul className="space-y-3" aria-label="Files waiting">
-          {d.items.map((it) => (
-            <InboxCard key={it.path} item={it} data={d} autoOn={autoOn} onGone={() => removeLocal(it.path)} onPreview={setPreview} />
-          ))}
-        </ul>
-      )}
-
-      {d && d.total > PAGE && (
-        <div className="flex items-center justify-between pt-2 text-sm text-muted-foreground">
-          <Button variant="outline" size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>
-            <ChevronLeft /> Newer
-          </Button>
-          <span className="tabular">{offset + 1}–{Math.min(offset + PAGE, d.total)} of {d.total}</span>
-          <Button variant="outline" size="sm" disabled={offset + PAGE >= d.total} onClick={() => setOffset(offset + PAGE)}>
-            Older <ChevronRight />
-          </Button>
+      {d && items.length > 0 && current && (
+        <div className="grid items-start gap-4 min-[1000px]:grid-cols-[minmax(300px,380px)_minmax(0,1fr)]">
+          <Card className="overflow-hidden rounded-lg min-[1000px]:sticky min-[1000px]:top-16">
+            <ul ref={listRef} data-inbox-list aria-label="Files waiting" className="max-h-[calc(100vh-11rem)] divide-y overflow-y-auto">
+              {items.map((it) => {
+                const top = it.candidates.find((c) => c.exists);
+                const st = strength(it);
+                const on = it.path === current.path;
+                return (
+                  <li key={it.path}>
+                    <button data-path={it.path} aria-current={on ? "true" : undefined} onClick={() => setSel(it.path)}
+                      className={cn("flex w-full gap-3 px-3.5 py-2.5 text-left transition-colors", on ? "bg-accent shadow-[inset_2px_0_0_var(--color-primary)]" : "hover:bg-muted/50")}>
+                      <span className="mt-0.5 flex h-5 w-11 shrink-0 items-center justify-center rounded border font-mono text-[10px] uppercase text-muted-foreground">{(it.ext || "file").slice(0, 5)}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">{it.name}</span>
+                        <span className="block truncate font-mono text-[11px] text-muted-foreground">→ {top ? top.folder : it.ready ? "no suggestion" : "being read"}</span>
+                      </span>
+                      <span className="flex shrink-0 flex-col items-end gap-1">
+                        <Strength level={st} />
+                        <span className="font-mono text-[10px] text-muted-foreground">{when(it.added)}</span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            {d.total > PAGE && (
+              <div className="flex items-center justify-between border-t px-3 py-2 text-xs text-muted-foreground">
+                <Button variant="ghost" size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}><ChevronLeft /> Newer</Button>
+                <span className="tabular">{offset + 1}–{Math.min(offset + PAGE, d.total)} of {d.total}</span>
+                <Button variant="ghost" size="sm" disabled={offset + PAGE >= d.total} onClick={() => setOffset(offset + PAGE)}>Older <ChevronRight /></Button>
+              </div>
+            )}
+          </Card>
+          <DecisionPane key={current.path} item={current} data={d} auto={auto} onGone={() => removeLocal(current.path)} onPreview={setPreview} bind={(a) => { actions.current = a; }} />
         </div>
       )}
       <FilePreview path={preview} onClose={() => setPreview(null)} />
@@ -133,8 +169,26 @@ function Waiting() {
   );
 }
 
-const SOURCE_WORDS: Record<string, string> = { rule: "rule", origin: "same website as files filed here", name: "name matches folder", similar: "like your filed docs", model: "model's guess" };
-const scoreTone = (s: number) => (s >= 0.95 ? "success" : s >= 0.7 ? "info" : "warning") as "success" | "info" | "warning";
+type Strength = "strong" | "likely" | "unsure";
+/** How much to trust the first suggestion, from the measured accuracy of each kind (see the percentage note). */
+function strength(it: InboxItem): Strength {
+  const c = it.candidates.find((x) => x.exists);
+  if (!c) return "unsure";
+  if (c.source === "rule" || c.source === "origin") return "strong";
+  if (c.source === "similar") return (c.score ?? 0) >= 0.95 ? "strong" : (c.score ?? 0) >= 0.5 ? "likely" : "unsure";
+  if (c.source === "name") return "likely";
+  return "unsure";
+}
+function Strength({ level }: { level: Strength }) {
+  const n = level === "strong" ? 3 : level === "likely" ? 2 : 1;
+  return (
+    <span role="img" aria-label={level} title={level} className="flex gap-0.5">
+      {[0, 1, 2].map((i) => <span key={i} className={cn("h-2.5 w-1", i < n ? (level === "unsure" ? "bg-warning" : "bg-primary") : "bg-border")} />)}
+    </span>
+  );
+}
+
+const SOURCE_WORDS: Record<string, string> = { rule: "Your rule", origin: "Same website", name: "File name", similar: "Similar documents", model: "Model's guess" };
 
 function cleanupLabel(c: NonNullable<InboxItem["cleanup"]>) {
   if (c.category === "duplicate_of_filed") return "Already filed (duplicate)";
@@ -142,8 +196,19 @@ function cleanupLabel(c: NonNullable<InboxItem["cleanup"]>) {
   return `Cleanup: ${c.level}`;
 }
 
-function InboxCard({ item, data, autoOn, onGone, onPreview }: { item: InboxItem; data: InboxResponse; autoOn: boolean; onGone: () => void; onPreview: (path: string) => void }) {
-  const chips = item.candidates.slice(0, 4);
+function DecisionPane({ item, data, auto, onGone, onPreview, bind }: {
+  item: InboxItem; data: InboxResponse; auto: AutofileResponse | null; onGone: () => void; onPreview: (path: string) => void;
+  bind: (a: { file: () => void; pick: (i: number) => void }) => void;
+}) {
+  // One option per folder: when several kinds of suggestion name the same folder, their evidence is shown together.
+  const chips = useMemo(() => {
+    const out: (Candidate & { evidence: Candidate[] })[] = [];
+    for (const c of item.candidates) {
+      const hit = out.find((o) => o.folder === c.folder);
+      if (hit) hit.evidence.push(c); else out.push({ ...c, evidence: [c] });
+    }
+    return out.slice(0, 4);
+  }, [item.candidates]);
   const firstOk = chips.find((c) => c.exists)?.folder ?? null;
   const [folder, setFolderRaw] = useState<string | null>(firstOk);
   // Until you pick a folder yourself, the selection follows the first suggestion (which can change when
@@ -159,7 +224,7 @@ function InboxCard({ item, data, autoOn, onGone, onPreview }: { item: InboxItem;
   const choose = (f: string) => { setFolder(f); if (!chips.some((c) => c.folder === f)) setExtra(f); };
 
   const file = async () => {
-    if (!folder) return;
+    if (!folder || selectedMissing || busy) return;
     setBusy("file");
     const r = await act(() => api.fileIt(item.path, folder, item.size));
     setBusy(null);
@@ -178,52 +243,80 @@ function InboxCard({ item, data, autoOn, onGone, onPreview }: { item: InboxItem;
     setBusy(null);
     if (r) { onGone(); emitInboxChanged(); toast("Left in Downloads", { description: item.name }); }
   };
+  bind({ file: () => void file(), pick: (i) => { const c = chips[i]; if (c?.exists) setFolder(c.folder); } });
+
+  const chosen = chips.find((c) => c.folder === folder);
+  const trust = chosen && auto ? auto.folders.find((f) => f.folder === chosen.folder && f.source === chosen.source) : undefined;
+  const need = auto?.settings.min_decisions ?? 20;
 
   return (
-    <li>
-      <Card className="p-4 transition-shadow hover:shadow-sm">
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <Tip tip={item.path}><h3 className="min-w-0 truncate font-medium" tabIndex={0}>{item.name}</h3></Tip>
-          <span className="text-xs text-muted-foreground tabular">{bytes(item.size)} · modified {when(item.modified)}{item.origin?.host ? <> · from <span className="path">{item.origin.host}</span></> : null}</span>
+    <Card className="min-w-0 rounded-lg">
+      <div className="space-y-2 border-b p-5">
+        <Tip tip={item.path}><h2 className="break-words text-lg font-semibold leading-snug" tabIndex={0}>{item.name}</h2></Tip>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs text-muted-foreground">
+          <span>{(item.ext || "file").toUpperCase()} · {bytes(item.size)}</span>
+          <span>arrived {when(item.added)}</span>
+          {item.origin?.host && <span>from {item.origin.host}</span>}
         </div>
-
         {(item.cleanup || item.duplicate || item.auto.auto || !item.ready) && (
-          <div className="mt-2 flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-1.5 pt-1">
             {item.cleanup && <Badge variant={item.cleanup.level === "safe" ? "success" : "warning"} title={item.cleanup.reason}>{cleanupLabel(item.cleanup)}</Badge>}
             {item.duplicate && <Badge variant="muted"><Copy className="size-3" /> Same as a file in <span className="path text-xs">{item.duplicate.folder}</span></Badge>}
             {item.auto.auto && (
               <Badge variant="info" title={item.auto.why}>
-                <Zap className="size-3" /> {autoOn ? "Auto-files on next run" : "Would auto-file"}{item.auto.soon && " · after the waiting time"}
+                <Zap className="size-3" /> {auto?.settings.enabled ? "Auto-files on next run" : "Would auto-file"}{item.auto.soon && " · after the waiting time"}
               </Badge>
             )}
-            {!item.ready && <span className="text-xs text-muted-foreground italic">Still being read; suggestions from similar files appear once it's indexed.</span>}
+            {!item.ready && <span className="text-xs italic text-muted-foreground">Still being read; suggestions from similar files appear once it's indexed.</span>}
           </div>
         )}
+        <div className="flex flex-wrap gap-2 pt-1">
+          <Button variant="outline" size="sm" onClick={() => onPreview(item.path)}><Eye /> Preview</Button>
+          <Button variant="outline" size="sm" onClick={() => act(() => api.reveal(item.path))}><FolderSearch /> Show in Explorer</Button>
+        </div>
+      </div>
 
-        <div className="mt-3 flex flex-wrap gap-2" role="radiogroup" aria-label={`Destination for ${item.name}`}>
-          {chips.map((c) => <Chip key={c.folder} c={c} selected={folder === c.folder} onSelect={() => setFolder(c.folder)} />)}
+      <div className="space-y-3 p-5">
+        <h3 className="label-caps text-muted-foreground">Where should it go?</h3>
+        {chips.length === 0 && <p className="text-sm text-muted-foreground">No suggestion for this file. Pick a folder below.</p>}
+        <div className="space-y-2" role="radiogroup" aria-label={`Destination for ${item.name}`}>
+          {chips.map((c, i) => {
+            const on = folder === c.folder;
+            return (
+              <button key={c.folder} role="radio" aria-checked={on} disabled={!c.exists} onClick={() => setFolder(c.folder)}
+                className={cn("flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+                  on ? "border-primary bg-accent ring-1 ring-primary" : "hover:bg-muted/50")}>
+                <span className={cn("mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border", on && "border-primary bg-primary")}>{on && <Check className="size-3 text-primary-foreground" aria-hidden />}</span>
+                <span className="min-w-0 flex-1 space-y-1.5">
+                  <span className="block break-all font-mono text-[13px] font-medium">{c.folder}{!c.exists && <span className="font-sans text-xs font-normal text-muted-foreground"> (folder missing)</span>}</span>
+                  {c.evidence.map((e) => (
+                    <span key={e.source} className="block space-y-0.5">
+                      <span className="flex items-center gap-2 text-xs">
+                        <span className="w-32 shrink-0 text-muted-foreground">{SOURCE_WORDS[e.source] ?? e.source}</span>
+                        {e.score != null ? <>
+                          <span className="h-1 max-w-40 flex-1 overflow-hidden rounded-full bg-border"><span className="block h-full bg-primary" style={{ width: `${Math.round(e.score * 100)}%` }} /></span>
+                          <span className="font-mono tabular">{pct(e.score)}</span>
+                        </> : null}
+                      </span>
+                      <span className="block text-xs text-muted-foreground">{e.why}{e.model_agrees && " · the model agrees"}</span>
+                    </span>
+                  ))}
+                </span>
+                <kbd className="shrink-0 rounded border px-1.5 font-mono text-[11px] text-muted-foreground">{i + 1}</kbd>
+              </button>
+            );
+          })}
           {extra && (
             <button role="radio" aria-checked={folder === extra} onClick={() => setFolder(extra)}
-              className={cn("rounded-lg border px-3 py-1.5 text-left text-sm", folder === extra ? "border-primary bg-accent ring-1 ring-primary" : "hover:bg-muted")}>
-              <Mono>{extra}</Mono> <span className="text-xs text-muted-foreground">· your choice</span>
+              className={cn("flex w-full items-center gap-3 rounded-lg border p-3 text-left", folder === extra ? "border-primary bg-accent ring-1 ring-primary" : "hover:bg-muted/50")}>
+              <span className="min-w-0 flex-1 break-all font-mono text-[13px]">{extra}</span><span className="text-xs text-muted-foreground">your choice</span>
             </button>
           )}
         </div>
-
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1">
           <FolderPicker destinations={data.destinations} onPick={choose} />
           <Button variant="ghost" size="sm" onClick={() => setMk((v) => !v)} aria-expanded={mk}><FolderPlus /> New folder…</Button>
-          <div className="ml-auto flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => onPreview(item.path)}><Eye /> Preview</Button>
-            <Button variant="ghost" size="sm" onClick={() => act(() => api.reveal(item.path))}><FolderSearch /> Show</Button>
-            <Button variant="ghost" size="sm" onClick={dismiss} disabled={!!busy}>{busy === "dismiss" ? <Spin /> : null} Leave it</Button>
-            <Button onClick={file} disabled={!folder || selectedMissing || !!busy} className="max-w-md">
-              {busy === "file" ? <Spin /> : <ArrowRight />}
-              <span className="truncate">File it {folder && <>→ <span className="path">{folder}</span></>}</span>
-            </Button>
-          </div>
         </div>
-
         {mk && (
           <NewFolderForm
             parents={data.parents}
@@ -232,32 +325,36 @@ function InboxCard({ item, data, autoOn, onGone, onPreview }: { item: InboxItem;
             onCreated={(f) => { setMk(false); choose(f); setExtra(f); setFolder(f); }}
           />
         )}
-      </Card>
-    </li>
-  );
-}
 
-function Chip({ c, selected, onSelect }: { c: Candidate; selected: boolean; onSelect: () => void }) {
-  return (
-    <Tip tip={c.why}>
-      <button
-        role="radio"
-        aria-checked={selected}
-        disabled={!c.exists}
-        onClick={onSelect}
-        className={cn(
-          "flex max-w-full items-center gap-2 rounded-lg border px-3 py-1.5 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-          selected ? "border-primary bg-accent ring-1 ring-primary" : "bg-card hover:bg-muted",
+        <div className="flex flex-wrap items-center gap-2 border-t pt-4">
+          <Button onClick={() => void file()} disabled={!folder || selectedMissing || !!busy} className="h-10 max-w-full">
+            {busy === "file" ? <Spin /> : <ArrowRight />}
+            <span className="truncate">File it {folder && <>→ <span className="font-mono text-xs">{folder.split("/").pop()}</span></>}</span>
+            <kbd className="ml-1 rounded border border-primary-foreground/30 px-1 font-mono text-[10px] opacity-80">Enter</kbd>
+          </Button>
+          <Button variant="outline" onClick={dismiss} disabled={!!busy} className="h-10">{busy === "dismiss" ? <Spin /> : null} Leave it in Downloads</Button>
+          <span className="ml-auto text-xs text-muted-foreground">Every move can be undone from Recent moves.</span>
+        </div>
+
+        {chosen && chosen.source !== "model" && auto && (
+          <div className="space-y-2 rounded-lg border bg-muted/40 p-3">
+            <div className="flex flex-wrap justify-between gap-2 text-xs">
+              <span className="font-medium">Auto-filing trust for {chosen.folder.split("/").pop()} ({SOURCE_WORDS[chosen.source]?.toLowerCase()})</span>
+              <span className="font-mono tabular text-muted-foreground">{trust ? `${trust.decisions}/${need} · ${pct(trust.rate)}` : `0/${need}`}</span>
+            </div>
+            <div role="img" aria-label={`${trust?.decisions ?? 0} of ${need} decisions`} className="grid gap-0.5" style={{ gridTemplateColumns: `repeat(${need}, minmax(0, 1fr))` }}>
+              {Array.from({ length: need }).map((_, i) => <span key={i} className={cn("h-2 rounded-[1px]", i < (trust?.agreed ?? 0) ? "bg-primary" : i < (trust?.decisions ?? 0) ? "bg-warning" : "bg-border")} />)}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {trust?.proven ? (auto.settings.enabled ? "Proven: files like this are filed for you after the waiting time." : "Proven. Files like this would be filed for you if auto-filing were on.")
+                : `Needs ${need} decisions with ${pct(auto.settings.min_rate)} agreement${trust?.revoked ? " (an auto-move was undone, so it starts again)" : ""}. Auto-filing stays off until you switch it on.`}
+            </p>
+          </div>
         )}
-      >
-        {selected && <Check className="size-3.5 shrink-0 text-primary" aria-hidden />}
-        <Mono>{c.folder}</Mono>
-        {c.score !== null && <Badge variant={scoreTone(c.score)} className="tabular">{pct(c.score)}</Badge>}
-        <span className="whitespace-nowrap text-xs text-muted-foreground">
-          {SOURCE_WORDS[c.source]}{c.model_agrees && " · model agrees"}{!c.exists && " (folder missing)"}
-        </span>
-      </button>
-    </Tip>
+
+        <p className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-muted-foreground"><span>J/K next, previous</span><span>1–{Math.max(1, chips.length)} choose</span><span>Enter file it</span><span>S skip</span></p>
+      </div>
+    </Card>
   );
 }
 
