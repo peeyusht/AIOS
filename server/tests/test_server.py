@@ -12,7 +12,7 @@ import time
 import unittest
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -508,10 +508,33 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.http.get("/api/v1/audit", headers=self.auth(self.admin_a)).json()["entries"][0]["action"], "device.labelled")
         self.assertEqual(self.owner_a.post(lab, json={"label": "personal_data", "on": False}).status_code, 200)
         self.assertEqual(self.http.get(f"/api/v1/devices/{self.dev_a}", headers=self.auth(self.admin_a)).json()["labels"], [])
+        # F-21 incident register: two clocks from the time it was noticed; only this organisation's devices; never deleted
+        noticed = (datetime.now(timezone.utc) - timedelta(hours=8)).isoformat()
+        inc = {"title": "Phishing mail opened", "kind": "Identity theft, spoofing or phishing", "detected_at": noticed,
+               "personal_data": True, "devices": [str(self.dev_a)]}
+        self.assertEqual(self.http.post("/api/v1/incidents", headers=self.auth(self.admin_a), json=inc).status_code, 403)   # a key only reads
+        for bad in ({**inc, "kind": "Bad luck"}, {**inc, "detected_at": "2999-01-01T00:00:00+00:00"}, {**inc, "detected_at": "2026-11-01T10:00"},
+                    {**inc, "title": ""}, {**inc, "devices": ["not-an-id"]}, {**inc, "personal_data": "yes"}):
+            self.assertEqual(self.owner_a.post("/api/v1/incidents", json=bad).status_code, 400, bad)
+        other_dev = self.http.get("/api/v1/devices", headers=self.auth(self.admin_b)).json()["devices"][0]["id"]
+        self.assertEqual(self.owner_a.post("/api/v1/incidents", json={**inc, "devices": [other_dev]}).status_code, 400)     # not A's device
+        r = self.owner_a.post("/api/v1/incidents", json=inc)
+        self.assertEqual(r.status_code, 200, r.text)
+        iid = r.json()["id"]
+        got = self.http.get("/api/v1/incidents", headers=self.auth(self.admin_a)).json()["incidents"][0]
+        self.assertEqual((got["certin"], got["board"], got["devices"][0]["name"]), ("overdue", "running", "DEMO-PC"))   # 8 h: 6 h passed, 72 h not
+        self.assertEqual(self.owner_a.post(f"/api/v1/incidents/{iid}", json={"certin_reported_at": datetime.now(timezone.utc).isoformat()}).status_code, 200)
+        self.assertEqual(self.http.get("/api/v1/incidents", headers=self.auth(self.admin_a)).json()["incidents"][0]["certin"], "done")
+        self.assertEqual(self.owner_b.post(f"/api/v1/incidents/{iid}", json={"title": "taken"}).status_code, 404)
+        self.assertEqual(self.http.get("/api/v1/incidents", headers=self.auth(self.admin_b)).json()["incidents"], [])
+        self.assertEqual(self.owner_a.post(f"/api/v1/incidents/{iid}", json={"personal_data": False}).status_code, 200)
+        self.assertIsNone(self.http.get("/api/v1/incidents", headers=self.auth(self.admin_a)).json()["incidents"][0]["board"])
+        acts = [e["action"] for e in self.http.get("/api/v1/audit", headers=self.auth(self.admin_a)).json()["entries"][:3]]
+        self.assertEqual(acts, ["incident.changed", "incident.changed", "incident.recorded"])
 
     def test_7_judgements_stay_inside_their_organisation(self):
         with db.anon() as c:
-            for table in ("judgements", "compliance_history", "declarations", "exceptions", "device_labels", "users", "sessions", "setup_links",
+            for table in ("judgements", "compliance_history", "declarations", "exceptions", "device_labels", "incidents", "users", "sessions", "setup_links",
                           "recovery_codes", "share_links"):
                 self.assertEqual(c.execute(f"SELECT count(*) AS n FROM {table}").fetchone()["n"], 0, table)
         with db.org(self.org_b) as c:
@@ -530,6 +553,11 @@ class ServerTest(unittest.TestCase):
                 c.execute("INSERT INTO device_labels (org_id, device_id, label) VALUES (%s,%s,'personal_data')", (self.org_a, self.dev_a))
         with db.org(self.org_b) as c:
             self.assertEqual(c.execute("SELECT count(*) AS n FROM device_labels WHERE device_id = %s", (self.dev_a,)).fetchone()["n"], 0)
+            self.assertEqual(c.execute("SELECT count(*) AS n FROM incidents").fetchone()["n"], 0)               # F-21: A's incident is A's
+            self.assertEqual(c.execute("UPDATE incidents SET title = 'x'").rowcount, 0)
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):      # and the application cannot delete an incident at all
+            with db.org(self.org_a) as c:
+                c.execute("DELETE FROM incidents")
             self.assertEqual(c.execute("DELETE FROM device_labels WHERE device_id = %s", (self.dev_a,)).rowcount, 0)
         with self.assertRaises(psycopg.errors.InsufficientPrivilege):      # the API cannot write a judgement of its own
             with db.org(self.org_a) as c:

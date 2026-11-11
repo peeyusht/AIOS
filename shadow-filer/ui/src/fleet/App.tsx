@@ -1,7 +1,7 @@
 /* The fleet server's console: every enrolled PC of one organisation, judged on the server. Same components
    and styles as the PC's own console (src/shadow), a different shell and its own pages. */
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
-import { ClipboardCheck, LayoutDashboard, LogOut, MonitorSmartphone, Moon, Package, Sun, Users } from "lucide-react";
+import { ClipboardCheck, LayoutDashboard, LogOut, MonitorSmartphone, Moon, Package, Siren, Sun, Users } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { DevicesPage } from "./pages/Devices";
 import { DevicePage } from "./pages/Device";
 import { SoftwarePage } from "./pages/Software";
 import { EvidencePage } from "./pages/Evidence";
+import { IncidentsPage } from "./pages/Incidents";
 import { AccessPage } from "./pages/Access";
 import { SharedPage } from "./pages/Shared";
 import { Logo, SetPassword, SignIn } from "./pages/SignIn";
@@ -23,6 +24,7 @@ const NAV = [
   { path: "/devices", label: "Devices", icon: MonitorSmartphone },
   { path: "/software", label: "Software", icon: Package },
   { path: "/evidence", label: "Evidence", icon: ClipboardCheck },
+  { path: "/incidents", label: "Incidents", icon: Siren },
   { path: "/access", label: "Access", icon: Users },
 ] as const;
 
@@ -55,6 +57,7 @@ function Shell({ path }: { path: string }) {
   if (section === "/devices") page = parts[1] ? <DevicePage id={parts[1]} tab={parts[2]} key={parts[1]} /> : <DevicesPage />;
   else if (section === "/software") page = <SoftwarePage />;
   else if (section === "/evidence") page = <EvidencePage />;
+  else if (section === "/incidents") page = <IncidentsPage />;
   else if (section === "/access") page = <AccessPage />;
   else page = <OverviewPage />;
   return (

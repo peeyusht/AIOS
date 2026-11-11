@@ -177,6 +177,31 @@ CREATE TABLE IF NOT EXISTS device_labels (
   PRIMARY KEY (device_id, label)
 );
 
+-- Incident register (spec F-21): evidence, so it is changed and closed but never deleted by the application.
+CREATE TABLE IF NOT EXISTS incidents (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL REFERENCES organisations ON DELETE CASCADE,
+  title text NOT NULL,
+  kind text NOT NULL DEFAULT 'Other',
+  description text NOT NULL DEFAULT '',
+  systems text NOT NULL DEFAULT '',
+  actions text NOT NULL DEFAULT '',
+  contact text NOT NULL DEFAULT '',
+  devices uuid[] NOT NULL DEFAULT '{}',
+  personal_data boolean NOT NULL DEFAULT false,
+  occurred_at timestamptz,
+  detected_at timestamptz NOT NULL,
+  certin_reported_at timestamptz,
+  board_reported_at timestamptz,
+  people_told_at timestamptz,
+  closed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  created_by text NOT NULL DEFAULT '',
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  updated_by text NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS incidents_org ON incidents (org_id, detected_at);
+
 -- How fresh the public reference lists are (CVE, known exploited, end of life). No customer data: shared.
 CREATE TABLE IF NOT EXISTS reference_status (
   k text PRIMARY KEY,
@@ -257,7 +282,7 @@ DO $$
 DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['admin_keys', 'enrolment_tokens', 'devices', 'snapshots', 'audit_log',
-                           'judgements', 'compliance_history', 'declarations', 'exceptions', 'device_labels',
+                           'judgements', 'compliance_history', 'declarations', 'exceptions', 'device_labels', 'incidents',
                            'users', 'setup_links', 'sessions', 'recovery_codes', 'share_links'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
@@ -280,6 +305,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON admin_keys, enrolment_tokens, devices, s
 GRANT SELECT, INSERT ON audit_log TO fleet_app;          -- the audit log is append-only for the application
 GRANT SELECT, INSERT, UPDATE, DELETE ON declarations, exceptions TO fleet_app;
 GRANT SELECT, INSERT, DELETE ON device_labels TO fleet_app;
+GRANT SELECT, INSERT, UPDATE ON incidents TO fleet_app;          -- no DELETE: an incident is evidence
 GRANT SELECT, UPDATE ON judgements TO fleet_app;          -- the API re-applies exceptions; only the worker judges
 GRANT SELECT, INSERT, UPDATE ON compliance_history TO fleet_app;
 GRANT SELECT ON reference_status TO fleet_app;
