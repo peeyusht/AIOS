@@ -178,6 +178,7 @@ export interface FleetDay { day: string; devices: number; all_passing: number; a
 export interface Fleet {
   organisation: string; generated_at: string; devices: number; judged: number; all_passing: number; silent_hours: number;
   framework: string; frameworks: Framework[]; records_due?: { kind: string; text: string }[]; org_checks?: Check[];
+  certin_notes?: { device_id: string; device: string; id: string; title: string; severity: string; issued: string }[];
   silent: { id: string; name: string; last_seen: string | null }[];
   areas: ({ key: string; title: string; about: string } & Record<CheckStatus, number>)[];
   failing: { id: string; title: string; control: string; devices: { id: string; name: string }[] }[];
@@ -206,7 +207,7 @@ export interface DeviceDetail extends DeviceRow {
     posture?: { received_at: string; payload: Record<string, unknown> };
   };
   history: { kind: string; versions: number; first: string; last: string }[];
-  compliance: Compliance | null; flaws: Flaws | null; support: Support | null;
+  compliance: Compliance | null; flaws: Flaws | null; support: Support | null; certin?: CertinNote[] | null;
   compliance_history: { day: string; controls: Record<string, AreaStatus>; checks: Record<string, string> }[];
   histories?: Record<string, { day: string; controls: Record<string, AreaStatus>; checks: Record<string, string> }[]>;
   framework: string; frameworks: Framework[];
@@ -234,4 +235,6 @@ export interface Records {
   due: { kind: string; text: string }[];
 }
 export interface MailDomain { domain: string; selectors: string[]; result: Record<string, unknown> | null; check: Check | null }
+/** A CERT-In vulnerability note that names a CVE found on the device (spec F-9). */
+export interface CertinNote { id: string; title: string; issued: string; severity: string; url: string; cves: string[]; programs: string[] }
 export interface AuditEntry { at: string; actor: string; action: string; detail: Record<string, unknown> }

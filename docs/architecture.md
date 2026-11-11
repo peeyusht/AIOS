@@ -69,7 +69,8 @@ SQLite file on its own volume (the same file format the agent keeps), and judges
 facts changed, a list changed, or the day changed; it writes the judgement and one compliance line per
 device per day. It is the only container that goes online: for those public downloads, and (spec F-3, the owner's
 decision D-3 of 11 Nov 2026) once a day for the SPF, DMARC and DKIM records of each organisation's own mail domain,
-a DNS query that names the domain and nothing else. It asks
+a DNS query that names the domain and nothing else. With the lists it reads CERT-In's vulnerability notes
+(spec F-9): public pages, one a second, naming only a year or a note id. It asks
 the database which devices are waiting through one function that answers with ids only, then works inside
 one organisation at a time under the same row-level security as the API. During the first download
 (about 9 minutes) devices are judged on their settings alone and judged again when the lists are there.

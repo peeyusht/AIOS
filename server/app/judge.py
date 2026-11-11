@@ -426,7 +426,7 @@ def _short(prof: dict) -> dict:
                         if ch["status"] == "fail" and not ch["accepted"]]}
 
 
-def summary(comp: dict, vul: dict | None, sup: dict | None) -> dict:
+def summary(comp: dict, vul: dict | None, sup: dict | None, notes: list | None = None) -> dict:
     """The few numbers the fleet list and dashboard show per device; `compliance` and `failing` are Cyber
     Essentials, `frameworks` has the same for each framework."""
     win = (sup or {}).get("windows") or {}
@@ -434,6 +434,7 @@ def summary(comp: dict, vul: dict | None, sup: dict | None) -> dict:
     ce = _short(profile(comp, "ce"))
     return {"compliance": {k: v for k, v in ce.items() if k != "failing"}, "failing": ce["failing"],
             "frameworks": {k: _short(p) for k in FRAMEWORKS if (p := profile(comp, k))},
+            "certin_notes": [{k: n[k] for k in ("id", "title", "severity", "issued")} for n in (notes or [])][:10],
             "security": {**vul["summary"], "installed": vul["installed"], "recognised": vul["recognised"],
                          "exploited": [{"program": a["name"], "version": a.get("judged_version"), "cve": c["id"], "fix": a.get("update_to")}
                                        for a in vul["apps"] for c in a["cves"] if c["kev"]][:20]} if vul else None,

@@ -309,6 +309,8 @@ def fleet(framework: str | None = None, who: dict = Depends(reader)):
                 x["areas"][k] += 1
     return {"organisation": org["name"] if org else "", "generated_at": _iso(now), "devices": len(rows), "judged": len(judged),
             "framework": fw, "frameworks": fws, "records_due": due, "org_checks": org_checks,
+            "certin_notes": [{"device_id": d["id"], "device": d["name"], **n} for d in judged
+                             for n in (d["judgement"].get("certin_notes") or [])][:40] if fw == "certin" else [],
             "silent": [{"id": d["id"], "name": d["name"], "last_seen": d["last_seen"]} for d in rows
                        if d["silent_seconds"] is None or d["silent_seconds"] > SILENT_HOURS * 3600],
             "all_passing": sum(1 for v in short.values() if v and v["controls_passing"] == v["controls"]),
@@ -355,6 +357,7 @@ def device_detail(device_id: str, who: dict = Depends(reader)):
             "history": [{"kind": h["kind"], "versions": h["versions"], "first": _iso(h["first"]), "last": _iso(h["last"])} for h in history],
             "compliance": j["compliance"] if j else None, "flaws": (j["security"] or {}).get("flaws") if j else None,
             "support": (j["security"] or {}).get("support") if j else None,
+            "certin": (j["security"] or {}).get("certin") if j else None,
             "compliance_history": [{"day": _iso(d["day"]), **d["line"]} for d in days if d["framework"] == "ce"],
             "histories": {k: [{"day": _iso(d["day"]), **d["line"]} for d in days if d["framework"] == k] for k in judge.FRAMEWORKS},
             "framework": fw, "frameworks": fws, "reference": ref}
@@ -385,7 +388,7 @@ async def accept_check(device_id: str, request: Request, who: dict = Depends(edi
         comp = judge.overlay(j["compliance"], accepted)       # the same counting the worker does, on what it stored
         sec = j["security"] or {}
         c.execute("UPDATE judgements SET compliance = %s, summary = %s WHERE device_id = %s",
-                  (Jsonb(comp), Jsonb(judge.summary(comp, sec.get("flaws"), sec.get("support"))), device_id))
+                  (Jsonb(comp), Jsonb(judge.summary(comp, sec.get("flaws"), sec.get("support"), sec.get("certin"))), device_id))
         for fw, line in judge.history_lines(comp).items():
             c.execute("INSERT INTO compliance_history (org_id, device_id, day, framework, line) VALUES (%s,%s,%s,%s,%s) "
                       "ON CONFLICT (device_id, day, framework) DO UPDATE SET line = EXCLUDED.line",
