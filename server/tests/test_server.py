@@ -358,6 +358,14 @@ class ServerTest(unittest.TestCase):
         usb = {k: {ch["id"]: ch for g in p["controls"] for ch in g["checks"]}["cfg.usb"]["status"]
                for k, p in judge.assess({**SNAP, "posture": {**SNAP["posture"], "usb_storage": "allowed"}}, None, None, {}, self.today)["profiles"].items()}
         self.assertEqual(usb, {"ce": "info", "certin": "warn", "dpdp": "info"})
+        # built-in Administrator and never-used accounts: true/false and a count
+        acc = lambda **o: {ch["id"]: ch for g in judge.assess({**SNAP, "posture": {**SNAP["posture"], **o}}, None, None, {}, self.today)["controls"]
+                           for ch in g["checks"]}
+        a = acc(builtin_admin_enabled=True, accounts_never_used=2)
+        self.assertEqual((a["cfg.builtin_admin"]["status"], a["cfg.unused"]["status"]), ("warn", "warn"))
+        self.assertIn("2 enabled accounts have never signed in. The device's own console names them.", a["cfg.unused"]["detail"])
+        a = acc(builtin_admin_enabled=None, accounts_never_used=0)
+        self.assertEqual((a["cfg.builtin_admin"]["status"], "cfg.unused" in a), ("unknown", False))
         self.assertNotIn("upd.firmware", [ch["id"] for g in judge.assess(SNAP, None, None, {}, self.today)["controls"] for ch in g["checks"]])
         d = self.http.get(f"/api/v1/devices/{self.dev_a}", headers=self.auth(self.admin_a)).json()
         self.assertEqual(([a["name"] for a in d["flaws"]["apps"]], d["flaws"]["apps"][0]["cves"][0]["id"], d["flaws"]["apps"][0]["cves"][0]["kev"]),

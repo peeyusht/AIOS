@@ -201,6 +201,11 @@ def configuration_checks(p) -> list:
                  "does not insist. The device's own console names it." if nopw else
                  "Every enabled account requires a password." if known else "The local accounts were not reported.",
                  fix="On the PC, in an administrator terminal: net user <name> /passwordreq:yes" if nopw else None))
+    if "builtin_admin_enabled" in p:        # sent from 11 Nov 2026: true/false and a count, never which account
+        out.append(agent._on_pc(agent.builtin_admin_check(p["builtin_admin_enabled"])))
+        u = agent.unused_check(p.get("accounts_never_used"))
+        if u:
+            out.append(agent._on_pc({**u, "detail": u["detail"] + " The device's own console names them."}))
     enc, drives = p.get("drives_encrypted"), p.get("drives") or 0
     out.append(C("cfg.encryption", "Drives are encrypted (BitLocker)",
                  "unknown" if enc is None else "pass" if enc else "info",
