@@ -422,6 +422,9 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   lockout reading (`net accounts`) is matched on English text; other languages read as unknown. It is
   sent as `lockout_threshold` (a number; added to `fleet.payload()` with the user's yes on 11 Nov 2026), and
   the server judges it only when a device sends it (agents before that send nothing, and get no check).
+  The password policy (`cfg.pwpolicy`, spec F-13) is read from the same `net accounts` call and sent as three
+  numbers (`pw_min_length`, `pw_max_age_days`, `pw_history`); the owner approved all of the spec's step-2
+  payload fields (gate D-1) on 11 Nov 2026, each added with its own feature. Complexity is not read.
 - Network: view only except for switching Windows Firewall on (through `remedy.py`); a network's
   Public/Private mark, rules and shares cannot be changed from the page. The firewall button has run on demo
   data only: on 12 Oct 2026 the user's firewall was still off on all profiles and switching it on was left to them. No names for devices (no vendor lookup, no reverse DNS) and no per-connection traffic amounts.

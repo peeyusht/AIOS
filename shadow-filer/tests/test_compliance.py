@@ -27,7 +27,7 @@ def pc(**over):
          "admins": [{"name": "DEMO-PC\\admin", "kind": "User"}], "admins_read": True, "me_admin": False,
          "screensaver": {"active": "1", "secure": "1", "timeout": "600"}, "inactivity": 0,
          "display_off": 0, "sleep_after": 0, "lock_on_wake": -1, "autoplay_off": 1, "autorun_policy": 0, "inbound_allow_rules": 40,
-         "lockout_threshold": 10}
+         "lockout_threshold": 10, "pw_min_length": 14, "pw_max_age_days": 90, "pw_history": 5}
     p.update(over)
     return p
 
@@ -105,13 +105,13 @@ class ChecksTest(unittest.TestCase):
         self.assertIsNone(compliance.browser_checks(pc(), None))
 
     def test_configuration(self):
-        bad = pc(screensaver={"active": "1", "secure": "", "timeout": ""}, autoplay_off=0, lockout_threshold=0,
+        bad = pc(screensaver={"active": "1", "secure": "", "timeout": ""}, autoplay_off=0, lockout_threshold=0, pw_min_length=0,
                  drives=[{"letter": "C:", "protection": 2}, {"letter": "D:", "protection": 1}],
                  users=[{"name": "alex", "enabled": True, "password_required": False, "last_logon": "2026-10-12", "sid": "S-1-5-21-1-1001"},
                         {"name": "Guest", "enabled": True, "password_required": False, "last_logon": "", "sid": "S-1-5-21-1-501"}])
         c = by_id(compliance.configuration_checks(bad))
         self.assertEqual({k: v["status"] for k, v in c.items()},
-                         {"cfg.lock": "info", "cfg.unlock": "fail", "cfg.autoplay": "fail", "cfg.guest": "fail", "cfg.password": "fail",
+                         {"cfg.lock": "info", "cfg.unlock": "fail", "cfg.pwpolicy": "warn", "cfg.autoplay": "fail", "cfg.guest": "fail", "cfg.password": "fail",
                           "cfg.unused": "warn", "cfg.encryption": "info"})
         # Cyber Essentials v3.3 sets no lock time and does not ask for encryption: notes, never failing the area
         self.assertEqual(compliance._roll([c["cfg.lock"], c["cfg.encryption"], c["cfg.guest"] | {"status": "pass"}]), "pass")
@@ -130,6 +130,32 @@ class ChecksTest(unittest.TestCase):
         self.assertEqual([st(n) for n in (1, 5, 10, 11, 50, 0, -1, None, True)],
                          ["pass", "pass", "pass", "fail", "fail", "fail", "unknown", "unknown", "unknown"])
         self.assertIn("never lock", compliance.unlock_check(pc(lockout_threshold=0))["detail"])
+
+    def test_password_policy(self):
+        """F-13: Cyber Essentials 12+ (else a look: a deny list or multi-factor login may make up for it);
+        CERT-In 8+, with expiry and no reuse; unreadable (another language, no answer) is unknown everywhere."""
+        tmp = Path(tempfile.mkdtemp(prefix="sf-test-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        cfg = {"database": tmp / "t.db", "cve_database": tmp / "cve.db"}
+
+        def st(**pw):
+            checks = compliance.measure(cfg, pc(**pw), net(), VUL, APPS, TODAY)
+            return tuple(by_id([c for g in compliance.judge_framework(k, checks, {})["controls"] for c in g["checks"]])["cfg.pwpolicy"]["status"]
+                         for k in ("ce", "certin", "dpdp"))
+        self.assertEqual(st(), ("pass", "pass", "pass"))                                         # 14, 90 days, 5 remembered
+        self.assertEqual(st(pw_min_length=0, pw_max_age_days=42, pw_history=0), ("warn", "fail", "warn"))     # Windows' defaults
+        self.assertEqual(st(pw_min_length=10), ("warn", "pass", "warn"))
+        self.assertEqual(st(pw_min_length=12, pw_max_age_days=0), ("pass", "warn", "pass"))      # never expires: CE is content
+        self.assertEqual(st(pw_min_length=12, pw_history=0), ("pass", "warn", "pass"))
+        for bad in (-1, None, "12", True):
+            self.assertEqual(st(pw_min_length=bad), ("unknown", "unknown", "unknown"), bad)
+        c = compliance.password_policy_check(pc(pw_min_length=0, pw_max_age_days=42))
+        self.assertIn("no minimum length", c["detail"])
+        self.assertIn("advises against", c["detail"])                                            # forced expiry
+        self.assertEqual(c["fix"], "In an administrator terminal: net accounts /minpwlen:12, or turn on multi-factor login.")
+        c = compliance.password_policy_check(pc(pw_min_length=0, pw_max_age_days=0, pw_history=0), "certin")
+        self.assertIn("our own suggestion", c["fix"])
+        self.assertIn("passwords never expire; old passwords can be used again", c["detail"])
 
     def test_windows_monthly_release(self):
         due = compliance.security_release_due

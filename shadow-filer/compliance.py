@@ -28,6 +28,8 @@ Honest limits, stated on the page too:
   - the age of a flaw counts from the day it was published, the nearest thing the CVE list has to "the day
     the fix came out";
   - 49 of 85 programs on the user's PC match no product in the CVE list and are not judged;
+  - the password policy and the lockout are read from `net accounts`, whose text is English only: on Windows in
+    another language they are "could not be checked", never passed;
   - the checks follow the published Cyber Essentials control areas, but this is not the scheme's own tool and
     passing here is not a certificate. Thresholds are in THRESHOLDS; "signature_days" (7) and "lock_seconds"
     (15 minutes, a note only) are our own choices, the official text gives no number for either.
@@ -44,7 +46,8 @@ import time
 from datetime import date, datetime, timedelta
 
 CREATE_NO_WINDOW = 0x08000000
-THRESHOLDS = {"patch_days": 14, "unlock_tries": 10, "lock_seconds": 900, "signature_days": 7, "high_score": 7.0}
+THRESHOLDS = {"patch_days": 14, "unlock_tries": 10, "lock_seconds": 900, "signature_days": 7, "high_score": 7.0,
+              "pw_length": 12, "pw_length_certin": 8}
 SCHEME = "Cyber Essentials v3.3 (April 2026)"
 HISTORY_DAYS = 400
 CACHE_SECONDS = 300
@@ -92,9 +95,16 @@ $admins = @(Get-LocalGroupMember -SID 'S-1-5-32-544' | ForEach-Object {
   [pscustomobject]@{ name = "$($_.Name)"; kind = "$($_.ObjectClass)"; sid = "$($_.SID)" } })
 $who = if ($system) { '' } else { & "$env:SystemRoot\System32\whoami.exe" /groups }
 $desk = "$hkcu\Control Panel\Desktop"
-# Account lockout after wrong passwords: 'net accounts' (English text; anything else reads as -1, not known).
-$lt = net accounts | Where-Object { $_ -match '^Lockout threshold' } | Select-Object -First 1
-$lockout = if ($lt -match '(\d+)\s*$') { [int]$Matches[1] } elseif ($lt -match 'Never\s*$') { 0 } else { -1 }
+# Lockout and password policy: one 'net accounts' (English text; anything else reads as -1, not known). $zero is
+# the word Windows prints instead of a number that means none: Never, Unlimited, None.
+$na = @(net accounts)
+function NetNum($rx, $zero) {
+  $l = $na | Where-Object { $_ -match $rx } | Select-Object -First 1
+  if ($l -match '(\d+)\s*$') { [int]$Matches[1] } elseif ($zero -and $l -match ($zero + '\s*$')) { 0 } else { -1 } }
+$lockout = NetNum '^Lockout threshold' 'Never'
+$pwmin = NetNum '^Minimum password length' ''
+$pwage = NetNum '^Maximum password age' 'Unlimited'
+$pwhist = NetNum '^Length of password history' 'None'
 $out = [pscustomobject]@{
   computer = "$env:COMPUTERNAME"; user = "$env:USERNAME"; manufacturer = "$($cs.Manufacturer)"; model = "$($cs.Model)";
   serial = "$($bios.SerialNumber)"; edition = "$($cv.EditionID)"; display_version = "$($cv.DisplayVersion)";
@@ -107,6 +117,7 @@ $out = [pscustomobject]@{
   drives = $drives; users = $users; admins = $admins; admins_read = [bool]$admins;
   me_admin = if ($system) { [bool]($usid -and (@($admins | ForEach-Object { $_.sid }) -contains $usid)) } else { [bool]($who -match 'S-1-5-32-544') };
   as_system = $system; user_hive = $hive; lockout_threshold = $lockout;
+  pw_min_length = $pwmin; pw_max_age_days = $pwage; pw_history = $pwhist;
   screensaver = [pscustomobject]@{ active = "$(Reg $desk 'ScreenSaveActive')"; secure = "$(Reg $desk 'ScreenSaverIsSecure')";
     timeout = "$(Reg $desk 'ScreenSaveTimeOut')" };
   inactivity = [int](Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'InactivityTimeoutSecs');
@@ -259,6 +270,7 @@ def configuration_checks(p: dict) -> list:
                   f"{SCHEME} sets no time limit, so this does not count against the control area; insurers often ask.",
                   fix=None if ways else "Settings > Accounts > Sign-in options, and Settings > System > Power > Screen and sleep.")]
     out.append(unlock_check(p))
+    out.append(password_policy_check(p))
     auto_off = p.get("autoplay_off") == 1 or (p.get("autorun_policy") or 0) >= 0x91
     out.append(_check("cfg.autoplay", "AutoPlay is off, so a plugged-in drive runs nothing by itself",
                       "pass" if auto_off else "fail",
@@ -310,6 +322,46 @@ def unlock_check(p: dict, lo: int = 1, hi: int | None = None, ref: str = "") -> 
               f"Accounts lock only after {n} wrong passwords" + (f"; {ref} asks for {lo} to {hi}." if ref else "."))
     return {**_check("cfg.unlock", title, "pass" if ok else "warn" if strict else "fail", detail,
                      fix=None if ok else f"In an administrator terminal: net accounts /lockoutthreshold:{hi}"), "fact": n}
+
+
+def _n(v) -> int:
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else -1
+
+
+def password_policy_check(p: dict, rule: str = "ce") -> dict:
+    """Windows' password policy (spec F-13): minimum length, maximum age, how many old passwords are remembered.
+    Cyber Essentials v3.3 accepts any one of: 12 characters or more; 8 or more with common passwords blocked by
+    a deny list; multi-factor login. Only the length can be seen from here, so under 12 is a look, not a fail.
+    It also advises against forced expiry. CERT-In RPP.1 asks for at least 8 characters, expiry and no reuse.
+    The three numbers are kept as the check's `fact`, so a framework can judge them again."""
+    n, age, hist = _n(p.get("pw_min_length")), _n(p.get("pw_max_age_days")), _n(p.get("pw_history"))
+    fact = {"min_length": n, "max_age_days": age, "history": hist}
+    if rule == "certin":
+        lim = THRESHOLDS["pw_length_certin"]
+        title = f"Passwords are at least {lim} characters, expire and cannot be reused"
+    else:
+        lim = THRESHOLDS["pw_length"]
+        title = f"Windows asks for passwords of at least {lim} characters"
+    if n < 0:
+        return {**_check("cfg.pwpolicy", title, "unknown", "Windows' password policy could not be read."), "fact": fact}
+    says = f"Windows asks for at least {n} character{'s' if n != 1 else ''}." if n else "Windows asks for no minimum length."
+    if rule == "certin":
+        gaps = (["passwords never expire"] if age == 0 else []) + (["old passwords can be used again"] if hist == 0 else [])             + (["the expiry or the history could not be read"] if age < 0 or hist < 0 else [])
+        short = n < lim
+        return {**_check("cfg.pwpolicy", title, "fail" if short else "warn" if gaps else "pass",
+                         says + (f" CERT-In RPP.1 asks for at least {lim}." if short else "")
+                         + (" Also: " + "; ".join(gaps) + "." if gaps else
+                            f" Passwords expire after {age} days and the last {hist} cannot be used again." if not short else ""),
+                         fix=None if not short and not gaps else
+                         f"In an administrator terminal: net accounts /minpwlen:{max(n, lim)} /maxpwage:90 /uniquepw:5 "
+                         "(90 days and 5 remembered are our own suggestion; CERT-In gives no number)."), "fact": fact}
+    ok = n >= lim
+    return {**_check("cfg.pwpolicy", title, "pass" if ok else "warn",
+                     says + ("" if ok else f" Cyber Essentials accepts {lim} or more, or 8 or more with common passwords blocked "
+                                           "by a deny list, or multi-factor login; the last two cannot be seen from this PC.")
+                     + (f" Passwords are forced to change every {age} days, which Cyber Essentials advises against." if age > 0 else ""),
+                     fix=None if ok else f"In an administrator terminal: net accounts /minpwlen:{lim}, or turn on multi-factor login."),
+            "fact": fact}
 
 
 def security_release_due(today: date) -> date:
@@ -558,12 +610,12 @@ FRAMEWORKS = {
     "ce": {"title": "Cyber Essentials", "scheme": SCHEME, "unlock": (1, THRESHOLDS["unlock_tries"]), "unlock_ref": "Cyber Essentials",
            "encryption": "note",
            "controls": tuple((k, t, a, ids) for (k, t, a), ids in zip(CONTROLS, (
-               FW_IDS, ("cfg.lock", "cfg.unlock", "cfg.autoplay", "cfg.guest", "cfg.password", "cfg.unused", "cfg.encryption"),
+               FW_IDS, ("cfg.lock", "cfg.unlock", "cfg.pwpolicy", "cfg.autoplay", "cfg.guest", "cfg.password", "cfg.unused", "cfg.encryption"),
                UPD_IDS, ("acc.daily", "acc.admins"), MAL_IDS))),
            "declared": tuple((k, why) for k, _, why in DECLARED),
            "footer": "This follows the Cyber Essentials control areas but is not a certificate."},
     "certin": {"title": "CERT-In MSME", "scheme": "CERT-In Elemental Cyber Defense Controls for MSMEs v1.0 (CISG-2025-03, 1 Sep 2025)",
-               "unlock": (3, 5), "unlock_ref": CERTIN, "encryption": "note",
+               "unlock": (3, 5), "unlock_ref": CERTIN, "encryption": "note", "pwpolicy": "certin",
                "controls": (
                    ("nes", "Network security (NES)", "NES.1: the host firewall is on and configured.", ("fw.on", "fw.default", "fw.rules")),
                    ("ems", "Endpoint security (EMS)", "EMS.1 and EMS.4: antivirus on and current; a plugged-in drive runs nothing by itself.",
@@ -573,8 +625,9 @@ FRAMEWORKS = {
                     ("fw.ports", "fw.shares", "cfg.guest", "upd.unsupported", "cfg.lock", "cfg.encryption")),
                    ("pm", "Patch management (PM)", "PM.1 and PM.2: Windows and applications patched; known-exploited flaws followed.",
                     ("upd.supported", "upd.windows", "upd.automatic", "upd.flaws", "upd.coverage", "upd.browsers", "upd.pending")),
-                   ("rpp", "Password policy (RPP)", "RPP.2: accounts lock after 3 to 5 failed attempts; every account needs a password.",
-                    ("cfg.unlock", "cfg.password")),
+                   ("rpp", "Password policy (RPP)", "RPP.1 and RPP.2: passwords of 8 characters or more that expire and are not reused; "
+                                                    "accounts lock after 3 to 5 failed attempts; every account needs a password.",
+                    ("cfg.pwpolicy", "cfg.unlock", "cfg.password")),
                    ("acim", "Access control (ACIM)", "ACIM.1, ACIM.2 and ACIM.4: accounts in use, least privilege, administrator "
                                                      "rights only when essential.", ("acc.daily", "acc.admins", "cfg.unused"))),
                "declared": (("mfa", "CERT-In RPP.3: multi-factor login for critical systems, administrators and remote access."),
@@ -593,8 +646,8 @@ FRAMEWORKS = {
                  ("enc", "6(1)(a) Encryption", "Personal data is protected by encryption, obfuscation, masking or virtual tokens.",
                   ("cfg.encryption",)),
                  ("access", "6(1)(b) Access control", "Access to the computer resources that hold personal data is controlled. "
-                                                      "The rule gives no numbers; lockout uses Cyber Essentials' 10 tries.",
-                  ("cfg.unlock", "cfg.password", "cfg.guest", "cfg.unused", "cfg.lock", "acc.daily", "acc.admins") + FW_IDS),
+                                                      "The rule gives no numbers; lockout and password length use Cyber Essentials' own.",
+                  ("cfg.unlock", "cfg.pwpolicy", "cfg.password", "cfg.guest", "cfg.unused", "cfg.lock", "acc.daily", "acc.admins") + FW_IDS),
                  ("other", "Other reasonable safeguards", "Patching and malware protection. Rule 6 does not name these; placing them "
                                                           "under its reasonable security safeguards is our own mapping.",
                   UPD_IDS + MAL_IDS + ("cfg.autoplay",))),
@@ -617,6 +670,8 @@ def _on_pc(ch: dict) -> dict:
     """The server's wording of a check that the agent's code judged: the fix is done on the PC, not on the server."""
     if ch["status"] == "unknown" and ch["id"] == "cfg.unlock":
         ch["detail"] = "The device could not read its account lockout setting."
+    if ch["status"] == "unknown" and ch["id"] == "cfg.pwpolicy":
+        ch["detail"] = "The device could not read its password policy."
     if ch.get("fix") and not ch["fix"].startswith("On the PC"):
         ch["fix"] = "On the PC, " + ch["fix"][0].lower() + ch["fix"][1:]
     return ch
@@ -627,6 +682,12 @@ def verdict(fw: str, ch: dict, labels=(), remote: bool = False) -> dict:
     f, ch = FRAMEWORKS[fw], dict(ch)
     if ch["id"] == "cfg.unlock" and "fact" in ch and tuple(f["unlock"]) != (1, THRESHOLDS["unlock_tries"]):
         u = unlock_check({"lockout_threshold": ch["fact"]}, *f["unlock"], f["unlock_ref"])
+        ch.update({k: u[k] for k in ("title", "status", "detail", "fix")})
+        if remote:
+            _on_pc(ch)
+    if ch["id"] == "cfg.pwpolicy" and "fact" in ch and f.get("pwpolicy", "ce") != "ce":
+        x = ch["fact"]
+        u = password_policy_check({"pw_min_length": x["min_length"], "pw_max_age_days": x["max_age_days"], "pw_history": x["history"]}, f["pwpolicy"])
         ch.update({k: u[k] for k in ("title", "status", "detail", "fix")})
         if remote:
             _on_pc(ch)

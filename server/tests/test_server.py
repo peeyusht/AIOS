@@ -333,6 +333,16 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(comp["controls"], comp["profiles"]["ce"]["controls"])         # Cyber Essentials stays at the top, as before
         self.assertEqual(judge.profile({"controls": [], "summary": {}}, "certin"), None)     # a judgement from before frameworks
         self.assertEqual(sorted(judge.history_lines(comp)), ["ce", "certin", "dpdp"])
+        # F-13 password policy: judged when sent, by the agent's rule per framework; not sent, no check
+        pw = lambda **o: {k: {ch["id"]: ch for g in p["controls"] for ch in g["checks"]}.get("cfg.pwpolicy")
+                          for k, p in judge.assess({**SNAP, "posture": {**SNAP["posture"], **o}}, None, None, {}, self.today)["profiles"].items()}
+        self.assertEqual({k: c["status"] for k, c in pw(pw_min_length=0, pw_max_age_days=42, pw_history=0).items()},
+                         {"ce": "warn", "certin": "fail", "dpdp": "warn"})
+        self.assertEqual({k: c["status"] for k, c in pw(pw_min_length=None, pw_max_age_days=None, pw_history=None).items()},
+                         {"ce": "unknown", "certin": "unknown", "dpdp": "unknown"})
+        self.assertEqual(pw(pw_min_length=None)["ce"]["detail"], "The device could not read its password policy.")
+        self.assertTrue(pw(pw_min_length=0)["certin"]["fix"].startswith("On the PC, in an administrator terminal: net accounts /minpwlen:8"))
+        self.assertEqual(pw(), {"ce": None, "certin": None, "dpdp": None})
         d = self.http.get(f"/api/v1/devices/{self.dev_a}", headers=self.auth(self.admin_a)).json()
         self.assertEqual(([a["name"] for a in d["flaws"]["apps"]], d["flaws"]["apps"][0]["cves"][0]["id"], d["flaws"]["apps"][0]["cves"][0]["kev"]),
                          (["Kettle Archive"], "CVE-2026-0001", True))       # 'Notes' is another maker's product: not matched
