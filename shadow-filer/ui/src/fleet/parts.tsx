@@ -5,12 +5,26 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { when } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { Card, Tip } from "@/shadow/ui";
-import type { AreaStatus, Check, CheckStatus, Control, Reference } from "./api";
+import { Card, Segmented, Tip } from "@/shadow/ui";
+import type { AreaStatus, Check, CheckStatus, Control, Framework, Reference } from "./api";
 
 export const LABEL: Record<CheckStatus, string> = { pass: "Passed", fail: "Failing", warn: "Worth a look", unknown: "Could not be checked", info: "Note" };
 export const ORDER: Record<CheckStatus, number> = { fail: 0, warn: 1, unknown: 2, info: 3, pass: 4 };
-export const SQUARE: Record<AreaStatus, string> = { pass: "bg-success", fail: "bg-destructive", warn: "bg-warning", unknown: "bg-muted-foreground/30" };
+export const SQUARE: Record<AreaStatus, string> = { pass: "bg-success", fail: "bg-destructive", warn: "bg-warning", unknown: "bg-muted-foreground/30", info: "bg-muted" };
+
+/* Which framework this viewer is looking at. Kept in the browser only as a convenience; the server decides what
+   is shown (the organisation's choice) and falls back to its first framework. */
+const FW_KEY = "sf-fleet-framework";
+export function useFramework(): [string | undefined, (k: string) => void] {
+  const [fw, set] = useState<string | undefined>(() => { try { return localStorage.getItem(FW_KEY) ?? undefined; } catch { return undefined; } });
+  return [fw, (k: string) => { try { localStorage.setItem(FW_KEY, k); } catch { /* private window */ } set(k); }];
+}
+/** The frameworks the organisation shows, as a switch; nothing when it shows one. */
+export function FrameworkSwitch({ all, value, onChange }: { all: Framework[] | undefined; value: string | undefined; onChange: (k: string) => void }) {
+  const shown = (all ?? []).filter((f) => f.shown);
+  if (shown.length < 2) return null;
+  return <span data-print-hide><Segmented label="Framework" value={value ?? shown[0]!.key} onChange={onChange} options={shown.map((f) => ({ value: f.key, label: f.title }))} /></span>;
+}
 const TAB: Record<string, string> = { security: "Security", network: "Network", programs: "Programs" };
 
 export function Mark({ status, quiet, small }: { status: CheckStatus; quiet?: boolean; small?: boolean }) {

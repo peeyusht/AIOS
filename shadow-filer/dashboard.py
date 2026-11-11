@@ -142,7 +142,7 @@ def _compliance(cfg: dict) -> dict:
     b = compliance.brief(cfg)
     if not b:
         return {"day": None, "controls": {}, "summary": {}}
-    return {"day": b["day"], "controls": b["controls"], "summary": b["summary"]}
+    return {"day": b["day"], "controls": b["controls"], "summary": b["summary"], "framework": b["framework"], "title": b["title"]}
 
 
 def _remedy(cfg: dict) -> dict:
@@ -186,7 +186,8 @@ def attention(d: dict) -> list:
     co = (d.get("compliance") or {}).get("summary") or {}
     if co.get("fail"):
         failing = sum(1 for v in ((d.get("compliance") or {}).get("controls") or {}).values() if v == "fail")
-        add("warning", f"{failing} of 5 security control areas {'has' if failing == 1 else 'have'} a failing check "
+        areas = co.get("controls") or len((d.get("compliance") or {}).get("controls") or {})
+        add("warning", f"{failing} of {areas} security control areas {'has' if failing == 1 else 'have'} a failing check "
                        f"({co['fail']} check{'s' if co['fail'] != 1 else ''} in all).", "/compliance")
     soon = (wa.get("counts") or {}).get("soon", 0)
     if soon:

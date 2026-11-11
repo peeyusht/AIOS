@@ -517,7 +517,8 @@ class Handler(BaseHTTPRequestHandler):
                                                        idx.stats() if idx else {"disabled": True}))
             if u.path == "/api/compliance":
                 import compliance
-                return self._send(200, compliance.view(cfg, force=q.get("refresh") == "1", log=Ctx.log))
+                return self._send(200, compliance.view(cfg, force=q.get("refresh") == "1", log=Ctx.log,
+                                                       framework=q.get("framework") or None))
             if u.path == "/api/network":
                 import network
                 import remedy
@@ -651,6 +652,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._library_post(u.path, body)
         if u.path.startswith("/api/security/"):
             return self._security_post(u.path, body)
+        if u.path == "/api/compliance/frameworks":
+            # which frameworks the Compliance page shows (Cyber Essentials, CERT-In MSME, DPDP Rule 6); judging is the same
+            import compliance
+            ok = compliance.set_frameworks(cfg_now()["database"], body.get("frameworks"))
+            return self._send(200 if ok else 400, {"ok": ok, **({} if ok else {"message": "Choose at least one of the listed frameworks."})})
         if u.path in ("/api/compliance/declare", "/api/compliance/accept"):
             # what the owner says about things that cannot be measured, and failing checks accepted with a reason
             import compliance

@@ -54,7 +54,30 @@ v3.3) and `server/app/judge.py` imports it. The same fact must be judged differe
 | Event log retention | not asked | ≥180 days (LM.1) | ≥365 days on personal-data devices (6(1)(e)) |
 | Automatic lock | note only | note | part of (b), note |
 
-**F-0 Framework profiles — NEW.**
+**F-0 Framework profiles — BUILT 11 Nov 2026** (`compliance.FRAMEWORKS`, `judge_framework`; CERT-In lockout in
+`cfg.unlock`). What was built differs from the bullets below in these ways, found once the code was read:
+- CERT-In lockout **below 3** (1 or 2 tries) is `warn`, not `fail`: stricter than RPP.2 asks, and it locks people
+  out easily, but it is not weaker. 0 (never) and above 5 fail; unreadable is `unknown` in every profile.
+- A control area whose checks are all notes (`info`) has the status `info`, not `pass`, and does not count in
+  "areas met" (DPDP's 6(1)(a) on a device not labelled as holding personal data). Before, an all-notes area
+  would have rolled up as "pass".
+- DPDP areas: `enc` 6(1)(a) (`cfg.encryption`), `access` 6(1)(b) (accounts, lockout, lock, admin rights, firewall),
+  `other` "Other reasonable safeguards" (patching, malware, AutoPlay), labelled on the page as our own mapping:
+  Rule 6 does not name them. (c), (d), (e) come with F-10 and F-12.
+- CERT-In areas: NES, EMS, SC, PM, RPP, ACIM; only those with measured checks. `upd.unsupported` is in SC (SC.3),
+  `cfg.lock` and `cfg.encryption` are notes in SC.
+- Declared questions are one pool (`compliance.QUESTIONS`), one answer per key; each framework lists the keys it
+  asks with its own reason. CERT-In's perimeter firewall is a new key `perimeter`, not the CE `router` question
+  reworded, because one answer must not stand for two different questions.
+- The PC itself has no labels; on the agent DPDP encryption is always a note until F-1 labels devices on the
+  server. The server's judge already takes `labels`.
+- The server re-judges every device when the judging code changes (a fingerprint of `judge.py` and
+  `compliance.py` is part of the worker's reference version), so a rule change does not wait for the next day.
+- Local choice of frameworks: table `compliance_settings` in the agent's database, Compliance › Frameworks;
+  server: `organisations.frameworks` (text[], default `{ce}`), set by an admin or owner on the Evidence page
+  (`POST /api/v1/frameworks`, audit-logged). A share link sees only the frameworks the organisation shows.
+
+Original specification:
 - `compliance.FRAMEWORKS = {"ce": {...}, "certin": {...}, "dpdp": {...}}`. Each profile has its own
   thresholds, its control areas (a list of check ids per area), its declared questions and a `scheme` string.
 - Checks are measured once (the existing `_check` functions keep their ids) and then given a status per
@@ -120,7 +143,7 @@ actor)` with row-level security and a line in the isolation test.
 | GC.2–3 | Approved security policy, periodic review | F-23 | W | **NEW** |
 | GC.4 | Follow CERT-In and regulator directions | Declared | D | **NEW** question |
 | RPP.1 | Length 8–12+, complexity, expiry, no reuse | F-13 password policy | M | **NEW** (same `net accounts` call already made for lockout) |
-| RPP.2 | Lock after 3–5 failed attempts | Lockout threshold | M | **PARTIAL**: read and judged (`cfg.unlock`) at ≤10 for CE. CERT-In profile needs 3–5 (F-0) |
+| RPP.2 | Lock after 3–5 failed attempts | Lockout threshold | M | **BUILT** 11 Nov 2026 `cfg.unlock`: ≤10 in CE and DPDP, 3–5 in the CERT-In profile (F-0) |
 | RPP.3 | MFA for critical systems, admins, remote access | Declared | D | **BUILT** `mfa` (worded for cloud services; add admin/remote wording) |
 | RPP.4 | Passwords stored with secure hashing | Out of scope for an endpoint agent | – | not planned |
 | ACIM.1 | Unique user IDs, no shared accounts | Enabled accounts, accounts with no password, never-used accounts | M | **PARTIAL**: `cfg.password` BUILT; `cfg.unused` BUILT on the PC only (the payload sends `accounts_enabled`, not the unused count, so the server cannot judge it) |
@@ -260,7 +283,7 @@ rest) must come first.
 
 ## 6. Order of work
 
-1. **F-0 profiles** and the CERT-In lockout threshold. No payload change. Unblocks everything.
+1. **F-0 profiles** and the CERT-In lockout threshold. No payload change. Unblocks everything. **BUILT 11 Nov 2026.**
 2. **Measured, payload change needed (D-1):** F-13 password policy, F-7 protocols, F-8 firmware, F-5 USB,
    built-in Administrator enabled, never-used account count, F-2 Wi-Fi, F-10 logs, F-12 backups.
 3. **Server workflows without uploads:** F-1 labels, F-21 incidents, F-24 reviews, F-23 (without document),

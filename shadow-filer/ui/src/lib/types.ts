@@ -561,20 +561,23 @@ export interface ComplianceCheck {
   id: string; title: string; status: CheckStatus; detail: string; evidence: string[]; fix: string | null; to: string | null;
   accepted: { reason: string; ts: string } | null;
 }
+/** A framework the same checks are judged by: Cyber Essentials ("ce"), CERT-In MSME ("certin"), DPDP Rule 6 ("dpdp"). */
+export interface ComplianceFramework { key: string; title: string; scheme: string; shown: boolean; footer?: string }
 export interface ComplianceControl {
-  key: "firewalls" | "configuration" | "updates" | "access" | "malware";
-  title: string; about: string; status: "pass" | "fail" | "warn" | "unknown";
+  key: string;
+  title: string; about: string; status: "pass" | "fail" | "warn" | "unknown" | "info";
   checks: ComplianceCheck[]; counts: { pass: number; fail: number; warn: number; unknown: number }; accepted: number;
 }
 export interface ComplianceResponse {
   assessed_at: string | null; error?: string;
+  framework?: string; title?: string; scheme?: string; footer?: string; frameworks?: ComplianceFramework[];
   device: { name?: string; manufacturer?: string; model?: string; serial?: string; windows?: string; build?: string; user?: string };
   controls: ComplianceControl[];
   declared: { key: string; title: string; about: string; answer: DeclaredAnswer; note: string; ts: string | null }[];
   thresholds: Record<string, number>;
   summary: { controls_passing?: number; controls?: number; fail?: number; warn?: number; unknown?: number; passed?: number; accepted?: number;
     declared_yes?: number; declared_no?: number; declared_open?: number };
-  history: { day: string; controls: Record<string, "pass" | "fail" | "warn" | "unknown">; checks: Record<string, string>;
+  history: { day: string; controls: Record<string, "pass" | "fail" | "warn" | "unknown" | "info">; checks: Record<string, string>;
     summary: { controls_passing: number; fail: number; warn: number; unknown: number } }[];
   patch_log: { ts: string; action: "update" | "stop" | "firewall"; name: string; target: string; before: string; after: string; ok: number; message: string }[];
   text?: string;

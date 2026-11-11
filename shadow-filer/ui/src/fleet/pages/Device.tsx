@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { Card, Confirm, ListSkeleton, LoadError, Notice, PageHeader, Segmented, Stat } from "@/shadow/ui";
 import { api, type AppFact, type AreaStatus, type Check, type Cve, type DeviceDetail, type FlawApp, type FlawService, type SupportProgram } from "../api";
 import { useCan } from "../session";
-import { ControlCard, HistoryGrid, LABEL, ReferenceLine, Section, silentFor, SQUARE, Tile } from "../parts";
+import { ControlCard, FrameworkSwitch, HistoryGrid, LABEL, ReferenceLine, Section, silentFor, SQUARE, Tile, useFramework } from "../parts";
 
 const TABS = ["compliance", "security", "programs", "network", "reported"] as const;
 type TabKey = (typeof TABS)[number];
@@ -222,6 +222,7 @@ export function DevicePage({ id, tab }: { id: string; tab?: string }) {
   const [removing, setRemoving] = useState(false);
   const canEdit = useCan("admin");
   const keep = useRef(false);
+  const [chosenFw, setFw] = useFramework();
   const d = q.data;
   const current: TabKey = (TABS as readonly string[]).includes(tab ?? "") ? (tab as TabKey) : "compliance";
   const back = <a href="#/devices" className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground" data-print-hide><ArrowLeft className="size-3.5" />Devices</a>;
@@ -238,13 +239,17 @@ export function DevicePage({ id, tab }: { id: string; tab?: string }) {
   const remove = async () => {
     try { await api.removeDevice(id); toast.success(`${d.name} was removed.`); window.location.hash = "/devices"; } catch (e) { toast.error((e as Error).message); }
   };
-  const copy = async () => { try { await navigator.clipboard.writeText((await api.report(id)).text); toast.success("Copied"); } catch (e) { toast.error((e as Error).message || "Could not copy."); } };
+  const shownFw = (d.frameworks ?? []).filter((x) => x.shown);
+  const fwKey = (shownFw.find((x) => x.key === chosenFw) ?? shownFw.find((x) => x.key === d.framework) ?? shownFw[0])?.key ?? "ce";
+  const fwInfo = (d.frameworks ?? []).find((x) => x.key === fwKey);
+  const copy = async () => { try { await navigator.clipboard.writeText((await api.report(id, fwKey)).text); toast.success("Copied"); } catch (e) { toast.error((e as Error).message || "Could not copy."); } };
 
   const dev = d.snapshots.device?.payload ?? {};
   const line = [[dev.manufacturer, dev.model].filter(Boolean).join(" "), dev.serial && `serial ${dev.serial}`, dev.windows && `${dev.windows}${dev.build ? `, build ${dev.build}` : ""}`].filter(Boolean).join(" · ");
-  const c = d.compliance, s = c?.summary;
+  const c = d.compliance && (d.compliance.profiles?.[fwKey] ?? (fwKey === "ce" ? d.compliance : null)), s = c?.summary;
   const silent = d.silent_seconds == null || d.silent_seconds > 86400;
-  const days = d.compliance_history.map((h) => h.day);
+  const hist = d.histories?.[fwKey] ?? (fwKey === "ce" ? d.compliance_history : []);
+  const days = hist.map((h) => h.day);
   return (
     <>
       {back}
@@ -253,6 +258,7 @@ export function DevicePage({ id, tab }: { id: string; tab?: string }) {
         title={d.name}
         sub={<><div>{line || "Nothing reported yet."}</div><div className="mt-1 text-xs">Last report {when(d.last_seen)} · judged {when(d.judged_at)}</div></>}
         actions={<>
+          <FrameworkSwitch all={d.frameworks} value={fwKey} onChange={setFw} />
           <Button variant="outline" size="sm" onClick={() => void copy()} disabled={!c}><Copy />Copy as text</Button>
           <Button variant="outline" size="sm" onClick={() => window.print()} disabled={!c}><Printer />Print</Button>
           {canEdit && <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setRemoving(true)}><Trash2 />Remove</Button>}
@@ -269,7 +275,7 @@ export function DevicePage({ id, tab }: { id: string; tab?: string }) {
           <TabsTrigger value="reported">Reported</TabsTrigger>
         </TabsList>
         <TabsContent value="compliance">
-          {!c || !s ? <Notice>This device has not been judged yet. That happens within a minute of its first report.</Notice> : (
+          {!c || !s ? <Notice>{d.compliance ? "This device has not been judged under this framework yet. That happens at its next judgement, within a day." : "This device has not been judged yet. That happens within a minute of its first report."}</Notice> : (
             <div className="space-y-8">
               <Card data-print-card className="rounded-lg p-5">
                 <div className="flex flex-wrap items-center justify-between gap-6">
@@ -283,7 +289,7 @@ export function DevicePage({ id, tab }: { id: string; tab?: string }) {
                 </div>
                 <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">
                   Judged on the server from what the PC reported: counts and settings, never account names or paths, so some lines say how many and not which. The PC's own console names them.
-                  This follows the Cyber Essentials control areas; it is not a certificate.
+                  {fwInfo ? `Judged against ${fwInfo.scheme}. ${fwInfo.footer}` : "This follows the Cyber Essentials control areas; it is not a certificate."}
                 </p>
               </Card>
               <Section title="Control areas">
@@ -291,10 +297,10 @@ export function DevicePage({ id, tab }: { id: string; tab?: string }) {
               </Section>
               <Section title="History" sub="One line per control area, one square per day.">
                 <Card data-print-card className="rounded-lg">
-                  <HistoryGrid days={days} rows={c.controls} cell={(key, i) => { const st: AreaStatus = d.compliance_history[i]!.controls[key] ?? "unknown"; return { tone: SQUARE[st], tip: LABEL[st].toLowerCase() }; }} />
+                  <HistoryGrid days={days} rows={c.controls} cell={(key, i) => { const st: AreaStatus = hist[i]!.controls[key] ?? "unknown"; return { tone: SQUARE[st], tip: LABEL[st].toLowerCase() }; }} />
                 </Card>
               </Section>
-              <p data-print="only" className="hidden text-sm">Judged by the Shadow Filer fleet server from what the PC's agent reported. Follows the Cyber Essentials control areas; not a certificate.</p>
+              <p data-print="only" className="hidden text-sm">Judged by the Shadow Filer fleet server from what the PC's agent reported. {fwInfo?.footer ?? "Follows the Cyber Essentials control areas; not a certificate."}</p>
             </div>
           )}
         </TabsContent>

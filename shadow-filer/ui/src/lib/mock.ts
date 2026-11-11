@@ -816,6 +816,11 @@ function mockCompliance(): ComplianceResponse {
   });
   const log = (min: number, action: "update" | "stop" | "firewall", name: string, ok: number, message: string) => ({ ts: ago(min), action, name, target: "", before: "", after: "", ok, message });
   return {
+    framework: "ce", title: "Cyber Essentials", scheme: "Cyber Essentials v3.3 (April 2026)",
+    footer: "This follows the Cyber Essentials control areas but is not a certificate.",
+    frameworks: [{ key: "ce", title: "Cyber Essentials", scheme: "Cyber Essentials v3.3 (April 2026)", shown: true },
+      { key: "certin", title: "CERT-In MSME", scheme: "CERT-In Elemental Cyber Defense Controls for MSMEs v1.0", shown: false },
+      { key: "dpdp", title: "DPDP Rule 6", scheme: "DPDP Rules 2025, Rule 6 and 7", shown: false }],
     assessed_at: iso(now()), device: { name: "DEMO-PC", manufacturer: "Contoso", model: "Tower 5", serial: "SN-48213", windows: "Windows 11 Professional 25H2", build: "26200.1234", user: "alex" },
     controls, declared, thresholds: { patch_days: 14, unlock_tries: 10, lock_seconds: 900, signature_days: 7, high_score: 7 },
     summary: { controls_passing: controls.filter((c) => c.status === "pass").length, controls: controls.length, fail: every.filter((c) => c.status === "fail" && !c.accepted).length,
@@ -1047,6 +1052,7 @@ const post: Record<string, Handler> = {
     if (String(b.reason ?? "").trim()) compAccepted.set(String(b.id), { reason: String(b.reason).trim(), ts: iso(now()) }); else compAccepted.delete(String(b.id));
     return { ok: true };
   },
+  "/api/compliance/frameworks": () => ({ ok: true }),
   "/api/compliance/declare": (_q, b) => {
     if (b.answer == null) compDeclared.delete(String(b.key)); else compDeclared.set(String(b.key), { answer: b.answer as DeclaredAnswer, note: String(b.note ?? ""), ts: iso(now()) });
     return { ok: true };

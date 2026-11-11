@@ -322,6 +322,17 @@ class ServerTest(unittest.TestCase):
         self.assertEqual([(unlock(lockout_threshold=n) or {}).get("status") for n in (10, 0, 30, None)], ["pass", "fail", "fail", "unknown"])
         self.assertIsNone(unlock())
         self.assertTrue(unlock(lockout_threshold=0)["fix"].startswith("On the PC, in an administrator terminal: net accounts"))
+        # F-0: one measurement, a verdict per framework, by the agent's own judge_framework
+        snaps = {**SNAP, "posture": {**SNAP["posture"], "lockout_threshold": 10, "drives_encrypted": False}}
+        comp = judge.assess(snaps, None, None, {}, self.today)
+        v = {k: {ch["id"]: ch for g in p["controls"] for ch in g["checks"]} for k, p in comp["profiles"].items()}
+        self.assertEqual({k: (x["cfg.unlock"]["status"], x["cfg.encryption"]["status"]) for k, x in v.items()},
+                         {"ce": ("pass", "info"), "certin": ("fail", "info"), "dpdp": ("pass", "info")})
+        self.assertEqual(v["certin"]["cfg.unlock"]["fix"], "On the PC, in an administrator terminal: net accounts /lockoutthreshold:5")
+        self.assertEqual(judge.assess(snaps, None, None, {}, self.today, ("personal_data",))["profiles"]["dpdp"]["controls"][0]["status"], "fail")
+        self.assertEqual(comp["controls"], comp["profiles"]["ce"]["controls"])         # Cyber Essentials stays at the top, as before
+        self.assertEqual(judge.profile({"controls": [], "summary": {}}, "certin"), None)     # a judgement from before frameworks
+        self.assertEqual(sorted(judge.history_lines(comp)), ["ce", "certin", "dpdp"])
         d = self.http.get(f"/api/v1/devices/{self.dev_a}", headers=self.auth(self.admin_a)).json()
         self.assertEqual(([a["name"] for a in d["flaws"]["apps"]], d["flaws"]["apps"][0]["cves"][0]["id"], d["flaws"]["apps"][0]["cves"][0]["kev"]),
                          (["Kettle Archive"], "CVE-2026-0001", True))       # 'Notes' is another maker's product: not matched
@@ -333,6 +344,12 @@ class ServerTest(unittest.TestCase):
         self.assertEqual((f["exploited"][0]["device"], f["exploited"][0]["cve"], [s["name"] for s in f["silent"]]), ("DEMO-PC", "CVE-2026-0001", ["SECOND-PC"]))
         self.assertEqual({a["key"]: (a["pass"], a["fail"]) for a in f["areas"]}["malware"], (1, 0))
         self.assertEqual(f["history"][-1]["areas"]["malware"], 1)
+        self.assertEqual((f["framework"], [x["key"] for x in f["frameworks"] if x["shown"]]), ("ce", ["ce"]))     # nothing changes until chosen
+        c = self.http.get("/api/v1/fleet?framework=certin", headers=self.auth(self.admin_a)).json()
+        self.assertEqual(([a["key"] for a in c["areas"]], c["framework"]), (["nes", "ems", "sc", "pm", "rpp", "acim"], "certin"))
+        self.assertEqual({a["key"]: (a["pass"], a["fail"]) for a in c["areas"]}["ems"], (1, 0))
+        self.assertEqual(sorted(c["history"][-1]["areas"]), ["acim", "ems", "nes", "pm", "rpp", "sc"])
+        self.assertEqual({k: len(h) for k, h in d["histories"].items()}, {"ce": 1, "certin": 1, "dpdp": 1})
         sw = self.http.get("/api/v1/software", headers=self.auth(self.admin_a)).json()["programs"]
         self.assertEqual((sw[0]["name"], sw[0]["exploited"], sw[0]["ended"], sw[0]["versions"][0]["devices"][0]["name"]), ("Kettle Archive", 1, True, "DEMO-PC"))
         # new facts send the device round again; the other organisation's judgement is its own
@@ -390,6 +407,23 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(actions[:3], ["declaration.changed", "check.acceptance_withdrawn", "check.accepted"])
         who = self.http.get("/api/v1/audit", headers=self.auth(self.admin_a)).json()["entries"][0]["actor"]
         self.assertEqual(who, "user:olive@acme.example")                    # a named person, not a shared key
+        # which frameworks the console shows: chosen per organisation, by an admin or owner, recorded
+        self.assertEqual(self.http.post("/api/v1/frameworks", headers=self.auth(self.admin_a), json={"frameworks": ["dpdp"]}).status_code, 403)
+        for bad in ({"frameworks": []}, {"frameworks": ["iso27001"]}, {"frameworks": "ce"}, {"frameworks": ["ce", "ce"]}):
+            self.assertEqual(self.owner_a.post("/api/v1/frameworks", json=bad).status_code, 400, bad)
+        self.assertEqual(self.owner_a.post("/api/v1/frameworks", json={"frameworks": ["certin", "dpdp"]}).status_code, 200)
+        f = self.http.get("/api/v1/fleet", headers=self.auth(self.admin_a)).json()
+        self.assertEqual((f["framework"], [x["key"] for x in f["frameworks"] if x["shown"]]), ("certin", ["certin", "dpdp"]))
+        self.assertEqual([q["key"] for q in f["declared"]].count("perimeter"), 1)            # CERT-In's own question
+        self.assertEqual(self.owner_a.post("/api/v1/declarations", json={"key": "perimeter", "answer": "yes"}).status_code, 200)
+        self.assertEqual(self.http.get("/api/v1/fleet", headers=self.auth(self.admin_b)).json()["framework"], "ce")     # B's own choice
+        t = self.http.get("/api/v1/report?framework=dpdp", headers=self.auth(self.admin_a)).json()["text"]
+        for part in ("Judged against: DPDP Rules 2025", "6(1)(A) ENCRYPTION", "Rule 6 and 7 evidence", "Not a statement of DPDP compliance"):
+            self.assertIn(part, t)
+        t = self.http.get("/api/v1/report", headers=self.auth(self.admin_a)).json()["text"]
+        self.assertIn("may have a yearly baseline audit", t)
+        self.assertNotIn("mandatory", t.lower())
+        self.assertEqual(self.http.get("/api/v1/audit", headers=self.auth(self.admin_a)).json()["entries"][1]["action"], "frameworks.changed")
 
     def test_7_judgements_stay_inside_their_organisation(self):
         with db.anon() as c:
@@ -402,6 +436,8 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(c.execute("UPDATE judgements SET summary = '{}' WHERE device_id = %s", (self.dev_a,)).rowcount, 0)
             self.assertEqual(c.execute("SELECT count(*) AS n FROM declarations").fetchone()["n"], 0)
             self.assertEqual(c.execute("SELECT count(*) AS n FROM compliance_history WHERE device_id = %s", (self.dev_a,)).fetchone()["n"], 0)
+            self.assertEqual(c.execute("UPDATE organisations SET frameworks = '{dpdp}' WHERE id = %s", (self.org_a,)).rowcount, 0)
+            self.assertEqual(c.execute("SELECT count(*) AS n FROM organisations").fetchone()["n"], 1)
         with self.assertRaises(psycopg.errors.InsufficientPrivilege):
             with db.org(self.org_b) as c:
                 c.execute("INSERT INTO exceptions (org_id, device_id, check_id, reason) VALUES (%s,%s,'fw.on','planted')", (self.org_a, self.dev_a))
@@ -521,12 +557,16 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(seen.status_code, 200, seen.text)
         d = seen.json()
         self.assertEqual((d["organisation"], d["label"], sorted(x["name"] for x in d["device_list"]), d["judged"]), ("Acme Ltd", "Broker, renewal 2027", ["DEMO-PC", "SECOND-PC"], 1))
-        self.assertTrue("Security posture of Acme Ltd" in d["text"] and "GLOBEX" not in seen.text and len(d["device_list"][0]["compliance"]["controls"]) == 5)
+        self.assertTrue("Security posture of Acme Ltd" in d["text"] and "GLOBEX" not in seen.text)
+        # Acme shows CERT-In and DPDP (test 6): the link sees those, first one first, and not Cyber Essentials
+        self.assertEqual((d["framework"], [f["key"] for f in d["frameworks"]], len(d["device_list"][0]["compliance"]["controls"])), ("certin", ["certin", "dpdp"], 6))
         for url in ("/api/v1/devices", "/api/v1/fleet", "/api/v1/audit", "/api/v1/access"):                              # it opens that one page and nothing else
             self.assertEqual(self.http.get(url, headers={"Authorization": "Share " + link}).status_code, 401, url)
             self.assertEqual(self.http.get(url, headers=self.auth(link)).status_code, 401, url)
         listed = ada.get("/api/v1/access").json()["share_links"][0]
         self.assertEqual((listed["label"], listed["state"], listed["opened"], listed["created_by"]), ("Broker, renewal 2027", "active", 1, "user:ada@acme.example"))
+        self.assertEqual(self.http.get("/api/v1/shared?framework=ce", headers={"Authorization": "Share " + link}).json()["framework"], "certin")
+        self.assertEqual(self.http.get("/api/v1/shared?framework=dpdp", headers={"Authorization": "Share " + link}).json()["framework"], "dpdp")
         self.assertEqual(self.owner_b.post(f"/api/v1/share-links/{listed['id']}/revoke").status_code, 404)
         self.assertEqual(ada.post(f"/api/v1/share-links/{listed['id']}/revoke").status_code, 200)
         self.assertEqual(self.http.get("/api/v1/shared", headers={"Authorization": "Share " + link}).status_code, 401)

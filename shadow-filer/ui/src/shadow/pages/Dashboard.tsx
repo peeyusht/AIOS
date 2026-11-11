@@ -93,7 +93,7 @@ export function DashboardPage() {
         <Kpi label="Firewall" to="/network" tone={fw === "off" || fw === "partly" ? "danger" : null}
           value={fw === "on" ? "on" : fw === "off" ? "off" : fw === "partly" ? `${net?.firewall?.off.length ?? "?"}/3 off` : "—"}
           sub={fw === "partly" ? `off for ${net?.firewall?.off.join(", ")}` : fw ? "Windows Firewall" : "being read"} />
-        <Kpi label="Cyber Essentials" to="/compliance" tone={cs && (cs.controls_passing ?? 0) < (cs.controls ?? 5) ? "warning" : null}
+        <Kpi label={comp.data?.title ?? "Cyber Essentials"} to="/compliance" tone={cs && (cs.controls_passing ?? 0) < (cs.controls ?? 5) ? "warning" : null}
           value={cs ? `${cs.controls_passing ?? "—"}/${cs.controls ?? 5}` : "—"} sub={cs ? "control areas met" : comp.error ? "could not be read" : "being assessed"} />
         <Kpi label="Updates" to="/library" value={apps?.enabled && apps.updates_checked ? number(apps.updates) : "—"}
           sub={apps?.enabled ? apps.updates_checked ? `newer versions of ${number(apps.programs)} programs` : "check is off" : "turn on in Settings"} />

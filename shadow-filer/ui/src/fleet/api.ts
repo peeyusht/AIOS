@@ -48,10 +48,11 @@ export const api = {
   changePassword: (current: string, next: string) => request<{ ok: boolean }>("POST", "/api/v1/auth/password", { current, new: next }),
   // the fleet
   devices: () => request<Devices>("GET", "/api/v1/devices"),
-  fleet: () => request<Fleet>("GET", "/api/v1/fleet"),
+  fleet: (fw?: string) => request<Fleet>("GET", "/api/v1/fleet" + (fw ? `?framework=${id(fw)}` : "")),
   device: (d: string) => request<DeviceDetail>("GET", `/api/v1/devices/${id(d)}`),
   software: () => request<Software>("GET", "/api/v1/software"),
-  report: (d?: string) => request<{ text: string; generated_at: string }>("GET", d ? `/api/v1/devices/${id(d)}/report` : "/api/v1/report"),
+  report: (d?: string, fw?: string) => request<{ text: string; generated_at: string }>("GET", (d ? `/api/v1/devices/${id(d)}/report` : "/api/v1/report") + (fw ? `?framework=${id(fw)}` : "")),
+  setFrameworks: (frameworks: string[]) => request<{ ok: boolean }>("POST", "/api/v1/frameworks", { frameworks }),
   audit: () => request<{ entries: AuditEntry[] }>("GET", "/api/v1/audit"),
   declare: (key: string, answer: Answer, note: string) => request<{ ok: boolean }>("POST", "/api/v1/declarations", { key, answer, note }),
   accept: (d: string, check_id: string, reason: string) => request<{ ok: boolean }>("POST", `/api/v1/devices/${id(d)}/exceptions`, { check_id, reason }),
@@ -64,7 +65,7 @@ export const api = {
   revokeShareLink: (l: string) => request<{ ok: boolean }>("POST", `/api/v1/share-links/${id(l)}/revoke`),
   addEnrolmentToken: (label: string, uses: number, days: number) => request<{ ok: boolean; enrolment_token: string; uses: number; days: number }>("POST", "/api/v1/tokens", { label, uses, days }),
   // what a share link shows
-  shared: (token: string) => request<Shared>("GET", "/api/v1/shared", undefined, { share: token }),
+  shared: (token: string, fw?: string) => request<Shared>("GET", "/api/v1/shared" + (fw ? `?framework=${id(fw)}` : ""), undefined, { share: token }),
 };
 
 export type Stage = "ok" | "mfa" | "mfa_setup";
@@ -87,7 +88,8 @@ export interface Access {
 }
 export interface Shared {
   organisation: string; label: string; expires_at: string; generated_at: string; devices: number; judged: number; all_passing: number;
-  areas: ({ key: string; title: string; about: string } & Record<AreaStatus, number>)[];
+  framework: string; frameworks: Framework[];
+  areas: ({ key: string; title: string; about: string } & Record<CheckStatus, number>)[];
   device_list: { id: string; name: string; windows: string | null; model: string; last_seen: string | null; judged_at: string | null;
     compliance: Compliance | null; security: Judgement["security"] }[];
   declared: Declared[]; text: string;
@@ -95,7 +97,9 @@ export interface Shared {
 
 /* ---- what the server answers ---- */
 export type CheckStatus = "pass" | "fail" | "warn" | "unknown" | "info";
-export type AreaStatus = Exclude<CheckStatus, "info">;
+export type AreaStatus = CheckStatus;      // an area of notes only is "info"
+/** A framework the same checks are judged by: Cyber Essentials ("ce"), CERT-In MSME ("certin"), DPDP Rule 6 ("dpdp"). */
+export interface Framework { key: string; title: string; scheme: string; footer: string; shown: boolean; areas: { key: string; title: string }[] }
 export type Answer = "yes" | "no" | "na" | null;
 
 export interface Check {
@@ -107,7 +111,10 @@ export interface Control {
   counts: Record<AreaStatus, number>; accepted: number;
 }
 export interface ComplianceSummary { controls_passing: number; controls: number; fail: number; warn: number; unknown: number; passed: number; accepted: number }
-export interface Compliance { controls: Control[]; summary: ComplianceSummary; thresholds: Record<string, number> }
+export interface Profile { framework: string; title: string; scheme: string; footer: string; controls: Control[]; summary: ComplianceSummary }
+/** Cyber Essentials at the top, as before frameworks; every framework under `profiles` (judgements since 11 Nov 2026). */
+export interface Compliance { controls: Control[]; summary: ComplianceSummary; thresholds?: Record<string, number>; profiles?: Record<string, Profile> }
+export type ShortResult = ComplianceSummary & { areas: Record<string, AreaStatus>; failing?: { id: string; title: string; control: string }[] };
 
 export interface Cve {
   id: string; published: string; score: number | null; severity: string; summary: string; fixed_in: string | null;
@@ -133,6 +140,7 @@ export interface Support { programs: SupportProgram[] | null; installed: number;
 export interface Judgement {
   compliance: ComplianceSummary & { areas: Record<string, AreaStatus> };
   failing: { id: string; title: string; control: string }[];
+  frameworks?: Record<string, ShortResult>;
   security: (SecuritySummary & { installed: number; recognised: number; exploited: { program: string; version: string | null; cve: string; fix: string | null }[] }) | null;
   support: { windows: string | null; windows_until: string | null; ended: string[]; soon: string[] } | null;
 }
@@ -144,7 +152,7 @@ export interface DeviceRow {
   id: string; name: string; enrolled_at: string; last_seen: string | null; silent_seconds: number | null; agent_version: string;
   summary: DeviceSummary; judged_at: string | null; judgement: Judgement | null;
 }
-export interface Devices { organisation: string; generated_at: string; checkin_seconds: number; devices: DeviceRow[] }
+export interface Devices { organisation: string; generated_at: string; checkin_seconds: number; framework: string; frameworks: Framework[]; devices: DeviceRow[] }
 
 export interface Reference {
   cve_synced_at: string | null; complete: boolean; cves: number; kev: number; eol_synced_at: string | null; eol_products: number;
@@ -154,8 +162,9 @@ export interface Declared { key: string; title: string; about: string; answer: A
 export interface FleetDay { day: string; devices: number; all_passing: number; areas: Record<string, number> }
 export interface Fleet {
   organisation: string; generated_at: string; devices: number; judged: number; all_passing: number; silent_hours: number;
+  framework: string; frameworks: Framework[];
   silent: { id: string; name: string; last_seen: string | null }[];
-  areas: ({ key: string; title: string; about: string } & Record<AreaStatus, number>)[];
+  areas: ({ key: string; title: string; about: string } & Record<CheckStatus, number>)[];
   failing: { id: string; title: string; control: string; devices: { id: string; name: string }[] }[];
   exploited: { device_id: string; device: string; program: string; version: string | null; cve: string; fix: string | null }[];
   unsupported: { device_id: string; device: string; windows: boolean; windows_until: string | null; programs: string[] }[];
@@ -184,6 +193,8 @@ export interface DeviceDetail extends DeviceRow {
   history: { kind: string; versions: number; first: string; last: string }[];
   compliance: Compliance | null; flaws: Flaws | null; support: Support | null;
   compliance_history: { day: string; controls: Record<string, AreaStatus>; checks: Record<string, string> }[];
+  histories?: Record<string, { day: string; controls: Record<string, AreaStatus>; checks: Record<string, string> }[]>;
+  framework: string; frameworks: Framework[];
   reference: Reference;
 }
 

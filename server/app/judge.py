@@ -13,6 +13,10 @@ evidence lines here say "1 account" where the PC's own page names it.
 
 Everything in this file is plain Python over dictionaries. Only `flaws()` and `support()` open the reference
 lists; the API never calls those two.
+
+Frameworks (docs/spec-india-cert-in-dpdp.md, F-0): the checks are measured once and then judged by each framework
+in `agent.FRAMEWORKS` (Cyber Essentials, CERT-In MSME, DPDP Rule 6) with the agent's own `judge_framework`. The
+stored judgement keeps Cyber Essentials at its top level, as before, and every framework under `profiles`.
 """
 import re
 from datetime import date
@@ -21,7 +25,8 @@ import compliance as agent          # the agent's module: THRESHOLDS, CONTROLS, 
 
 T = agent.THRESHOLDS
 C = agent._check
-KEYS = {k for k, _, _ in agent.DECLARED}
+KEYS = agent.declared_keys()
+FRAMEWORKS = agent.FRAMEWORKS
 CHECK_ID = re.compile(r"[a-z]{2,4}\.[a-z_]{2,20}")
 
 
@@ -174,10 +179,8 @@ def configuration_checks(p) -> list:
              "does not count against the control area; insurers often ask.",
              fix=None if p.get("lock_found") else "On the PC: Settings > Accounts > Sign-in options, and Settings > System > Power.")]
     if "lockout_threshold" in p:            # sent by agents from 11 Nov 2026; older ones say nothing, so no check
-        u = agent.unlock_check({"lockout_threshold": p["lockout_threshold"] if p["lockout_threshold"] is not None else -1})
-        out.append(C("cfg.unlock", u["title"], u["status"],
-                     "The device could not read its account lockout setting." if u["status"] == "unknown" else u["detail"],
-                     fix=u["fix"] and "On the PC, " + u["fix"][0].lower() + u["fix"][1:]))
+        n = p["lockout_threshold"]
+        out.append(agent._on_pc(agent.unlock_check({"lockout_threshold": n if type(n) is int else -1})))   # keeps the number as `fact`
     off = bool(p.get("autoplay_off"))
     out.append(C("cfg.autoplay", "AutoPlay is off, so a plugged-in drive runs nothing by itself", "pass" if off else "fail",
                  "AutoPlay is off." if off else "AutoPlay is on for removable drives.",
@@ -329,51 +332,74 @@ def malware_checks(p) -> list:
 
 
 # --------------------------------------------------------------------------- putting it together
-def overlay(comp: dict, accepted: dict) -> dict:
-    """Apply the accepted exceptions ({check id: {reason, ts, actor}}) and count again. An accepted check
-    keeps its failing mark and only stops counting against its control area."""
-    every = []
-    for g in comp["controls"]:
+def _apply(prof: dict, accepted: dict) -> dict:
+    for g in prof["controls"]:
         for ch in g["checks"]:
             a = accepted.get(ch["id"])
             ch["accepted"] = a if a and ch["status"] in ("fail", "warn") else None
-        g["status"] = agent._roll(g["checks"])
-        g["counts"] = {s: sum(1 for ch in g["checks"] if ch["status"] == s and not ch["accepted"]) for s in ("pass", "fail", "warn", "unknown")}
-        g["accepted"] = sum(1 for ch in g["checks"] if ch["accepted"])
-        every += g["checks"]
-    comp["summary"] = {"controls_passing": sum(1 for g in comp["controls"] if g["status"] == "pass"), "controls": len(comp["controls"]),
-                       "fail": sum(1 for ch in every if ch["status"] == "fail" and not ch["accepted"]),
-                       "warn": sum(1 for ch in every if ch["status"] == "warn" and not ch["accepted"]),
-                       "unknown": sum(1 for ch in every if ch["status"] == "unknown"),
-                       "passed": sum(1 for ch in every if ch["status"] == "pass"),
-                       "accepted": sum(1 for ch in every if ch["accepted"])}
+    prof["summary"] = agent.tally(prof["controls"])
+    return prof
+
+
+def overlay(comp: dict, accepted: dict) -> dict:
+    """Apply the accepted exceptions ({check id: {reason, ts, actor}}) and count again, in every framework. An
+    accepted check keeps its failing mark and only stops counting against its control area."""
+    _apply(comp, accepted)
+    for prof in (comp.get("profiles") or {}).values():
+        _apply(prof, accepted)
     return comp
 
 
-def assess(snaps: dict, vul: dict | None, sup: dict | None, accepted: dict, today: date) -> dict:
-    """The five control areas for one device, from what it reported and what the lists say about it."""
+def measure(snaps: dict, vul: dict | None, sup: dict | None, today: date) -> list:
     p, dev = snaps.get("posture"), snaps.get("device")
-    groups = {"firewalls": firewall_checks(snaps.get("network")), "configuration": configuration_checks(p),
-              "updates": update_checks(p, dev, vul, sup, snaps.get("apps"), today), "access": access_checks(p),
-              "malware": malware_checks(p)}
-    comp = {"controls": [{"key": k, "title": t, "about": about, "checks": groups[k]} for k, t, about in agent.CONTROLS],
-            "thresholds": T}
-    return overlay(comp, accepted)
+    return (firewall_checks(snaps.get("network")) + configuration_checks(p) + update_checks(p, dev, vul, sup, snaps.get("apps"), today)
+            + access_checks(p) + malware_checks(p))
+
+
+def assess(snaps: dict, vul: dict | None, sup: dict | None, accepted: dict, today: date, labels=()) -> dict:
+    """The control areas of every framework for one device, from what it reported and what the lists say about
+    it. `labels` are the device's own (F-1: "personal_data", "critical"); none yet."""
+    checks = measure(snaps, vul, sup, today)
+    profiles = {k: agent.judge_framework(k, checks, accepted, labels, remote=True) for k in FRAMEWORKS}
+    ce = profiles["ce"]
+    return {"controls": ce["controls"], "summary": ce["summary"], "thresholds": T, "profiles": profiles}
+
+
+def profile(comp: dict | None, fw: str) -> dict | None:
+    """One framework's part of a stored judgement. Judgements from before frameworks hold Cyber Essentials only."""
+    if not comp:
+        return None
+    if (comp.get("profiles") or {}).get(fw):
+        return comp["profiles"][fw]
+    return {"framework": "ce", "title": FRAMEWORKS["ce"]["title"], "scheme": FRAMEWORKS["ce"]["scheme"],
+            "footer": FRAMEWORKS["ce"]["footer"], "controls": comp.get("controls") or [], "summary": comp.get("summary") or {}} if fw == "ce" else None
 
 
 def history_line(comp: dict) -> dict:
     return {"controls": {g["key"]: g["status"] for g in comp["controls"]},
             "checks": {ch["id"]: ("accepted" if ch["accepted"] else ch["status"]) for g in comp["controls"] for ch in g["checks"]},
-            "summary": {k: comp["summary"][k] for k in ("controls_passing", "fail", "warn", "unknown")}}
+            "summary": {k: comp["summary"][k] for k in ("controls_passing", "controls", "fail", "warn", "unknown")}}
+
+
+def history_lines(comp: dict) -> dict:
+    """{framework: one day's line}, for every framework the judgement holds."""
+    return {k: history_line(p) for k in FRAMEWORKS if (p := profile(comp, k))}
+
+
+def _short(prof: dict) -> dict:
+    return {**prof["summary"], "areas": {g["key"]: g["status"] for g in prof["controls"]},
+            "failing": [{"id": ch["id"], "title": ch["title"], "control": g["key"]} for g in prof["controls"] for ch in g["checks"]
+                        if ch["status"] == "fail" and not ch["accepted"]]}
 
 
 def summary(comp: dict, vul: dict | None, sup: dict | None) -> dict:
-    """The few numbers the fleet list and dashboard show per device."""
+    """The few numbers the fleet list and dashboard show per device; `compliance` and `failing` are Cyber
+    Essentials, `frameworks` has the same for each framework."""
     win = (sup or {}).get("windows") or {}
     progs = (sup or {}).get("programs") or []
-    return {"compliance": {**comp["summary"], "areas": {g["key"]: g["status"] for g in comp["controls"]}},
-            "failing": [{"id": ch["id"], "title": ch["title"], "control": g["key"]} for g in comp["controls"] for ch in g["checks"]
-                        if ch["status"] == "fail" and not ch["accepted"]],
+    ce = _short(profile(comp, "ce"))
+    return {"compliance": {k: v for k, v in ce.items() if k != "failing"}, "failing": ce["failing"],
+            "frameworks": {k: _short(p) for k in FRAMEWORKS if (p := profile(comp, k))},
             "security": {**vul["summary"], "installed": vul["installed"], "recognised": vul["recognised"],
                          "exploited": [{"program": a["name"], "version": a.get("judged_version"), "cve": c["id"], "fix": a.get("update_to")}
                                        for a in vul["apps"] for c in a["cves"] if c["kev"]][:20]} if vul else None,
@@ -382,11 +408,21 @@ def summary(comp: dict, vul: dict | None, sup: dict | None) -> dict:
                         "soon": [x["name"] for x in progs if x["state"] == "soon"]} if sup else None}
 
 
-def declared(rows: list) -> list:
-    """The declared questions with the organisation's answers ({key, answer, note, at})."""
+def framework_summary(judgement: dict | None, fw: str) -> dict | None:
+    """A device's short result for one framework, from its stored summary (None: not judged under it yet)."""
+    if not judgement:
+        return None
+    got = (judgement.get("frameworks") or {}).get(fw)
+    if got:
+        return got
+    return {**judgement["compliance"], "failing": judgement.get("failing") or []} if fw == "ce" and judgement.get("compliance") else None
+
+
+def declared(rows: list, fw: str = "ce") -> list:
+    """The declared questions one framework asks, with the organisation's answers ({key, answer, note, at})."""
     said = {r["key"]: r for r in rows}
-    return [{"key": k, "title": t, "about": why, "answer": (said.get(k) or {}).get("answer"), "note": (said.get(k) or {}).get("note") or "",
-             "ts": (said.get(k) or {}).get("at")} for k, t, why in agent.DECLARED]
+    return [{"key": k, "title": agent.QUESTIONS[k], "about": why, "answer": (said.get(k) or {}).get("answer"),
+             "note": (said.get(k) or {}).get("note") or "", "ts": (said.get(k) or {}).get("at")} for k, why in FRAMEWORKS[fw]["declared"]]
 
 
 # --------------------------------------------------------------------------- as text
@@ -413,20 +449,23 @@ def device_text(dev: dict, comp: dict, vul: dict | None, judged_at: str) -> list
     return lines
 
 
-def report_text(org: str, when: str, devices: list, said: list) -> str:
-    """The evidence for a whole organisation as plain text. `devices` is [(device, compliance, flaws, judged_at)],
-    with compliance None for a device that has not been judged yet."""
+def report_text(org: str, when: str, devices: list, said: list, fw: str = "ce") -> str:
+    """The evidence for a whole organisation as plain text, for one framework. `devices` is [(device, compliance,
+    flaws, judged_at)], with compliance (the stored judgement) None for a device that has not been judged yet."""
+    devices = [(d, profile(c, fw), v, at) for d, c, v, at in devices]
     judged = [d for d in devices if d[1]]
     full = sum(1 for d in judged if d[1]["summary"]["controls_passing"] == d[1]["summary"]["controls"])
     lines = [f"Security posture of {org}", f"Produced {when} by the Shadow Filer fleet server from what each PC's agent reported.",
-             f"{len(devices)} device{_s(len(devices))}; {len(judged)} judged; {full} with all five control areas passing.", ""]
+             f"Judged against: {FRAMEWORKS[fw]['scheme']}.",
+             f"{len(devices)} device{_s(len(devices))}; {len(judged)} judged; {full} with every control area passing.", ""]
     for dev, comp, vul, at in devices:
-        lines += device_text(dev, comp, vul, at) if comp else [f"{dev.get('name')}: enrolled, not judged yet (no report, or the server has not got to it)."]
+        lines += device_text(dev, comp, vul, at) if comp else [f"{dev.get('name')}: enrolled, not judged yet under this framework (no report, "
+                                                               "or the server has not got to it)."]
         lines.append("")
     lines.append("DECLARED BY THE ORGANISATION (not measured)")
     for q in said:
         a = {"yes": "Yes", "no": "No", "na": "Does not apply", None: "Not answered"}[q["answer"]]
         lines.append(f"  {a:<15} {q['title']}" + (f" ({q['note']})" if q["note"] else "") + (f" [{str(q['ts'])[:10]}]" if q["ts"] else ""))
     lines += ["", "Each PC reports counts and settings, never account names, file names or addresses, so some lines say how many "
-                  "and not which.", "This follows the Cyber Essentials control areas but is not a certificate."]
+                  "and not which.", FRAMEWORKS[fw]["footer"]]
     return "\n".join(lines) + "\n"

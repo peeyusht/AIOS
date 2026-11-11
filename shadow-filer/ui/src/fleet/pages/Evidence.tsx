@@ -6,8 +6,8 @@ import { Input } from "@/components/ui/input";
 import { usePoll } from "@/lib/hooks";
 import { when } from "@/lib/format";
 import { Card, ListSkeleton, LoadError, Notice, PageHeader, Segmented } from "@/shadow/ui";
-import { api, type Answer, type AuditEntry, type Declared, type Fleet } from "../api";
-import { Section } from "../parts";
+import { api, type Answer, type AuditEntry, type Declared, type Fleet, type Framework } from "../api";
+import { FrameworkSwitch, Section, useFramework } from "../parts";
 import { useCan } from "../session";
 
 const OPTS = [{ value: "yes", label: "Yes" }, { value: "no", label: "No" }, { value: "na", label: "Does not apply" }] as const;
@@ -49,16 +49,39 @@ const ACTION: Record<string, string> = {
   "password.set": "Set a password", "password.changed": "Changed their password", "user.added": "A person was added", "user.role": "A role was changed",
   "user.disable": "A person was switched off", "user.enable": "A person was switched on", "user.reset_password": "A new set-password link was made",
   "user.reset_second_factor": "A second factor was reset", "share_link.created": "A share link was made", "share_link.withdrawn": "A share link was withdrawn",
-  "enrolment_token.created": "An enrolment token was made",
+  "enrolment_token.created": "An enrolment token was made", "frameworks.changed": "The frameworks shown were changed",
 };
 const about = (e: AuditEntry) => {
   const d = e.detail as Record<string, string | null>;
   if (e.action === "declaration.changed") return `${d.key}: ${d.answer ?? "cleared"}${d.note ? ` (${d.note})` : ""}`;
+  if (e.action === "frameworks.changed") return `${((d.from as unknown as string[]) ?? []).join(", ")} → ${((d.to as unknown as string[]) ?? []).join(", ")}`;
   return [d.name, d.email, d.role, d.label, d.check, d.reason, d.left != null ? `${d.left} left` : null].filter(Boolean).join(" · ");
 };
 
+/** Which frameworks the organisation shows. Every device is judged under all of them; this chooses what is shown. */
+function Frameworks({ all, canEdit, onSaved }: { all: Framework[]; canEdit: boolean; onSaved: () => void }) {
+  const [on, setOn] = useState<string[]>(all.filter((f) => f.shown).map((f) => f.key));
+  const changed = on.join() !== all.filter((f) => f.shown).map((f) => f.key).join();
+  const save = async () => {
+    try { await api.setFrameworks(all.map((f) => f.key).filter((k) => on.includes(k))); toast.success("Saved"); onSaved(); } catch (e) { toast.error((e as Error).message); }
+  };
+  return (
+    <Card className="divide-y rounded-lg">
+      {all.map((f) => (
+        <label key={f.key} className="flex items-start gap-3 px-5 py-3">
+          <input type="checkbox" className="mt-1" disabled={!canEdit} checked={on.includes(f.key)} onChange={(e) => setOn(e.target.checked ? [...on, f.key] : on.filter((k) => k !== f.key))} />
+          <span><span className="block font-medium">{f.title}</span><span className="block text-sm text-muted-foreground">{f.scheme}</span></span>
+        </label>
+      ))}
+      {canEdit && <div className="flex items-center gap-3 px-5 py-3"><Button size="sm" disabled={!changed || !on.length} onClick={() => void save()}>Save</Button>
+        <span className="text-xs text-muted-foreground">{on.length ? "The first one ticked is shown first." : "Tick at least one."}</span></div>}
+    </Card>
+  );
+}
+
 export function EvidencePage() {
-  const q = usePoll<Fleet>(api.fleet, null);
+  const [fw, setFw] = useFramework();
+  const q = usePoll<Fleet>(() => api.fleet(fw), null, [fw]);
   const log = usePoll(api.audit, null);
   const [busy, setBusy] = useState(false);
   const canEdit = useCan("admin");
@@ -70,7 +93,7 @@ export function EvidencePage() {
   const report = async (how: "copy" | "save") => {
     setBusy(true);
     try {
-      const r = await api.report();
+      const r = await api.report(undefined, d?.framework);
       if (how === "copy") { await navigator.clipboard.writeText(r.text); toast.success("Copied"); return; }
       const url = URL.createObjectURL(new Blob([r.text], { type: "text/plain" }));
       const a = Object.assign(document.createElement("a"), { href: url, download: `security-posture-${r.generated_at.slice(0, 10)}.txt` });
@@ -83,8 +106,9 @@ export function EvidencePage() {
     <>
       <PageHeader
         title="Evidence"
-        sub="What an insurer's questionnaire or a Cyber Essentials assessor asks for: the report for every PC, what the organisation declares, and the record of who accepted what."
+        sub="What an insurer's questionnaire or an assessor asks for: the report for every PC, what the organisation declares, and the record of who accepted what."
         actions={<>
+          <FrameworkSwitch all={d?.frameworks} value={d?.framework} onChange={setFw} />
           <Button variant="outline" size="sm" onClick={() => void report("copy")} disabled={busy || !d}><Copy />Copy the report</Button>
           <Button variant="outline" size="sm" onClick={() => void report("save")} disabled={busy || !d}><Download />Save as text</Button>
         </>}
@@ -94,8 +118,12 @@ export function EvidencePage() {
         <div className="space-y-8">
           <Notice>
             The report lists every device with each check, its evidence and any accepted exception, then the declarations below. {d.judged} of {d.devices} device{d.devices === 1 ? " has" : "s have"} been judged.
-            It follows the Cyber Essentials control areas and is not a certificate. To print one device, open it and use Print.
+            {d.frameworks?.find((x) => x.key === d.framework)?.footer ?? "It follows the Cyber Essentials control areas and is not a certificate."} To print one device, open it and use Print.
           </Notice>
+
+          <Section title="Frameworks" sub="Every device is judged under each of these from the same report. Choose which ones this console, the report and share links show.">
+            {d.frameworks && <Frameworks key={d.frameworks.filter((x) => x.shown).map((x) => x.key).join()} all={d.frameworks} canEdit={canEdit} onSaved={() => { void q.reload(); void log.reload(); }} />}
+          </Section>
 
           <Section title="Declared by the organisation" sub="Things no program on a PC can measure. They apply to the whole organisation.">
             <Notice>These are your own statements. They are always shown as declared, never as measured.</Notice>

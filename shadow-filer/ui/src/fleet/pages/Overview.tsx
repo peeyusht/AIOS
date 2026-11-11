@@ -5,9 +5,9 @@ import { when } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Card, EmptyState, ListSkeleton, LoadError, Notice, PageHeader, Stat } from "@/shadow/ui";
 import { api, type AreaStatus, type Fleet } from "../api";
-import { DeviceLink, HistoryGrid, Mark, ReferenceLine, Section, SQUARE } from "../parts";
+import { DeviceLink, FrameworkSwitch, HistoryGrid, Mark, ReferenceLine, Section, SQUARE, useFramework } from "../parts";
 
-const worst = (a: Record<AreaStatus, number>): AreaStatus => (a.fail ? "fail" : a.warn ? "warn" : a.unknown ? "unknown" : "pass");
+const worst = (a: Record<AreaStatus, number>): AreaStatus => (a.fail ? "fail" : a.warn ? "warn" : a.unknown ? "unknown" : a.info && !a.pass ? "info" : "pass");
 
 function Areas({ d }: { d: Fleet }) {
   const n = Math.max(d.judged, 1);
@@ -24,7 +24,7 @@ function Areas({ d }: { d: Fleet }) {
             {(["pass", "warn", "fail", "unknown"] as const).map((s) => a[s] > 0 && <div key={s} className={SQUARE[s]} style={{ width: `${(a[s] / n) * 100}%` }} />)}
           </div>
           <div className="text-sm tabular text-muted-foreground">
-            <span className="font-medium text-foreground">{a.pass} of {d.judged}</span> pass
+            {a.info > 0 && !a.pass ? <span>notes only</span> : <><span className="font-medium text-foreground">{a.pass} of {d.judged}</span> pass</>}
             {a.fail > 0 && <> · <span className="text-destructive">{a.fail} failing</span></>}
             {a.warn > 0 && <> · {a.warn} to look at</>}
           </div>
@@ -35,17 +35,19 @@ function Areas({ d }: { d: Fleet }) {
 }
 
 export function OverviewPage() {
-  const q = usePoll<Fleet>(api.fleet, 60_000);
+  const [fw, setFw] = useFramework();
+  const q = usePoll<Fleet>(() => api.fleet(fw), 60_000, [fw]);
   const d = q.data;
   if (!d) return <><PageHeader title="Overview" />{q.error ? <LoadError error={q.error} onRetry={q.reload} /> : <ListSkeleton rows={4} />}</>;
   const t = d.totals;
   const days = d.history.map((h) => h.day);
+  const f = d.frameworks?.find((x) => x.key === d.framework);
   return (
     <>
       <PageHeader
         title="Overview"
-        sub="Every enrolled PC against the five Cyber Essentials control areas, judged on the server from what each PC reports."
-        actions={<span className="text-xs text-muted-foreground">Updated {when(d.generated_at)}</span>}
+        sub={`Every enrolled PC against ${f ? f.scheme : "the Cyber Essentials control areas"}, judged on the server from what each PC reports.`}
+        actions={<><FrameworkSwitch all={d.frameworks} value={d.framework} onChange={setFw} /><span className="text-xs text-muted-foreground">Updated {when(d.generated_at)}</span></>}
       />
       {q.error && <div className="mb-4"><LoadError error={q.error} onRetry={q.reload} /></div>}
       {d.devices === 0 ? (
@@ -58,7 +60,7 @@ export function OverviewPage() {
           <Card className="rounded-lg p-5">
             <div className="flex flex-wrap items-center justify-between gap-6">
               <div>
-                <div className="text-xl font-semibold tabular">{d.all_passing} of {d.devices} device{d.devices === 1 ? "" : "s"} pass{d.all_passing === 1 ? "es" : ""} all five control areas</div>
+                <div className="text-xl font-semibold tabular">{d.all_passing} of {d.devices} device{d.devices === 1 ? "" : "s"} pass{d.all_passing === 1 ? "es" : ""} every control area</div>
                 {d.judged < d.devices && <div className="text-sm text-muted-foreground">{d.devices - d.judged} not judged yet (no report so far, or the server has not got to it).</div>}
               </div>
               <div className="grid grid-cols-4 gap-8">
@@ -68,7 +70,7 @@ export function OverviewPage() {
                 <Stat label="Not reporting" value={<span className={d.silent.length ? "text-warning" : undefined}>{d.silent.length}</span>} />
               </div>
             </div>
-            <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">This follows the Cyber Essentials control areas. It is not the scheme's own tool and passing here is not a certificate.</p>
+            <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">{f?.footer ?? "This follows the Cyber Essentials control areas. It is not the scheme's own tool and passing here is not a certificate."}</p>
           </Card>
 
           {(d.exploited.length > 0 || d.silent.length > 0 || d.unsupported.length > 0) && (

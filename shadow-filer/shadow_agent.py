@@ -24,7 +24,7 @@ Commands:
   python shadow_agent.py reconcile           match pending predictions against PARA now
   python shadow_agent.py report [--csv out]  accuracy report
   python shadow_agent.py sysinfo [--json]    hardware, OS, storage, GPUs and what Ollama is doing
-  python shadow_agent.py compliance          the five security control areas, pass or fail, with the evidence
+  python shadow_agent.py compliance [--framework ce|certin|dpdp]   control areas, pass or fail, with the evidence
   python shadow_agent.py network [--json]    interfaces, routes, firewall, open ports, connections, devices
   python shadow_agent.py apps [--json] [--store] [--updates]   installed applications, versions, what changed; --updates asks winget (online)
   python shadow_agent.py search "<query>"     search the index (the agent builds it in the background)
@@ -1039,7 +1039,8 @@ def main():
     apc.add_argument("--json", action="store_true", help="print raw JSON instead of text")
     apc.add_argument("--store", action="store_true", help="also list Store and packaged apps")
     apc.add_argument("--updates", action="store_true", help="ask winget (online) which have a newer version")
-    sub.add_parser("compliance")
+    cpl = sub.add_parser("compliance")
+    cpl.add_argument("--framework", choices=["ce", "certin", "dpdp"], help="judge against this framework (default: the first one shown)")
     fl = sub.add_parser("fleet", help="report this PC to a central server (off until enrolled)")
     fl.add_argument("action", choices=["show", "enrol", "checkin", "status", "leave"])
     fl.add_argument("server", nargs="?", help="for enrol: https://your-server")
@@ -1107,7 +1108,7 @@ def main():
         return
     if a.cmd == "compliance":
         import compliance
-        v = compliance.view(cfg, force=True)
+        v = compliance.view(cfg, force=True, framework=a.framework)
         print(v.get("text") or v.get("error") or "")
         return
     if a.cmd == "network":
