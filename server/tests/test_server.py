@@ -531,10 +531,30 @@ class ServerTest(unittest.TestCase):
         self.assertIsNone(self.http.get("/api/v1/incidents", headers=self.auth(self.admin_a)).json()["incidents"][0]["board"])
         acts = [e["action"] for e in self.http.get("/api/v1/audit", headers=self.auth(self.admin_a)).json()["entries"][:3]]
         self.assertEqual(acts, ["incident.changed", "incident.changed", "incident.recorded"])
+        # F-24 reviews and F-23 governance: due items on the Overview of CERT-In / DPDP; a sign-off is a past day
+        r = self.http.get("/api/v1/records", headers=self.auth(self.admin_a)).json()
+        self.assertEqual((r["reviews"]["access"]["state"], r["governance"]), ("never", None))
+        self.assertEqual(sorted(x["kind"] for x in r["due"]), ["access", "incharge", "logs", "policy"])
+        self.assertEqual(self.http.post("/api/v1/reviews", headers=self.auth(self.admin_a), json={"kind": "access", "reviewed_on": "2026-11-01"}).status_code, 403)
+        for bad in ({"kind": "everything", "reviewed_on": "2026-11-01"}, {"kind": "access", "reviewed_on": "2999-01-01"}, {"kind": "access"}):
+            self.assertEqual(self.owner_a.post("/api/v1/reviews", json=bad).status_code, 400, bad)
+        today = datetime.now(timezone.utc).date()
+        self.assertEqual(self.owner_a.post("/api/v1/reviews", json={"kind": "access", "reviewed_on": (today - timedelta(days=100)).isoformat()}).status_code, 200)
+        self.assertEqual(self.owner_a.post("/api/v1/reviews", json={"kind": "logs", "reviewed_on": today.isoformat(), "note": "Security log, nothing odd"}).status_code, 200)
+        self.assertEqual(self.owner_a.post("/api/v1/governance", json={"incharge_name": "Olive", "incharge_contact": "security@acme.example",
+                                                                       "policy_approved_on": "2026-04-01", "policy_next_review": "2026-10-01"}).status_code, 200)
+        self.assertEqual(self.owner_a.post("/api/v1/governance", json={"policy_approved_on": "2999-01-01"}).status_code, 400)
+        r = self.http.get("/api/v1/records", headers=self.auth(self.admin_a)).json()
+        self.assertEqual((r["reviews"]["access"]["state"], r["reviews"]["logs"]["state"], r["governance"]["incharge_name"]), ("overdue", "done", "Olive"))
+        self.assertEqual(sorted(x["kind"] for x in r["due"]), ["access", "policy"])          # 100 days > quarterly; policy review passed
+        f = self.http.get("/api/v1/fleet?framework=certin", headers=self.auth(self.admin_a)).json()
+        self.assertEqual(sorted(x["kind"] for x in f["records_due"]), ["access", "policy"])
+        self.assertEqual(self.http.get("/api/v1/fleet?framework=ce", headers=self.auth(self.admin_a)).json()["records_due"], [])
+        self.assertEqual(self.http.get("/api/v1/records", headers=self.auth(self.admin_b)).json()["governance"], None)
 
     def test_7_judgements_stay_inside_their_organisation(self):
         with db.anon() as c:
-            for table in ("judgements", "compliance_history", "declarations", "exceptions", "device_labels", "incidents", "users", "sessions", "setup_links",
+            for table in ("judgements", "compliance_history", "declarations", "exceptions", "device_labels", "incidents", "reviews", "governance", "users", "sessions", "setup_links",
                           "recovery_codes", "share_links"):
                 self.assertEqual(c.execute(f"SELECT count(*) AS n FROM {table}").fetchone()["n"], 0, table)
         with db.org(self.org_b) as c:
@@ -555,6 +575,11 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(c.execute("SELECT count(*) AS n FROM device_labels WHERE device_id = %s", (self.dev_a,)).fetchone()["n"], 0)
             self.assertEqual(c.execute("SELECT count(*) AS n FROM incidents").fetchone()["n"], 0)               # F-21: A's incident is A's
             self.assertEqual(c.execute("UPDATE incidents SET title = 'x'").rowcount, 0)
+            self.assertEqual(c.execute("SELECT count(*) AS n FROM reviews").fetchone()["n"], 0)                 # F-23/F-24: A's records are A's
+            self.assertEqual(c.execute("UPDATE governance SET incharge_name = 'x'").rowcount, 0)
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):      # a review sign-off cannot be changed afterwards
+            with db.org(self.org_a) as c:
+                c.execute("UPDATE reviews SET note = 'x'")
         with self.assertRaises(psycopg.errors.InsufficientPrivilege):      # and the application cannot delete an incident at all
             with db.org(self.org_a) as c:
                 c.execute("DELETE FROM incidents")

@@ -202,6 +202,29 @@ CREATE TABLE IF NOT EXISTS incidents (
 );
 CREATE INDEX IF NOT EXISTS incidents_org ON incidents (org_id, detected_at);
 
+-- Reviews signed off (spec F-24): access (quarterly) and logs. Statements by a person: added, never changed.
+CREATE TABLE IF NOT EXISTS reviews (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL REFERENCES organisations ON DELETE CASCADE,
+  kind text NOT NULL CHECK (kind IN ('access', 'logs')),
+  reviewed_on date NOT NULL,
+  note text NOT NULL DEFAULT '',
+  actor text NOT NULL DEFAULT '',
+  at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS reviews_org ON reviews (org_id, kind, reviewed_on);
+
+-- Governance record (spec F-23): the security in-charge and the security policy's dates. One row per organisation.
+CREATE TABLE IF NOT EXISTS governance (
+  org_id uuid PRIMARY KEY REFERENCES organisations ON DELETE CASCADE,
+  incharge_name text NOT NULL DEFAULT '',
+  incharge_contact text NOT NULL DEFAULT '',
+  policy_approved_on date,
+  policy_next_review date,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  updated_by text NOT NULL DEFAULT ''
+);
+
 -- How fresh the public reference lists are (CVE, known exploited, end of life). No customer data: shared.
 CREATE TABLE IF NOT EXISTS reference_status (
   k text PRIMARY KEY,
@@ -282,7 +305,7 @@ DO $$
 DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['admin_keys', 'enrolment_tokens', 'devices', 'snapshots', 'audit_log',
-                           'judgements', 'compliance_history', 'declarations', 'exceptions', 'device_labels', 'incidents',
+                           'judgements', 'compliance_history', 'declarations', 'exceptions', 'device_labels', 'incidents', 'reviews', 'governance',
                            'users', 'setup_links', 'sessions', 'recovery_codes', 'share_links'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
@@ -306,6 +329,8 @@ GRANT SELECT, INSERT ON audit_log TO fleet_app;          -- the audit log is app
 GRANT SELECT, INSERT, UPDATE, DELETE ON declarations, exceptions TO fleet_app;
 GRANT SELECT, INSERT, DELETE ON device_labels TO fleet_app;
 GRANT SELECT, INSERT, UPDATE ON incidents TO fleet_app;          -- no DELETE: an incident is evidence
+GRANT SELECT, INSERT ON reviews TO fleet_app;                     -- a sign-off is added, never changed
+GRANT SELECT, INSERT, UPDATE ON governance TO fleet_app;
 GRANT SELECT, UPDATE ON judgements TO fleet_app;          -- the API re-applies exceptions; only the worker judges
 GRANT SELECT, INSERT, UPDATE ON compliance_history TO fleet_app;
 GRANT SELECT ON reference_status TO fleet_app;

@@ -8,6 +8,7 @@ import { when } from "@/lib/format";
 import { Card, ListSkeleton, LoadError, Notice, PageHeader, Segmented } from "@/shadow/ui";
 import { api, type Answer, type AuditEntry, type Declared, type Fleet, type Framework } from "../api";
 import { FrameworkSwitch, Section, useFramework } from "../parts";
+import { RecordsSection } from "./Records";
 import { useCan } from "../session";
 
 const OPTS = [{ value: "yes", label: "Yes" }, { value: "no", label: "No" }, { value: "na", label: "Does not apply" }] as const;
@@ -55,6 +56,7 @@ const ACTION: Record<string, string> = {
   "user.disable": "A person was switched off", "user.enable": "A person was switched on", "user.reset_password": "A new set-password link was made",
   "user.reset_second_factor": "A second factor was reset", "share_link.created": "A share link was made", "share_link.withdrawn": "A share link was withdrawn",
   "enrolment_token.created": "An enrolment token was made", "frameworks.changed": "The frameworks shown were changed",
+  "review.recorded": "A review was signed off", "governance.changed": "The governance record was changed",
   "incident.recorded": "An incident was recorded", "incident.changed": "An incident was changed",
   "device.labelled": "A device was labelled", "device.unlabelled": "A label was taken off a device",
 };
@@ -135,6 +137,10 @@ export function EvidencePage() {
           <Section title="Declared by the organisation" sub="Things no program on a PC can measure. They apply to the whole organisation.">
             <Notice>These are your own statements. They are always shown as declared, never as measured.</Notice>
             <Card className="divide-y rounded-lg">{d.declared.map((x) => <DeclaredRow key={x.key + (x.ts ?? "")} d={x} readOnly={!canEdit} onSave={(a, n, dt) => void declare(x.key, a, n, dt)} />)}</Card>
+          </Section>
+
+          <Section title="Governance and reviews" sub="Who is in charge of security, the security policy, and the periodic reviews, each signed off by a person. CERT-In and DPDP ask for these; Cyber Essentials does not.">
+            <RecordsSection canEdit={canEdit} onChange={() => void log.reload()} />
           </Section>
 
           <Section title="Record" sub="Sign-ins, enrolments, accepted exceptions, changed declarations and changes to who has access, each under the name of who did it. Entries cannot be edited or removed.">

@@ -420,7 +420,9 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - Frameworks: the PC's own console has no labels, so DPDP encryption and log retention are notes there; on the
   server a person labels a device (`device_labels`, spec F-1, 11 Nov 2026) and the worker judges it again.
   Incident register (spec F-21, `server/app/incidents.py`, table `incidents`): CERT-In 6 h and DPDP 72 h clocks
-  from "noticed"; the API role has no DELETE on it; nothing is submitted to CERT-In or the Board from here. Shown by default: Cyber Essentials only (spec decision D-5 open).
+  from "noticed"; the API role has no DELETE on it; nothing is submitted to CERT-In or the Board from here.
+  Governance and reviews (F-23, F-24, `server/app/records.py`, tables `governance`, `reviews`): a review sign-off
+  is never changed (no UPDATE grant); overdue items show on the Overview for CERT-In and DPDP only. Shown by default: Cyber Essentials only (spec decision D-5 open).
 - Compliance is for one PC. Not checked: multi-factor login, backups and the router
   (declared). "Windows is up to date" means an update of any kind installed on or after the last monthly
   release whose 14 days are over, not "the security update is in" or "no newer build exists". The

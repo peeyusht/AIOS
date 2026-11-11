@@ -107,6 +107,7 @@ Phase 2 tables:
 | `exceptions` | a failing check accepted on one device, with the reason and who (it holds in every framework) |
 | `device_labels` | what a person states about a device: holds personal data, critical (spec F-1); DPDP judges by it |
 | `incidents` | the incident register with CERT-In's 6-hour and DPDP's 72-hour clocks (spec F-21); never deleted |
+| `reviews`, `governance` | access and log review sign-offs (never changed), the security in-charge and policy dates (spec F-23, F-24) |
 | `reference_status` | how fresh the public lists are (shared; no customer data) |
 
 The lists themselves (`cve`, `aff`, `kev`, `eol_product`) are not in PostgreSQL: they are public, the same
