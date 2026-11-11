@@ -5,6 +5,12 @@ export interface Release { version: string; date: string; title: string; items: 
 
 export const CHANGELOG: Release[] = [
   {
+    version: "1.6.1", date: "2026-11-11", title: "Device agent 0.4.6",
+    items: [
+      "The installed device agent 0.4.6 reports the new readings (password policy, old protocols, firmware age, USB storage, accounts, Wi-Fi, logs, backups), so the fleet server can judge them for every PC. It reaches PCs once its release is signed and published.",
+    ],
+  },
+  {
     version: "1.6.0", date: "2026-11-11", title: "CERT-In vulnerability notes",
     items: [
       "Fleet: CERT-In's vulnerability notes are read once a day, and a PC's Security tab lists the notes that name a flaw found on it, each linking to cert-in.org.in.",

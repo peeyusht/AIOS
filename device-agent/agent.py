@@ -47,7 +47,7 @@ import fleet  # noqa: E402
 import network  # noqa: E402
 import selfupdate  # noqa: E402
 
-VERSION = "0.4.5"
+VERSION = "0.4.6"
 SERVICE = "ShadowFilerAgent"
 NAME = "ShadowFiler Agent"
 REG_KEY = r"SOFTWARE\ShadowFiler Agent"
