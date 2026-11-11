@@ -89,6 +89,9 @@ const subscribeHash = (cb: () => void) => {
 };
 const dashboardHash = () => window.location.hash.replace(/^#/, "") || "/dashboard";
 
+/** Pages laid out edge to edge in panes, as in the design (no page padding). */
+const WORKSPACE = new Set(["/inbox", "/security", "/compliance"]);
+
 export default function ShadowApp() {
   const path = useSyncExternalStore(subscribeHash, dashboardHash, () => "/dashboard");
   const requested = "/" + (path.split("/")[1] || "dashboard");
@@ -194,8 +197,8 @@ export default function ShadowApp() {
           </div>
         </aside>
 
-        <div className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-20 flex flex-wrap items-center gap-x-4 gap-y-2 border-b bg-card/90 px-6 py-2.5 backdrop-blur">
+        <div className="flex min-h-screen min-w-0 flex-1 flex-col">
+          <header className="sticky top-0 z-20 flex flex-wrap items-center gap-x-4 gap-y-2 border-b bg-sidebar px-6 py-2.5">
             <span className="font-mono text-xs text-muted-foreground">
               this PC{group && <><span className="px-1 opacity-50">/</span>{group.toLowerCase()}</>}<span className="px-1 opacity-50">/</span><span className="text-foreground">{here.label.toLowerCase()}</span>
             </span>
@@ -232,7 +235,7 @@ export default function ShadowApp() {
             )}
           </div>
 
-          <main className="mx-auto w-full max-w-[1440px] flex-1 px-6 py-6 fade-in" key={section}>{page}</main>
+          <main className={cn("flex min-w-0 flex-1 flex-col fade-in", !WORKSPACE.has(section) && "px-6 py-5")} key={section}>{page}</main>
         </div>
       </div>
       <Toaster position="top-center" offset={{ top: 60 }} theme={dark ? "dark" : "light"} closeButton />

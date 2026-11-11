@@ -24,6 +24,58 @@ export function PageHeader({ title, sub, actions }: { title: string; sub?: React
   );
 }
 
+/** The bar under the top bar on the workspace pages (Inbox, Security, Compliance): the title, then filters and views. */
+export function WorkBar({ title, sub, children, className }: { title: string; sub?: ReactNode; children?: ReactNode; className?: string }) {
+  return (
+    <div className={cn("flex flex-wrap items-center gap-x-3 gap-y-2 border-b px-6", sub ? "py-3.5" : "min-h-[52px] py-2", className)}>
+      <div className={cn("mr-2 min-w-0", sub && "flex-[1_1_360px]")}>
+        <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
+        {sub && <div className="text-xs text-muted-foreground">{sub}</div>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** A filter button with a count, as in the workspace bars. */
+export function Chip({ on, danger, n, children, ...rest }: { on: boolean; danger?: boolean; n?: number } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button type="button" aria-pressed={on} {...rest}
+      className={cn("h-[30px] rounded-md border px-2.5 text-xs transition-colors disabled:opacity-50",
+        on ? "border-input bg-accent text-foreground" : danger && n ? "border-destructive/40 text-destructive hover:bg-danger-soft" : "text-muted-foreground hover:bg-muted hover:text-foreground")}>
+      {children}{n != null && <span className={cn("ml-1.5 font-mono tabular", on && "text-muted-foreground")}>{n}</span>}
+    </button>
+  );
+}
+
+/** Small segmented tabs (Flaws / Programs / Services). */
+export function SegTabs<T extends string>({ value, onChange, options, label }: { value: T; onChange: (v: T) => void; options: { value: T; label: ReactNode }[]; label: string }) {
+  return (
+    <div role="tablist" aria-label={label} className="flex gap-0.5 rounded-lg border bg-card p-0.5 text-xs">
+      {options.map((o) => (
+        <button key={o.value} role="tab" aria-selected={value === o.value} onClick={() => onChange(o.value)}
+          className={cn("h-7 rounded-md px-2.5 transition-colors", value === o.value ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Underlined tabs inside a WorkBar (Inbox views). */
+export function BarTabs<T extends string>({ value, onChange, options, label }: { value: T; onChange: (v: T) => void; options: { value: T; label: ReactNode }[]; label: string }) {
+  return (
+    <div role="tablist" aria-label={label} className="-my-2 flex flex-wrap self-stretch">
+      {options.map((o) => (
+        <button key={o.value} role="tab" aria-selected={value === o.value} onClick={() => onChange(o.value)}
+          className={cn("min-h-[50px] border-b-2 px-3 text-[13px] transition-colors", value === o.value ? "border-primary font-semibold text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function Card({ className, children, ...rest }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div className={cn("rounded-xl border bg-card text-card-foreground shadow-[0_1px_2px_0_oklch(0_0_0/0.04)]", className)} {...rest}>

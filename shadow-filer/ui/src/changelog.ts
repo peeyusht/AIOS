@@ -5,6 +5,16 @@ export interface Release { version: string; date: string; title: string; items: 
 
 export const CHANGELOG: Release[] = [
   {
+    version: "1.6.2", date: "2026-11-11", title: "Console laid out as designed",
+    items: [
+      "Inbox, Security and Compliance use the whole window: a bar with the page's filters and views, then side-by-side panes instead of cards.",
+      "Inbox: the selected file is shown as it looks in the middle, with where it should go on the right. Show only the strong, likely or unsure suggestions.",
+      "Security: the filters and the Flaws / Programs / Services switch sit in the bar; how many programs could be compared is shown under the table.",
+      "Compliance: the number of control areas met heads the list of areas; the checks and the evidence sit beside it.",
+      "Today uses the full width, and each item in the action queue says what its button does.",
+    ],
+  },
+  {
     version: "1.6.1", date: "2026-11-11", title: "Device agent 0.4.6",
     items: [
       "The installed device agent 0.4.6 reports the new readings (password policy, old protocols, firmware age, USB storage, accounts, Wi-Fi, logs, backups), so the fleet server can judge them for every PC. It reaches PCs once its release is signed and published.",

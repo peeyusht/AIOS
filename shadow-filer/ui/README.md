@@ -77,6 +77,13 @@ built here at the user's request; **send it to Lovable or it is lost on the next
   (both Vite configs `define` the version, commit and build time), `src/shadow/pages/Changelog.tsx` (route
   `#/changelog` in both consoles), and the version link at the foot of the rail (`App.tsx`) and of the fleet
   sidebar (`fleet/App.tsx`).
+- Matching the mock (11 Nov 2026, v1.6.2, local, not in Lovable): `App.tsx` has no page width limit and no
+  padding for the "workspace" pages (`WORKSPACE`: Inbox, Security, Compliance), which lay out edge to edge in
+  panes (`bg-sidebar` side panes, borders, no cards); `ui.tsx` adds `WorkBar` (title bar under the top bar),
+  `Chip`, `SegTabs`, `BarTabs`. Inbox: list | file (inline preview, `InlinePreview` from `FilePreview.tsx`) |
+  destination, strength filter in the bar. Security: filters and view switch in the bar, coverage footer, the
+  number tiles are gone (they are on Today). Compliance: KPI strip shown in print only; areas met heads the
+  area list. Today: 13 px text, action words on the queue buttons, "Event log".
 - Frameworks (11 Nov 2026, local, not in Lovable): `Compliance.tsx` has a framework switch and a Frameworks
   dialog (`api.compliance(refresh, framework)`, `api.complianceFrameworks`, `ComplianceFramework` type, area
   status `info` for an area of notes only); `Dashboard.tsx` labels its key number with the framework shown

@@ -3,14 +3,13 @@ import { ChevronDown, Copy, EyeOff, Network, RefreshCw, ShieldAlert, ShieldCheck
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { usePoll } from "@/lib/hooks";
 import { when } from "@/lib/format";
 import type { SecApp, SecCve, SecService, SecurityResponse } from "@/lib/types";
-import { Card, EmptyState, ListSkeleton, LoadError, Mono, Notice, PageHeader, Segmented, Spin, Tip, act } from "../ui";
+import { Card, EmptyState, ListSkeleton, LoadError, Mono, Notice, Segmented, SegTabs, Chip, Spin, Tip, WorkBar, act } from "../ui";
 import { emitSecurityChanged } from "../App";
 import { RemedyBar, StopButton, UpdateButton } from "../remedy";
 
@@ -72,99 +71,100 @@ export function SecurityPage() {
   const apps = d?.apps ?? [], services = d?.services ?? [];
   const notJudged = (d?.installed ?? 0) - (d?.recognised ?? 0);
 
+  const [view, setView] = useState<"flaws" | "programs" | "services">("flaws");
+  const [filter, setFilter] = useState<Filter>("all");
+  const rows = useMemo<Row[]>(() => apps.flatMap((app) => {
+    const exposed = services.filter((x) => x.app_id === app.id && x.exposed);
+    return app.cves.map((cve) => ({ cve, app, exposed }));
+  }).sort((a, b) => Number(b.cve.kev) - Number(a.cve.kev) || (b.cve.score ?? 0) - (a.cve.score ?? 0) || a.cve.id.localeCompare(b.cve.id)), [apps, services]);
+  const ready = !!(d && d.enabled && d.scanned_at && s);
+  const remediate = !!d?.settings.remediate;
+  const notes = !d || !d.enabled || !d.scanned_at || remediate || !!d.runner.error || !!db?.error;
+
   return (
-    <div>
-      <PageHeader
-        title="Security"
-        sub={
-          <>
-            Known vulnerabilities in the programs installed on this PC, and the background services that are not part of Windows.
-            <span className="block">
-              Compared on this PC. Nothing about what you have installed is sent anywhere; nothing is updated or stopped unless you click it.
-            </span>
-          </>
-        }
-        actions={
-          d && d.enabled ? (
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-muted-foreground">
-                {isRunning
-                  ? <span className="inline-flex items-center gap-1.5 [&_svg]:size-3.5"><Spin /> {d.runner.progress ?? "Checking…"}</span>
-                  : d.scanned_at && <>Checked {when(d.scanned_at)}</>}
-              </span>
-              {checkBtn}
-            </div>
-          ) : undefined
-        }
-      />
-      {q.error && !d && <LoadError error={q.error} onRetry={q.reload} />}
-      {!d && !q.error && <ListSkeleton rows={4} />}
-      {d && !d.enabled && (
-        <EmptyState icon={<ShieldAlert />} title="The vulnerability check is switched off">
-          It keeps a copy of the public CVE list on this PC, which means downloading it. Turn it on in{" "}
-          <a href="#/settings" className="text-primary underline-offset-4 hover:underline">Settings › Security</a>.
-        </EmptyState>
-      )}
-      {d && d.enabled && d.settings.remediate && <RemedyBar onDone={() => { void q.reload(); emitSecurityChanged(); }} />}
-      {d && d.enabled && d.runner.error && <Notice tone="danger" className="mb-4">{d.runner.error}</Notice>}
-      {d && d.enabled && db?.error && (
-        <Notice tone="warn" className="mb-4">
-          The last download of the CVE list had a problem: {db.error}
-          {db.synced_at ? ` The list from ${when(db.synced_at)} is used.` : ""}
-        </Notice>
-      )}
-      {d && d.enabled && !d.scanned_at && !isRunning && (
-        <EmptyState icon={<ShieldAlert />} title="Nothing compared yet">
-          The first check downloads the CVE list (about 300 MB) and takes several minutes.
-          <div className="mt-3">{checkBtn}</div>
-        </EmptyState>
-      )}
-      {d && d.enabled && d.scanned_at && s && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-4 gap-px overflow-hidden rounded-lg border bg-border max-[1100px]:grid-cols-2">
-            <Tile label="Used in real attacks" n={s.kev} tone={s.kev > 0 ? "text-destructive" : "text-foreground"} sub="on CISA's known-exploited list" />
-            <Tile label="Critical" n={s.critical} tone={s.critical > 0 ? "text-warning" : "text-foreground"} sub="severity 9.0 or higher" />
-            <Tile label="Programs with known flaws" n={s.apps_affected} tone="text-foreground" sub={`of ${d.recognised ?? 0} that could be compared`} />
-            <Tile label="Services open to the network" n={s.services_exposed} tone={s.services_exposed > 0 ? "text-warning" : "text-foreground"} sub={`${s.services_running} of ${s.services} running`} />
+    <div className="flex flex-1 flex-col text-[13px]">
+      <WorkBar title="Security">
+        {ready && view === "flaws" && rows.length > 0 && (
+          <div role="group" aria-label="Filter flaws" className="flex flex-wrap gap-1.5">
+            {(Object.keys(TEST) as Filter[]).map((f) => {
+              const n = rows.filter(TEST[f]).length;
+              return <Chip key={f} on={filter === f} danger={f === "kev"} n={n} disabled={n === 0 && f !== "all"} onClick={() => setFilter(f)}>{FILTER_LABEL[f]}</Chip>;
+            })}
           </div>
-          <Notice>
-            A program is listed only when its name, its maker and its installed version all match what a CVE states.
-            {notJudged > 0 && <> {notJudged} of your {d.installed} programs match no product in the list: they are not judged, which is not the same as safe.</>}
-            {" "}Windows itself and Store apps are not judged. A match can still be wrong; Hide removes it.
-          </Notice>
-          <Tabs defaultValue="flaws">
-            <TabsList className="mb-4">
-              <TabsTrigger value="flaws">Flaws<span className="ml-1.5 tabular text-muted-foreground">{s.cves}</span></TabsTrigger>
-              <TabsTrigger value="programs">Programs{s.apps_affected > 0 && <span className={cn("ml-1.5 tabular", s.kev > 0 ? "text-destructive" : "text-warning")}>{s.apps_affected}</span>}</TabsTrigger>
-              <TabsTrigger value="services">Services<span className="ml-1.5 tabular text-muted-foreground">{s.services}</span></TabsTrigger>
-            </TabsList>
-            <TabsContent value="flaws"><Flaws apps={apps} services={services} remediate={!!d.settings.remediate} onHide={(a) => hide("app", a.key || a.id, a.name)} /></TabsContent>
-            <TabsContent value="programs"><Programs apps={apps} remediate={!!d.settings.remediate} onHide={(a) => hide("app", a.key || a.id, a.name)} /></TabsContent>
-            <TabsContent value="services">
-              <Services services={services} read={d.services_read !== false} remediate={!!d.settings.remediate} onHide={(x) => hide("service", x.id, x.name)} />
-            </TabsContent>
-          </Tabs>
-          <p className="text-sm text-muted-foreground">
-            CVE list on this PC: {(db?.cves ?? 0).toLocaleString()} CVEs, {(db?.kev ?? 0).toLocaleString()} known exploited
-            {db?.synced_at ? ` · updated ${when(db.synced_at)}` : " · not downloaded yet"} · refreshed every {d.settings.cve_hours} hours from nvd.nist.gov and cisa.gov
-          </p>
+        )}
+        <span className="flex-1" />
+        {d && d.enabled && (
+          <span className="inline-flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
+            {isRunning
+              ? <span className="inline-flex items-center gap-1.5 [&_svg]:size-3.5"><Spin /> {d.runner.progress ?? "Checking…"}</span>
+              : d.scanned_at && <>checked {when(d.scanned_at)}</>}
+            <Button variant="outline" size="sm" onClick={check} disabled={isRunning}>{isRunning ? <Spin /> : <RefreshCw />} Check now</Button>
+          </span>
+        )}
+        {ready && s && (
+          <SegTabs label="View" value={view} onChange={setView} options={[
+            { value: "flaws", label: <>Flaws <span className="font-mono text-muted-foreground">{s.cves}</span></> },
+            { value: "programs", label: <>Programs <span className={cn("font-mono", s.kev > 0 ? "text-destructive" : s.apps_affected > 0 ? "text-warning" : "text-muted-foreground")}>{s.apps_affected}</span></> },
+            { value: "services", label: <>Services <span className={cn("font-mono", s.services_exposed > 0 ? "text-warning" : "text-muted-foreground")}>{s.services}</span></> },
+          ]} />
+        )}
+      </WorkBar>
+
+      {notes && (
+        <div className="space-y-3 px-6 pt-4 empty:hidden">
+          {q.error && !d && <LoadError error={q.error} onRetry={q.reload} />}
+          {!d && !q.error && <ListSkeleton rows={4} />}
+          {d && !d.enabled && (
+            <EmptyState icon={<ShieldAlert />} title="The vulnerability check is switched off">
+              It keeps a copy of the public CVE list on this PC, which means downloading it. Turn it on in{" "}
+              <a href="#/settings" className="text-primary underline-offset-4 hover:underline">Settings › Security</a>.
+            </EmptyState>
+          )}
+          {d && d.enabled && remediate && <RemedyBar onDone={() => { void q.reload(); emitSecurityChanged(); }} />}
+          {d && d.enabled && d.runner.error && <Notice tone="danger">{d.runner.error}</Notice>}
+          {d && d.enabled && db?.error && (
+            <Notice tone="warn">
+              The last download of the CVE list had a problem: {db.error}
+              {db.synced_at ? ` The list from ${when(db.synced_at)} is used.` : ""}
+            </Notice>
+          )}
+          {d && d.enabled && !d.scanned_at && !isRunning && (
+            <EmptyState icon={<ShieldAlert />} title="Nothing compared yet">
+              The first check downloads the CVE list (about 300 MB) and takes several minutes. Use Check now above.
+            </EmptyState>
+          )}
         </div>
       )}
-      {d && (d.hidden ?? 0) > 0 && (
-        <p className="mt-6 text-sm text-muted-foreground">
-          {d.hidden} hidden · <button className="text-primary underline-offset-4 hover:underline" onClick={restore}>Show them again</button>
-        </p>
-      )}
-    </div>
-  );
-}
 
-function Tile({ label, n, tone, sub }: { label: string; n: number; tone: string; sub?: string }) {
-  return (
-    <div className="bg-card px-4 py-3.5">
-      <div className="label-caps text-muted-foreground">{label}</div>
-      <div className={cn("mt-1 font-mono text-[26px] font-semibold leading-tight tabular", tone)}>{n}</div>
-      {sub && <div className="text-xs text-muted-foreground">{sub}</div>}
+      {ready && d && view === "flaws" && (
+        <Flaws rows={rows} filter={filter} remediate={remediate} onHide={(a) => hide("app", a.key || a.id, a.name)}
+          footer={
+            <>
+              <span className="font-mono">coverage {d.recognised ?? 0}/{d.installed ?? 0} programs</span>
+              <span role="img" aria-label={`${d.recognised ?? 0} of ${d.installed ?? 0} programs compared`} className="h-1.5 w-40 overflow-hidden rounded-full bg-border">
+                <span className="block h-full bg-primary" style={{ width: `${d.installed ? Math.round(((d.recognised ?? 0) / d.installed) * 100) : 0}%` }} />
+              </span>
+              <span className="min-w-0 flex-[1_1_320px]">
+                {notJudged > 0 ? `The other ${notJudged} match no product in the list: unknown, not safe. ` : ""}
+                Windows itself and Store apps are not judged. A match can still be wrong; Hide removes it.
+              </span>
+              <span className="w-full font-mono text-[11px]">
+                {(db?.cves ?? 0).toLocaleString()} CVEs, {(db?.kev ?? 0).toLocaleString()} known exploited
+                {db?.synced_at ? ` · list updated ${when(db.synced_at)}` : " · not downloaded yet"} · every {d.settings.cve_hours} h from nvd.nist.gov and cisa.gov · compared on this PC, nothing sent
+                {(d.hidden ?? 0) > 0 && <> · {d.hidden} hidden, <button className="text-primary underline-offset-4 hover:underline" onClick={restore}>show them again</button></>}
+              </span>
+            </>
+          } />
+      )}
+      {ready && d && view !== "flaws" && (
+        <div className="space-y-4 px-6 py-5">
+          {view === "programs" && <Programs apps={apps} remediate={remediate} onHide={(a) => hide("app", a.key || a.id, a.name)} />}
+          {view === "services" && <Services services={services} read={d.services_read !== false} remediate={remediate} onHide={(x) => hide("service", x.id, x.name)} />}
+          {(d.hidden ?? 0) > 0 && (
+            <p className="text-sm text-muted-foreground">{d.hidden} hidden · <button className="text-primary underline-offset-4 hover:underline" onClick={restore}>Show them again</button></p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -175,55 +175,36 @@ const HideBtn = ({ onClick, tip }: { onClick: () => void; tip: string }) => (
 
 type Row = { cve: SecCve; app: SecApp; exposed: SecService[] };
 type Filter = "all" | "kev" | "critical" | "network" | "update";
+const TEST: Record<Filter, (r: Row) => boolean> = {
+  all: () => true, kev: (r) => r.cve.kev, critical: (r) => (r.cve.score ?? 0) >= 9,
+  network: (r) => r.exposed.length > 0, update: (r) => !!r.app.available,
+};
+const FILTER_LABEL: Record<Filter, string> = { all: "All", kev: "Exploited", critical: "Critical", network: "Open to network", update: "Has an update" };
 
 /** Every known flaw across the compared programs in one table, worst first, with the selected one explained beside it. */
-function Flaws({ apps, services, remediate, onHide }: { apps: SecApp[]; services: SecService[]; remediate: boolean; onHide: (a: SecApp) => void }) {
-  const rows = useMemo<Row[]>(() => apps.flatMap((app) => {
-    const exposed = services.filter((s) => s.app_id === app.id && s.exposed);
-    return app.cves.map((cve) => ({ cve, app, exposed }));
-  }).sort((a, b) => Number(b.cve.kev) - Number(a.cve.kev) || (b.cve.score ?? 0) - (a.cve.score ?? 0) || a.cve.id.localeCompare(b.cve.id)), [apps, services]);
-  const [filter, setFilter] = useState<Filter>("all");
-  const test: Record<Filter, (r: Row) => boolean> = {
-    all: () => true, kev: (r) => r.cve.kev, critical: (r) => (r.cve.score ?? 0) >= 9,
-    network: (r) => r.exposed.length > 0, update: (r) => !!r.app.available,
-  };
-  const list = rows.filter(test[filter]);
+function Flaws({ rows, filter, remediate, onHide, footer }: { rows: Row[]; filter: Filter; remediate: boolean; onHide: (a: SecApp) => void; footer: ReactNode }) {
+  const list = rows.filter(TEST[filter]);
   const [sel, setSel] = useState<string | null>(null);
   const cur = list.find((r) => r.cve.id + r.app.id === sel) ?? list[0] ?? null;
-  const chip = (f: Filter, label: string, danger?: boolean) => {
-    const n = rows.filter(test[f]).length;
-    return (
-      <button key={f} aria-pressed={filter === f} onClick={() => setFilter(f)} disabled={n === 0 && f !== "all"}
-        className={cn("h-8 rounded-md border px-2.5 text-xs transition-colors disabled:opacity-50",
-          filter === f ? "border-primary/40 bg-accent text-foreground" : "text-muted-foreground hover:bg-muted",
-          danger && n > 0 && filter !== f && "border-destructive/40 text-destructive")}>
-        {label} <span className="font-mono tabular">{n}</span>
-      </button>
-    );
-  };
-  if (rows.length === 0) {
-    return <EmptyState icon={<ShieldCheck />} title="No known flaws in the installed versions">The programs that could be compared have nothing known for their versions.</EmptyState>;
-  }
   return (
-    <div className="space-y-3">
-      <div role="group" aria-label="Filter flaws" className="flex flex-wrap gap-1.5">
-        {chip("all", "All")}{chip("kev", "Used in real attacks", true)}{chip("critical", "Critical")}{chip("network", "Open to the network")}{chip("update", "Has an update")}
-      </div>
-      <div className="grid items-start gap-4 min-[1150px]:grid-cols-[minmax(0,1fr)_380px]">
-        <Card className="overflow-hidden rounded-lg">
+    <div className="flex flex-1 flex-wrap items-stretch">
+      <section aria-label="Flaws" className="flex min-w-0 flex-[999_1_600px] flex-col">
+        {rows.length === 0 ? (
+          <div className="p-6"><EmptyState icon={<ShieldCheck />} title="No known flaws in the installed versions">The programs that could be compared have nothing known for their versions.</EmptyState></div>
+        ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[680px] text-sm">
-              <thead><tr className="label-caps border-b text-left text-muted-foreground">
-                <th className="px-4 py-2 font-medium">Score</th><th className="px-2 py-2 font-medium">CVE</th><th className="px-2 py-2 font-medium">Program</th>
-                <th className="px-2 py-2 font-medium">Signals</th><th className="px-2 py-2 font-medium">Published</th><th className="px-4 py-2 font-medium">Fixed in</th>
+            <table className="w-full min-w-[720px]">
+              <thead><tr className="label-caps bg-sidebar text-left text-muted-foreground">
+                <th className="py-2.5 pl-6 pr-2 font-medium">CVSS</th><th className="px-2 py-2.5 font-medium">CVE</th><th className="px-2 py-2.5 font-medium">Program</th>
+                <th className="px-2 py-2.5 font-medium">Signals</th><th className="px-2 py-2.5 font-medium">Published</th><th className="py-2.5 pl-2 pr-6 font-medium">Fixed in</th>
               </tr></thead>
               <tbody>
                 {list.map((r) => {
                   const on = cur === r;
                   return (
                     <tr key={r.cve.id + r.app.id} onClick={() => setSel(r.cve.id + r.app.id)}
-                      className={cn("cursor-pointer border-b last:border-b-0", on ? "bg-accent shadow-[inset_2px_0_0_var(--color-primary)]" : "hover:bg-muted/40")}>
-                      <td className="px-4 py-2"><ScoreBox n={r.cve.score} /></td>
+                      className={cn("cursor-pointer border-t", on ? "bg-accent shadow-[inset_2px_0_0_var(--color-primary)]" : "hover:bg-muted/40")}>
+                      <td className="py-2 pl-6 pr-2"><ScoreBox n={r.cve.score} /></td>
                       <td className="whitespace-nowrap px-2 py-2">
                         <button className="font-mono text-xs underline-offset-2 hover:underline" aria-pressed={on} onClick={(e) => { e.stopPropagation(); setSel(r.cve.id + r.app.id); }}>{r.cve.id}</button>
                       </td>
@@ -234,16 +215,17 @@ function Flaws({ apps, services, remediate, onHide }: { apps: SecApp[]; services
                         {r.exposed.length > 0 && <span className="text-warning">NET</span>}
                       </td>
                       <td className="whitespace-nowrap px-2 py-2 font-mono text-xs text-muted-foreground">{r.cve.published ? r.cve.published.slice(0, 10) : "—"}</td>
-                      <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">{r.cve.fixed_in ?? <span className="text-muted-foreground">—</span>}{r.app.available && <span className="ml-1.5 text-success" title={`Version ${r.app.available} is available`}>↑ {r.app.available}</span>}</td>
+                      <td className="whitespace-nowrap py-2 pl-2 pr-6 font-mono text-xs">{r.cve.fixed_in ? <span className="text-success">{r.cve.fixed_in}</span> : <span className="text-muted-foreground">—</span>}{r.app.available && <span className="ml-1.5 text-muted-foreground" title={`Version ${r.app.available} is available`}>↑ {r.app.available}</span>}</td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
-        </Card>
-        {cur && <FlawDetail r={cur} remediate={remediate} onHide={() => onHide(cur.app)} />}
-      </div>
+        )}
+        <div className="mt-auto flex flex-wrap items-center gap-x-5 gap-y-2 border-t px-6 py-3.5 text-xs text-muted-foreground">{footer}</div>
+      </section>
+      {cur && <FlawDetail r={cur} remediate={remediate} onHide={() => onHide(cur.app)} />}
     </div>
   );
 }
@@ -256,7 +238,8 @@ function ScoreBox({ n }: { n: number | null }) {
 function FlawDetail({ r, remediate, onHide }: { r: Row; remediate: boolean; onHide: () => void }) {
   const { cve, app, exposed } = r;
   return (
-    <Card className="space-y-4 rounded-lg p-5 min-[1150px]:sticky min-[1150px]:top-16">
+    <aside aria-label="Selected flaw" className="min-w-0 flex-[1_1_360px] border-l bg-sidebar p-5 max-[1000px]:border-l-0 max-[1000px]:border-t">
+      <div className="space-y-3.5 min-[1000px]:sticky min-[1000px]:top-[72px]">
       <div className="flex flex-wrap gap-1.5">
         {cve.kev && <Badge variant="danger">Used in real attacks{cve.kev_added ? ` · listed ${day(cve.kev_added)}` : ""}</Badge>}
         {cve.ransomware && <Badge variant="danger">Used by ransomware</Badge>}
@@ -281,7 +264,8 @@ function FlawDetail({ r, remediate, onHide }: { r: Row; remediate: boolean; onHi
       </div>
       {!remediate && (app.available || exposed.length > 0) && <p className="text-xs text-muted-foreground">Update and Stop buttons appear when changes from the console are switched on in Settings.</p>}
       <p className="font-mono text-[11px] text-muted-foreground">Matched by product, maker and version range against the local copy of NVD and CISA's list.</p>
-    </Card>
+      </div>
+    </aside>
   );
 }
 
