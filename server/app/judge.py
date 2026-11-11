@@ -232,6 +232,8 @@ def update_checks(p, device, vul, sup, apps, today: date) -> list:
                  f"{name} gets security updates until {win['until']}." if win.get("until") else
                  f"{name}. Not known to be out of support.",
                  fix="Upgrade Windows." if state in ("ended", "soon") else None))
+    if "bios_age_days" in p:                # F-8, sent from 11 Nov 2026: the age only, not the version
+        out.append(agent._on_pc(agent.firmware_check(p["bios_age_days"])))
     w = agent.windows_update_check(p.get("windows_last_update"), "", today)       # the agent's rule, one copy
     out.append(C("upd.windows", w["title"], w["status"],
                  "The date of the last update was not reported." if w["status"] == "unknown" else w["detail"],

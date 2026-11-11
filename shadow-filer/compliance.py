@@ -47,7 +47,7 @@ from datetime import date, datetime, timedelta
 
 CREATE_NO_WINDOW = 0x08000000
 THRESHOLDS = {"patch_days": 14, "unlock_tries": 10, "lock_seconds": 900, "signature_days": 7, "high_score": 7.0,
-              "pw_length": 12, "pw_length_certin": 8}
+              "pw_length": 12, "pw_length_certin": 8, "firmware_days": 1095}
 SCHEME = "Cyber Essentials v3.3 (April 2026)"
 HISTORY_DAYS = 400
 CACHE_SECONDS = 300
@@ -116,7 +116,7 @@ $nla = Reg "$ts\WinStations\RDP-Tcp" 'UserAuthentication'
 $rr = Get-CimInstance Win32_Service -Filter "Name='RemoteRegistry'"
 $out = [pscustomobject]@{
   computer = "$env:COMPUTERNAME"; user = "$env:USERNAME"; manufacturer = "$($cs.Manufacturer)"; model = "$($cs.Model)";
-  serial = "$($bios.SerialNumber)"; edition = "$($cv.EditionID)"; display_version = "$($cv.DisplayVersion)";
+  serial = "$($bios.SerialNumber)"; bios_version = "$($bios.SMBIOSBIOSVersion)"; bios_date = (Iso $bios.ReleaseDate); edition = "$($cv.EditionID)"; display_version = "$($cv.DisplayVersion)";
   build = [int]$cv.CurrentBuild; ubr = [int]$cv.UBR;
   last_update = (Iso $hot.InstalledOn); last_update_id = "$($hot.HotFixID)";
   no_auto_update = [int](Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' 'NoAutoUpdate');
@@ -482,6 +482,24 @@ def windows_update_check(last: str | None, kb: str, today: date) -> dict:
                   fix=None if ok else "Settings > Windows Update > Check for updates.")
 
 
+def firmware_check(days, version: str = "", released: str = "") -> dict:
+    """The age of the PC's firmware (BIOS/UEFI; spec F-8, CERT-In PM.1 "patch firmware"). Whether the maker has a
+    newer version cannot be known without going online, so this never says "out of date": only how old the
+    installed one is. Three years is our own number; no framework gives one."""
+    lim = THRESHOLDS["firmware_days"]
+    title = f"The PC's firmware (BIOS) is less than {lim // 365} years old"
+    what = " ".join(x for x in (version, f"released {released}" if released else "") if x)
+    if not isinstance(days, int) or isinstance(days, bool) or days < 0:
+        return _check(title=title, cid="upd.firmware", status="unknown", detail="The firmware's release date could not be read.")
+    old = days > lim
+    return _check("upd.firmware", title, "warn" if old else "pass",
+                  (f"The firmware{' (' + what + ')' if what else ''} is {days // 365} years old ({days} days). " if old else
+                   f"The firmware{' (' + what + ')' if what else ''} is {days} days old. ")
+                  + f"{lim // 365} years is our own limit, not one Cyber Essentials, CERT-In or DPDP gives; whether the maker "
+                    "has a newer version is not checked (that needs the maker's site).",
+                  fix="Look on the maker's support page for this model for a newer BIOS/UEFI version." if old else None)
+
+
 def high_or_unscored(x: dict) -> bool:
     """Cyber Essentials: fixes for flaws scored 7 or more, and fixes whose severity is not given, within 14 days."""
     return x.get("score") is None or x["score"] >= THRESHOLDS["high_score"]
@@ -508,6 +526,7 @@ def update_checks(p: dict, vul: dict | None, appsv: dict | None, today: date, cf
                       f"{name}. Not known to be out of support.",
                       fix="Upgrade Windows." if win["state"] in ("ended", "soon") else None))
     out.append(windows_update_check(p.get("last_update"), p.get("last_update_id") or "", today))
+    out.append(firmware_check(_days(p.get("bios_date"), today), p.get("bios_version") or "", (p.get("bios_date") or "")[:10]))
     off, paused = p.get("no_auto_update") == 1, bool(p.get("paused_until"))
     out.append(_check("upd.automatic", "Windows installs updates by itself",
                       "fail" if off else "warn" if paused else "pass",
@@ -655,7 +674,7 @@ DECLARED = (("mfa", QUESTIONS["mfa"], "Cyber Essentials v3.3: every cloud servic
             ("admin_separate", QUESTIONS["admin_separate"], "Cyber Essentials: user access control."))
 
 FW_IDS = ("fw.on", "fw.default", "fw.ports", "fw.rules", "fw.shares")
-UPD_IDS = ("upd.supported", "upd.windows", "upd.automatic", "upd.flaws", "upd.coverage", "upd.unsupported", "upd.browsers", "upd.pending")
+UPD_IDS = ("upd.supported", "upd.windows", "upd.firmware", "upd.automatic", "upd.flaws", "upd.coverage", "upd.unsupported", "upd.browsers", "upd.pending")
 MAL_IDS = ("mal.present", "mal.realtime", "mal.signatures")
 CERTIN = "CERT-In"
 
@@ -683,7 +702,7 @@ FRAMEWORKS = {
                                                        "accounts off, unsupported software removed.",
                     ("fw.ports", "fw.shares", "cfg.smb1", "cfg.rdp", "cfg.remreg", "cfg.psv2", "cfg.guest", "upd.unsupported", "cfg.lock", "cfg.encryption")),
                    ("pm", "Patch management (PM)", "PM.1 and PM.2: Windows and applications patched; known-exploited flaws followed.",
-                    ("upd.supported", "upd.windows", "upd.automatic", "upd.flaws", "upd.coverage", "upd.browsers", "upd.pending")),
+                    ("upd.supported", "upd.windows", "upd.firmware", "upd.automatic", "upd.flaws", "upd.coverage", "upd.browsers", "upd.pending")),
                    ("rpp", "Password policy (RPP)", "RPP.1 and RPP.2: passwords of 8 characters or more that expire and are not reused; "
                                                     "accounts lock after 3 to 5 failed attempts; every account needs a password.",
                     ("cfg.pwpolicy", "cfg.unlock", "cfg.password")),
@@ -731,6 +750,8 @@ def _on_pc(ch: dict) -> dict:
         ch["detail"] = "The device could not read its account lockout setting."
     if ch["status"] == "unknown" and ch["id"] == "cfg.pwpolicy":
         ch["detail"] = "The device could not read its password policy."
+    if ch["status"] == "unknown" and ch["id"] == "upd.firmware":
+        ch["detail"] = "The device could not read its firmware's release date."
     if ch.get("fix") and not ch["fix"].startswith("On the PC"):
         ch["fix"] = "On the PC, " + ch["fix"][0].lower() + ch["fix"][1:]
     return ch
