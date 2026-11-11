@@ -30,7 +30,8 @@ def pc(**over):
          "lockout_threshold": 10, "pw_min_length": 14, "pw_max_age_days": 90, "pw_history": 5,
          "smb1_on": False, "rdp_on": False, "rdp_nla": True, "remote_registry_on": False, "psv2_present": False,
          "bios_version": "F39", "bios_date": "2024-03-22", "usb_storage": "read_only",
-         "wifi": {"adapter": True, "connected": True, "auth": "wpa2", "open_auto": 0}}
+         "wifi": {"adapter": True, "connected": True, "auth": "wpa2", "open_auto": 0},
+         "logs": {"mode": "circular", "oldest": "2026-01-01"}, "audit": {"logon": 3, "users": 1}}
     p.update(over)
     return p
 
@@ -208,6 +209,31 @@ class ChecksTest(unittest.TestCase):
         self.assertNotIn("net.wifi", ids(pc(wifi={"adapter": False})))
         self.assertIn("Connected to an open network", compliance.wifi_check(w(auth="open"))["detail"])
 
+    def test_logs(self):
+        """F-10: notes in Cyber Essentials; CERT-In 180 days and DPDP 365 (personal-data devices only) for a log that
+        overwrites itself; an archiving log is never failed on its age; unread (no administrator rights) is unknown."""
+        tmp = Path(tempfile.mkdtemp(prefix="sf-test-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        cfg = {"database": tmp / "t.db", "cve_database": tmp / "cve.db"}
+
+        def st(labels=(), **o):
+            checks = compliance.measure(cfg, pc(**o), net(), VUL, APPS, TODAY)
+            return {k: tuple(by_id([c for g in compliance.judge_framework(k, checks, {}, labels)["controls"] for c in g["checks"]])[i]["status"]
+                             for i in ("log.retention", "log.audit")) for k in ("ce", "certin", "dpdp")}
+        self.assertEqual(st(), {"ce": ("info", "pass"), "certin": ("pass", "pass"), "dpdp": ("info", "pass")})       # 284 days, audited
+        self.assertEqual(st(("personal_data",)), {"ce": ("info", "pass"), "certin": ("pass", "pass"), "dpdp": ("fail", "pass")})
+        self.assertEqual(st(logs={"mode": "circular", "oldest": "2026-09-01"})["certin"], ("fail", "pass"))      # 41 days
+        self.assertEqual(st(("personal_data",), logs={"mode": "autobackup", "oldest": "2026-09-01"})["dpdp"], ("pass", "pass"))   # archives
+        self.assertEqual(st(audit={"logon": 1, "users": 1}), {"ce": ("info", "info"), "certin": ("pass", "fail"), "dpdp": ("info", "fail")})
+        self.assertEqual(st(audit={"logon": 3, "users": 2})["certin"], ("pass", "warn"))
+        self.assertEqual(st(logs=None, audit=None), {k: ("unknown", "unknown") for k in ("ce", "certin", "dpdp")})     # not elevated
+        self.assertEqual(st(logs={"mode": "Circular", "oldest": "2026-01-01"})["certin"][0], "unknown")
+        f = compliance.log_facts(pc(), TODAY)
+        self.assertEqual(f, {"log_days_security": 284, "log_mode_security": "circular", "audit_logon": True, "audit_account_mgmt": True})
+        c = compliance.log_checks({**f, "log_days_security": 10}, "certin")[0]
+        self.assertIn("never collects logs", c["fix"])
+        self.assertIn("declared, not measured", c["detail"])
+
     def test_usb_storage(self):
         """F-5: allowed USB storage is a note in Cyber Essentials and DPDP, a look in CERT-In (restrict or control,
         not block); blocked or read-only passes; anything else is unknown."""
@@ -338,11 +364,11 @@ class FrameworksTest(unittest.TestCase):
             out[k] = v
             acc = [ch for g in v["controls"] for ch in g["checks"] if ch["id"] == "acc.daily"][0]
             self.assertEqual((acc["status"], bool(acc["accepted"])), ("fail", True), k)     # accepted everywhere, failing mark kept
-        self.assertEqual([g["key"] for g in out["certin"]["controls"]], ["nes", "ems", "sc", "pm", "rpp", "acim"])
-        self.assertEqual([g["key"] for g in out["dpdp"]["controls"]], ["enc", "access", "other"])
+        self.assertEqual([g["key"] for g in out["certin"]["controls"]], ["nes", "ems", "sc", "pm", "rpp", "acim", "lm"])
+        self.assertEqual([g["key"] for g in out["dpdp"]["controls"]], ["enc", "access", "logs", "other"])
         self.assertEqual({k: [q["key"] for q in v["declared"]].count("perimeter") for k, v in out.items()}, {"ce": 0, "certin": 1, "dpdp": 0})
         self.assertEqual([q["answer"] for q in out["certin"]["declared"] if q["key"] == "perimeter"], ["yes"])
-        self.assertEqual({g["key"]: g["status"] for g in out["certin"]["controls"]}, {"nes": "pass", "ems": "pass", "sc": "unknown", "pm": "fail", "rpp": "fail", "acim": "pass"})   # sc: no end-of-life list here
+        self.assertEqual({g["key"]: g["status"] for g in out["certin"]["controls"]}, {"nes": "pass", "ems": "pass", "sc": "unknown", "pm": "fail", "rpp": "fail", "acim": "pass", "lm": "pass"})   # sc: no end-of-life list here
         t = {k: compliance.as_text(v) for k, v in out.items()}
         self.assertIn("Judged against: CERT-In Elemental Cyber Defense Controls", t["certin"])
         self.assertIn("may have a yearly baseline audit", t["certin"])
@@ -359,7 +385,7 @@ class FrameworksTest(unittest.TestCase):
             compliance.record(self.cfg, v, TODAY)
         self.assertEqual([h["day"] for h in compliance.history(self.cfg, 90, TODAY)], ["2026-10-10", "2026-10-12"])
         self.assertEqual([(h["day"], sorted(h["controls"])) for h in compliance.history(self.cfg, 90, TODAY, "dpdp")],
-                         [("2026-10-12", ["access", "enc", "other"])])
+                         [("2026-10-12", ["access", "enc", "logs", "other"])])
         self.assertEqual(compliance.brief(self.cfg, TODAY)["framework"], "certin")                 # the dashboard follows the first shown
 
 

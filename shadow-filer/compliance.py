@@ -47,7 +47,7 @@ from datetime import date, datetime, timedelta
 
 CREATE_NO_WINDOW = 0x08000000
 THRESHOLDS = {"patch_days": 14, "unlock_tries": 10, "lock_seconds": 900, "signature_days": 7, "high_score": 7.0,
-              "pw_length": 12, "pw_length_certin": 8, "firmware_days": 1095}
+              "pw_length": 12, "pw_length_certin": 8, "firmware_days": 1095, "log_days_certin": 180, "log_days_dpdp": 365}
 SCHEME = "Cyber Essentials v3.3 (April 2026)"
 HISTORY_DAYS = 400
 CACHE_SECONDS = 300
@@ -150,6 +150,29 @@ if ($wifi -and $wifi.adapter) {
     }
   } catch { } finally { Remove-Item -LiteralPath $wd -Recurse -Force -ErrorAction SilentlyContinue }
 }
+# Logs (spec F-10): the Security log's mode and its oldest entry, and two audit settings. All of it needs
+# administrator rights: the file agent (not elevated) gets $null here and its checks say "could not be checked";
+# the device agent runs as SYSTEM. The audit settings come from 'auditpol /backup' (a CSV whose 'Setting Value' is
+# a number: 1 success, 2 failure, 3 both), written to a new temp file that is removed at once. Nothing from the
+# log itself is read except the date of its oldest entry.
+$logs = $null
+try {
+  $sl = Get-WinEvent -ListLog Security -ErrorAction Stop
+  $old = Get-WinEvent -LogName Security -MaxEvents 1 -Oldest -ErrorAction Stop
+  $logs = [pscustomobject]@{ mode = "$($sl.LogMode)".ToLower(); oldest = (Iso $old.TimeCreated) }
+} catch { }
+$audit = $null
+$af = Join-Path ([IO.Path]::GetTempPath()) ('sf-audit-' + [guid]::NewGuid().ToString('N') + '.csv')
+try {
+  auditpol /backup /file:"$af" | Out-Null
+  if ($LASTEXITCODE -eq 0) {
+    $rows = @(Import-Csv -LiteralPath $af)
+    if ($rows.Count -and $rows[0].PSObject.Properties.Name -contains 'Setting Value') {
+      $sv = { param($g) $r = @($rows | Where-Object { $_.'Subcategory GUID' -eq $g }); if ($r.Count) { [int]$r[0].'Setting Value' } else { 0 } }
+      $audit = [pscustomobject]@{ logon = (& $sv '{0CCE9215-69AE-11D9-BED3-505054503030}'); users = (& $sv '{0CCE9235-69AE-11D9-BED3-505054503030}') }
+    }
+  }
+} catch { } finally { Remove-Item -LiteralPath $af -Force -ErrorAction SilentlyContinue }
 $usb = if ((Reg $rsd 'Deny_All') -eq 1 -or $usbstor -eq 4 -or (Reg $rdisk 'Deny_Read') -eq 1) { 'blocked' } elseif ((Reg $rdisk 'Deny_Write') -eq 1) { 'read_only' } elseif ($null -ne $usbstor) { 'allowed' } else { '' }
 $out = [pscustomobject]@{
   computer = "$env:COMPUTERNAME"; user = "$env:USERNAME"; manufacturer = "$($cs.Manufacturer)"; model = "$($cs.Model)";
@@ -168,7 +191,7 @@ $out = [pscustomobject]@{
   rdp_on = if ($null -ne $deny) { [int]$deny -eq 0 } else { $null };
   rdp_nla = if ($null -ne $nla) { [int]$nla -eq 1 } else { $null };
   remote_registry_on = if ($rr) { $rr.State -eq 'Running' -or $rr.StartMode -eq 'Auto' } else { $null };
-  usb_storage = $usb; wifi = $wifi;
+  usb_storage = $usb; wifi = $wifi; logs = $logs; audit = $audit;
   psv2_present = if ($feat.Count) { [bool]@($feat | Where-Object { $_.Name -like 'MicrosoftWindowsPowerShellV2*' -and [int]$_.InstallState -eq 1 }).Count } else { $null };
   screensaver = [pscustomobject]@{ active = "$(Reg $desk 'ScreenSaveActive')"; secure = "$(Reg $desk 'ScreenSaverIsSecure')";
     timeout = "$(Reg $desk 'ScreenSaveTimeOut')" };
@@ -545,6 +568,66 @@ def wifi_check(f: dict) -> dict:
                       "(Settings > Network & internet > Wi-Fi > Manage known networks)." if bad or look else None)
 
 
+LOG_MODES = ("circular", "autobackup", "retain")
+
+
+def log_facts(p: dict, today: date) -> dict:
+    """The four facts about logs that may leave the PC (spec F-10): how many days the Security log reaches back, its
+    mode, and whether logons (success and failure) and changes to user accounts (success) are audited. None when
+    not read, which is always so without administrator rights."""
+    lg, au = p.get("logs"), p.get("audit")
+    days = _days(lg.get("oldest"), today) if isinstance(lg, dict) else None
+    mode = lg.get("mode") if isinstance(lg, dict) and lg.get("mode") in LOG_MODES else None
+    val = lambda k: au.get(k) if isinstance(au, dict) and isinstance(au.get(k), int) and not isinstance(au.get(k), bool) else None
+    lo, us = val("logon"), val("users")
+    return {"log_days_security": days if isinstance(days, int) and days >= 0 else None, "log_mode_security": mode,
+            "audit_logon": None if lo is None else lo == 3, "audit_account_mgmt": None if us is None else bool(us & 1)}
+
+
+def log_checks(f: dict, rule: str = "ce", labels=()) -> list:
+    """Logs (spec F-10). Cyber Essentials does not ask about logs, so there both are notes. CERT-In LM.1: logging on,
+    logs kept 180 days. DPDP Rule 6(1)(c) "visibility on the accessing of such personal data, through appropriate
+    logs" and 6(1)(e) "retain such logs and personal data for a period of one year": 365 days, on a device labelled
+    as holding personal data. Only an overwriting (circular) log loses entries; one that archives (AutoBackup) or
+    stops (Retain) keeps them, so it is not failed on its age. We never collect the logs: they name people."""
+    days, mode, lo, us = f.get("log_days_security"), f.get("log_mode_security"), f.get("audit_logon"), f.get("audit_account_mgmt")
+    lim = {"certin": THRESHOLDS["log_days_certin"], "dpdp": THRESHOLDS["log_days_dpdp"]}.get(rule)
+    applies = rule == "certin" or (rule == "dpdp" and "personal_data" in labels)
+    title = f"The Security log reaches back {lim} days" if lim else "How far back the Security log reaches"
+    if not isinstance(days, int) or mode not in LOG_MODES:
+        ret = _check("log.retention", title, "unknown", "The Security log could not be read (it needs administrator rights; the "
+                                                         "installed device agent can read it, this console cannot).")
+    else:
+        keeps = mode != "circular"
+        say = (f"The Security log reaches back {days} days and " + ("archives itself when full (AutoBackup), so older entries are kept "
+               "in archive files." if mode == "autobackup" else "stops when full (Retain), so nothing is overwritten." if keeps else
+               "overwrites its oldest entries when full."))
+        if not applies:
+            ret = _check("log.retention", title, "info", say + (" Cyber Essentials does not ask how long logs are kept." if rule == "ce" else
+                         " This device is not marked as holding personal data; on one that is, Rule 6(1)(e) asks for one year."))
+        else:
+            short = not keeps and days < lim
+            ref = "CERT-In LM.1 asks for 180 days (kept within India, which is declared, not measured)." if rule == "certin" else \
+                "DPDP Rule 6(1)(e) asks for one year on a device that holds personal data."
+            ret = _check("log.retention", title, "fail" if short else "pass", say + " " + ref
+                         + (" If the log has not filled up yet, this is simply how long the PC has been logging." if short else ""),
+                         fix="In an administrator terminal: wevtutil sl Security /rt:true /ab:true (archive instead of overwrite; watch "
+                             "the disk), or send the logs to your own log collection. This product never collects logs." if short else None)
+    if not isinstance(lo, bool) or not isinstance(us, bool):
+        aud = _check("log.audit", "Sign-ins and account changes are recorded", "unknown",
+                     "The audit settings could not be read (they need administrator rights).")
+    else:
+        gaps = (["sign-ins (success and failure) are not both recorded"] if not lo else []) + (["changes to user accounts are not recorded"] if not us else [])
+        aud = _check("log.audit", "Sign-ins and account changes are recorded",
+                     "info" if rule == "ce" and gaps else "fail" if not lo else "warn" if gaps else "pass",
+                     ("Not recorded: " + "; ".join(gaps) + "." if gaps else "Sign-ins (success and failure) and changes to user accounts are recorded.")
+                     + (" Cyber Essentials does not ask for it." if rule == "ce" and gaps else ""),
+                     fix="In an administrator terminal: auditpol /set /subcategory:\"Logon\" /success:enable /failure:enable and "
+                         "auditpol /set /subcategory:\"User Account Management\" /success:enable" if gaps else None)
+    return [{**ret, "fact": {k: f.get(k) for k in ("log_days_security", "log_mode_security")}},
+            {**aud, "fact": {k: f.get(k) for k in ("audit_logon", "audit_account_mgmt")}}]
+
+
 def security_release_due(today: date) -> date:
     """The newest monthly Windows security release (second Tuesday) whose 14 days are over on `today`."""
     d = today - timedelta(days=THRESHOLDS["patch_days"])
@@ -797,6 +880,7 @@ DECLARED = (("mfa", QUESTIONS["mfa"], "Cyber Essentials v3.3: every cloud servic
             ("admin_separate", QUESTIONS["admin_separate"], "Cyber Essentials: user access control."))
 
 FW_IDS = ("fw.on", "fw.default", "fw.ports", "fw.rules", "fw.shares", "net.wifi")
+LOG_IDS = ("log.retention", "log.audit")
 UPD_IDS = ("upd.supported", "upd.windows", "upd.firmware", "upd.automatic", "upd.flaws", "upd.coverage", "upd.unsupported", "upd.browsers", "upd.pending")
 MAL_IDS = ("mal.present", "mal.realtime", "mal.signatures")
 CERTIN = "CERT-In"
@@ -812,11 +896,11 @@ FRAMEWORKS = {
            "controls": tuple((k, t, a, ids) for (k, t, a), ids in zip(CONTROLS, (
                FW_IDS, ("cfg.lock", "cfg.unlock", "cfg.pwpolicy", "cfg.autoplay", "cfg.guest", "cfg.builtin_admin", "cfg.password", "cfg.unused",
                         "cfg.smb1", "cfg.rdp", "cfg.remreg", "cfg.psv2", "cfg.usb", "cfg.encryption"),
-               UPD_IDS, ("acc.daily", "acc.admins"), MAL_IDS))),
+               UPD_IDS, ("acc.daily", "acc.admins"), MAL_IDS + LOG_IDS))),
            "declared": tuple((k, why) for k, _, why in DECLARED),
            "footer": "This follows the Cyber Essentials control areas but is not a certificate."},
     "certin": {"title": "CERT-In MSME", "scheme": "CERT-In Elemental Cyber Defense Controls for MSMEs v1.0 (CISG-2025-03, 1 Sep 2025)",
-               "unlock": (3, 5), "unlock_ref": CERTIN, "encryption": "note", "pwpolicy": "certin", "usb": "strict",
+               "unlock": (3, 5), "unlock_ref": CERTIN, "encryption": "note", "pwpolicy": "certin", "usb": "strict", "logs": "certin",
                "controls": (
                    ("nes", "Network security (NES)", "NES.1 and NES.2: the host firewall is on and configured; Wi-Fi is WPA2 or WPA3 and "
                                                      "does not join open networks by itself.", ("fw.on", "fw.default", "fw.rules", "net.wifi")),
@@ -833,7 +917,9 @@ FRAMEWORKS = {
                                                     "accounts lock after 3 to 5 failed attempts; every account needs a password.",
                     ("cfg.pwpolicy", "cfg.unlock", "cfg.password")),
                    ("acim", "Access control (ACIM)", "ACIM.1, ACIM.2 and ACIM.4: accounts in use, least privilege, administrator "
-                                                     "rights only when essential.", ("acc.daily", "acc.admins", "cfg.unused"))),
+                                                     "rights only when essential.", ("acc.daily", "acc.admins", "cfg.unused")),
+                   ("lm", "Logging (LM)", "LM.1: logging on, and logs kept for 180 days. Where they are kept (within India) is declared, "
+                                          "not measured; this product never collects them.", LOG_IDS)),
                "declared": (("mfa", "CERT-In RPP.3: multi-factor login for critical systems, administrators and remote access."),
                             ("perimeter", "CERT-In NES.1: a perimeter firewall."),
                             ("backups", "CERT-In DPBP.1: regular backups, encrypted, with a copy offsite and offline."),
@@ -845,13 +931,15 @@ FRAMEWORKS = {
                "footer": "This follows CERT-In's 15 elemental controls for MSMEs, as far as a PC can show them. CERT-In says an MSME "
                          "may have a yearly baseline audit by an empanelled auditor; this is not that audit and not a certificate."},
     "dpdp": {"title": "DPDP Rule 6", "scheme": "DPDP Rules 2025, Rule 6 and 7 (G.S.R. 846(E), in force 13 May 2027)",
-             "unlock": (1, THRESHOLDS["unlock_tries"]), "unlock_ref": "", "encryption": "personal_data",
+             "unlock": (1, THRESHOLDS["unlock_tries"]), "unlock_ref": "", "encryption": "personal_data", "logs": "dpdp",
              "controls": (
                  ("enc", "6(1)(a) Encryption", "Personal data is protected by encryption, obfuscation, masking or virtual tokens.",
                   ("cfg.encryption",)),
                  ("access", "6(1)(b) Access control", "Access to the computer resources that hold personal data is controlled. "
                                                       "The rule gives no numbers; lockout and password length use Cyber Essentials' own.",
                   ("cfg.unlock", "cfg.pwpolicy", "cfg.password", "cfg.guest", "cfg.builtin_admin", "cfg.unused", "cfg.lock", "acc.daily", "acc.admins") + FW_IDS),
+                 ("logs", "6(1)(c) and (e) Logs", "Visibility on the accessing of personal data through logs, and logs kept for one "
+                                                  "year on a device that holds personal data.", LOG_IDS),
                  ("other", "Other reasonable safeguards", "Patching, malware protection and old protocols switched off. Rule 6 does not "
                                                           "name these; placing them under its reasonable security safeguards is our own mapping.",
                   UPD_IDS + MAL_IDS + ("cfg.autoplay", "cfg.usb", "cfg.smb1", "cfg.rdp", "cfg.remreg", "cfg.psv2"))),
@@ -870,12 +958,19 @@ def declared_keys() -> set:
     return {k for f in FRAMEWORKS.values() for k, _ in f["declared"]}
 
 
+_LOG_NONE = {"log_days_security": None, "log_mode_security": None, "audit_logon": None, "audit_account_mgmt": None}
+
+
 def _on_pc(ch: dict) -> dict:
     """The server's wording of a check that the agent's code judged: the fix is done on the PC, not on the server."""
     if ch["status"] == "unknown" and ch["id"] == "cfg.unlock":
         ch["detail"] = "The device could not read its account lockout setting."
     if ch["status"] == "unknown" and ch["id"] == "cfg.pwpolicy":
         ch["detail"] = "The device could not read its password policy."
+    if ch["status"] == "unknown" and ch["id"] == "log.retention":
+        ch["detail"] = "The device could not read its Security log (an agent that is not the installed service cannot)."
+    if ch["status"] == "unknown" and ch["id"] == "log.audit":
+        ch["detail"] = "The device could not read its audit settings (an agent that is not the installed service cannot)."
     if ch["status"] == "unknown" and ch["id"] == "net.wifi":
         ch["detail"] = "The device could not read its Wi-Fi settings."
     if ch["status"] == "unknown" and ch["id"] == "upd.firmware":
@@ -896,6 +991,11 @@ def verdict(fw: str, ch: dict, labels=(), remote: bool = False) -> dict:
     if ch["id"] == "cfg.pwpolicy" and "fact" in ch and f.get("pwpolicy", "ce") != "ce":
         x = ch["fact"]
         u = password_policy_check({"pw_min_length": x["min_length"], "pw_max_age_days": x["max_age_days"], "pw_history": x["history"]}, f["pwpolicy"])
+        ch.update({k: u[k] for k in ("title", "status", "detail", "fix")})
+        if remote:
+            _on_pc(ch)
+    if ch["id"] in LOG_IDS and "fact" in ch and f.get("logs"):
+        u = {c["id"]: c for c in log_checks({**_LOG_NONE, **ch["fact"]}, f["logs"], labels)}[ch["id"]]
         ch.update({k: u[k] for k in ("title", "status", "detail", "fix")})
         if remote:
             _on_pc(ch)
@@ -1043,7 +1143,7 @@ def measure(cfg: dict, raw: dict, net: dict | None, vul: dict | None, appsv: dic
     """Every check once, as Cyber Essentials words it; the frameworks judge copies of these."""
     wf = wifi_facts(raw)
     return (firewall_checks(net) + ([wifi_check(wf)] if wf else []) + configuration_checks(raw) + update_checks(raw, vul, appsv, today, cfg)
-            + access_checks(raw) + malware_checks(raw))
+            + access_checks(raw) + malware_checks(raw) + log_checks(log_facts(raw, today)))
 
 
 def assess(cfg: dict, raw: dict, net: dict | None, vul: dict | None, appsv: dict | None, today: date | None = None,
