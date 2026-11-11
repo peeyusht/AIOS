@@ -54,6 +54,26 @@ own `#/inbox`-style routing, so it runs unchanged as a static page.
    2026 the Compliance demo data in `mock.ts` followed Cyber Essentials v3.3 (Windows' monthly update within
    14 days, `unlock_tries` instead of `windows_update_days`).
 
+## Redesign of 11 Nov 2026 (local, not in Lovable)
+Designed with Claude Design (canvas "Shadow Filer console redesign": version 1 light, version 2 dark), then
+built here at the user's request; **send it to Lovable or it is lost on the next copy**. What changed:
+- `styles.css`: new tokens. Light is version 1 (cool grey ground, blue `#1D4ED8` for actions), dark is
+  version 2 (near-black, blue `#6EA8FF`); new `--rail*` tokens for the navigation rail, which stays dark in
+  both themes; `label-caps` utility. Inter and JetBrains Mono are bundled (`@fontsource-variable/*`), never
+  loaded from a CDN (the CSP).
+- `App.tsx`: an icon rail with groups (Today; Files; Protection; Agent) replaces the sidebar; a top bar with
+  where you are, a search box (Ctrl K or /, Enter opens Search with the words) and status labels.
+- `Dashboard.tsx` is now "Today": a strip of key numbers (it also reads `/api/compliance`), an action queue
+  from `attention`, recent changes from `apps.recent` and `remedy.recent`, then the panels.
+- `Inbox.tsx` Waiting: a list plus one decision panel for the selected file; suggestions for the same
+  folder are shown as one option with all their evidence (they had been two buttons with one React key);
+  auto-filing trust for the chosen folder and kind; keys J/K, 1-4, Enter (file it), S (skip).
+- `Security.tsx`: a Flaws tab (default) with every CVE in one table, filters, and a detail panel with
+  Update / Stop / Copy command / Hide; Programs and Services tabs are unchanged.
+- `Compliance.tsx`: area list, one table of every check and the declarations, an evidence panel; the
+  printed evidence still uses the full control cards (shown only in print).
+- `ui.tsx`: smaller page titles. The fleet console shares `styles.css` and `ui.tsx`, so it changed too.
+
 ## The fleet server's console
 `src/fleet/**`, `fleet.html` and `vite.fleet.config.ts` are a second application built from this tree: the
 console of the central server (`server/`, see `docs/architecture.md`). It was written locally on 12 Oct

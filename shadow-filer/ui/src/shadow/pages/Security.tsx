@@ -121,7 +121,7 @@ export function SecurityPage() {
       )}
       {d && d.enabled && d.scanned_at && s && (
         <div className="space-y-4">
-          <div className="grid grid-cols-4 gap-3 max-[1100px]:grid-cols-2">
+          <div className="grid grid-cols-4 gap-px overflow-hidden rounded-lg border bg-border max-[1100px]:grid-cols-2">
             <Tile label="Used in real attacks" n={s.kev} tone={s.kev > 0 ? "text-destructive" : "text-foreground"} sub="on CISA's known-exploited list" />
             <Tile label="Critical" n={s.critical} tone={s.critical > 0 ? "text-warning" : "text-foreground"} sub="severity 9.0 or higher" />
             <Tile label="Programs with known flaws" n={s.apps_affected} tone="text-foreground" sub={`of ${d.recognised ?? 0} that could be compared`} />
@@ -132,11 +132,13 @@ export function SecurityPage() {
             {notJudged > 0 && <> {notJudged} of your {d.installed} programs match no product in the list: they are not judged, which is not the same as safe.</>}
             {" "}Windows itself and Store apps are not judged. A match can still be wrong; Hide removes it.
           </Notice>
-          <Tabs defaultValue="programs">
-            <TabsList className="mb-6">
+          <Tabs defaultValue="flaws">
+            <TabsList className="mb-4">
+              <TabsTrigger value="flaws">Flaws<span className="ml-1.5 tabular text-muted-foreground">{s.cves}</span></TabsTrigger>
               <TabsTrigger value="programs">Programs{s.apps_affected > 0 && <span className={cn("ml-1.5 tabular", s.kev > 0 ? "text-destructive" : "text-warning")}>{s.apps_affected}</span>}</TabsTrigger>
               <TabsTrigger value="services">Services<span className="ml-1.5 tabular text-muted-foreground">{s.services}</span></TabsTrigger>
             </TabsList>
+            <TabsContent value="flaws"><Flaws apps={apps} services={services} remediate={!!d.settings.remediate} onHide={(a) => hide("app", a.key || a.id, a.name)} /></TabsContent>
             <TabsContent value="programs"><Programs apps={apps} remediate={!!d.settings.remediate} onHide={(a) => hide("app", a.key || a.id, a.name)} /></TabsContent>
             <TabsContent value="services">
               <Services services={services} read={d.services_read !== false} remediate={!!d.settings.remediate} onHide={(x) => hide("service", x.id, x.name)} />
@@ -159,9 +161,9 @@ export function SecurityPage() {
 
 function Tile({ label, n, tone, sub }: { label: string; n: number; tone: string; sub?: string }) {
   return (
-    <div className="rounded-xl border bg-card px-4 py-3">
-      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className={cn("mt-1 text-2xl font-semibold tabular", tone)}>{n}</div>
+    <div className="bg-card px-4 py-3.5">
+      <div className="label-caps text-muted-foreground">{label}</div>
+      <div className={cn("mt-1 font-mono text-[26px] font-semibold leading-tight tabular", tone)}>{n}</div>
       {sub && <div className="text-xs text-muted-foreground">{sub}</div>}
     </div>
   );
@@ -170,6 +172,118 @@ function Tile({ label, n, tone, sub }: { label: string; n: number; tone: string;
 const HideBtn = ({ onClick, tip }: { onClick: () => void; tip: string }) => (
   <Tip tip={tip}><Button variant="ghost" size="sm" onClick={onClick}><EyeOff /> Hide</Button></Tip>
 );
+
+type Row = { cve: SecCve; app: SecApp; exposed: SecService[] };
+type Filter = "all" | "kev" | "critical" | "network" | "update";
+
+/** Every known flaw across the compared programs in one table, worst first, with the selected one explained beside it. */
+function Flaws({ apps, services, remediate, onHide }: { apps: SecApp[]; services: SecService[]; remediate: boolean; onHide: (a: SecApp) => void }) {
+  const rows = useMemo<Row[]>(() => apps.flatMap((app) => {
+    const exposed = services.filter((s) => s.app_id === app.id && s.exposed);
+    return app.cves.map((cve) => ({ cve, app, exposed }));
+  }).sort((a, b) => Number(b.cve.kev) - Number(a.cve.kev) || (b.cve.score ?? 0) - (a.cve.score ?? 0) || a.cve.id.localeCompare(b.cve.id)), [apps, services]);
+  const [filter, setFilter] = useState<Filter>("all");
+  const test: Record<Filter, (r: Row) => boolean> = {
+    all: () => true, kev: (r) => r.cve.kev, critical: (r) => (r.cve.score ?? 0) >= 9,
+    network: (r) => r.exposed.length > 0, update: (r) => !!r.app.available,
+  };
+  const list = rows.filter(test[filter]);
+  const [sel, setSel] = useState<string | null>(null);
+  const cur = list.find((r) => r.cve.id + r.app.id === sel) ?? list[0] ?? null;
+  const chip = (f: Filter, label: string, danger?: boolean) => {
+    const n = rows.filter(test[f]).length;
+    return (
+      <button key={f} aria-pressed={filter === f} onClick={() => setFilter(f)} disabled={n === 0 && f !== "all"}
+        className={cn("h-8 rounded-md border px-2.5 text-xs transition-colors disabled:opacity-50",
+          filter === f ? "border-primary/40 bg-accent text-foreground" : "text-muted-foreground hover:bg-muted",
+          danger && n > 0 && filter !== f && "border-destructive/40 text-destructive")}>
+        {label} <span className="font-mono tabular">{n}</span>
+      </button>
+    );
+  };
+  if (rows.length === 0) {
+    return <EmptyState icon={<ShieldCheck />} title="No known flaws in the installed versions">The programs that could be compared have nothing known for their versions.</EmptyState>;
+  }
+  return (
+    <div className="space-y-3">
+      <div role="group" aria-label="Filter flaws" className="flex flex-wrap gap-1.5">
+        {chip("all", "All")}{chip("kev", "Used in real attacks", true)}{chip("critical", "Critical")}{chip("network", "Open to the network")}{chip("update", "Has an update")}
+      </div>
+      <div className="grid items-start gap-4 min-[1150px]:grid-cols-[minmax(0,1fr)_380px]">
+        <Card className="overflow-hidden rounded-lg">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[680px] text-sm">
+              <thead><tr className="label-caps border-b text-left text-muted-foreground">
+                <th className="px-4 py-2 font-medium">Score</th><th className="px-2 py-2 font-medium">CVE</th><th className="px-2 py-2 font-medium">Program</th>
+                <th className="px-2 py-2 font-medium">Signals</th><th className="px-2 py-2 font-medium">Published</th><th className="px-4 py-2 font-medium">Fixed in</th>
+              </tr></thead>
+              <tbody>
+                {list.map((r) => {
+                  const on = cur === r;
+                  return (
+                    <tr key={r.cve.id + r.app.id} onClick={() => setSel(r.cve.id + r.app.id)}
+                      className={cn("cursor-pointer border-b last:border-b-0", on ? "bg-accent shadow-[inset_2px_0_0_var(--color-primary)]" : "hover:bg-muted/40")}>
+                      <td className="px-4 py-2"><ScoreBox n={r.cve.score} /></td>
+                      <td className="whitespace-nowrap px-2 py-2">
+                        <button className="font-mono text-xs underline-offset-2 hover:underline" aria-pressed={on} onClick={(e) => { e.stopPropagation(); setSel(r.cve.id + r.app.id); }}>{r.cve.id}</button>
+                      </td>
+                      <td className="px-2 py-2"><span className="font-medium">{r.app.name}</span> <span className="font-mono text-[11px] text-muted-foreground">{r.app.judged_version}</span></td>
+                      <td className="whitespace-nowrap px-2 py-2 font-mono text-[11px]">
+                        {r.cve.kev && <span className="mr-1.5 text-destructive">KEV</span>}
+                        {r.cve.ransomware && <span className="mr-1.5 text-destructive">RANSOM</span>}
+                        {r.exposed.length > 0 && <span className="text-warning">NET</span>}
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-2 font-mono text-xs text-muted-foreground">{r.cve.published ? r.cve.published.slice(0, 10) : "—"}</td>
+                      <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">{r.cve.fixed_in ?? <span className="text-muted-foreground">—</span>}{r.app.available && <span className="ml-1.5 text-success" title={`Version ${r.app.available} is available`}>↑ {r.app.available}</span>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+        {cur && <FlawDetail r={cur} remediate={remediate} onHide={() => onHide(cur.app)} />}
+      </div>
+    </div>
+  );
+}
+
+function ScoreBox({ n }: { n: number | null }) {
+  const tone = n == null ? "bg-muted text-muted-foreground" : n >= 9 ? "bg-danger-soft text-destructive" : n >= 7 ? "bg-warning-soft text-warning" : "bg-muted text-muted-foreground";
+  return <span className={cn("inline-block min-w-10 rounded px-1.5 text-center font-mono text-xs font-semibold leading-5 tabular", tone)}>{n != null ? n.toFixed(1) : "—"}</span>;
+}
+
+function FlawDetail({ r, remediate, onHide }: { r: Row; remediate: boolean; onHide: () => void }) {
+  const { cve, app, exposed } = r;
+  return (
+    <Card className="space-y-4 rounded-lg p-5 min-[1150px]:sticky min-[1150px]:top-16">
+      <div className="flex flex-wrap gap-1.5">
+        {cve.kev && <Badge variant="danger">Used in real attacks{cve.kev_added ? ` · listed ${day(cve.kev_added)}` : ""}</Badge>}
+        {cve.ransomware && <Badge variant="danger">Used by ransomware</Badge>}
+        <Badge variant={scoreTone(cve.score)}>{cve.severity ? cve.severity.toLowerCase() : "no score"}{cve.score != null && ` ${cve.score.toFixed(1)}`}</Badge>
+      </div>
+      <h3 className="select-all font-mono text-base font-semibold">{cve.id}</h3>
+      <p className="text-sm leading-relaxed">{cve.summary || "No description."}</p>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+        <dt className="text-muted-foreground">Program</dt><dd>{app.name} <span className="font-mono text-xs text-muted-foreground">{app.judged_version}</span></dd>
+        {app.publisher && <><dt className="text-muted-foreground">Publisher</dt><dd>{app.publisher}</dd></>}
+        <dt className="text-muted-foreground">Published</dt><dd className="font-mono text-xs leading-5">{cve.published ? cve.published.slice(0, 10) : "—"}</dd>
+        <dt className="text-muted-foreground">Fixed in</dt><dd className="font-mono text-xs leading-5">{cve.fixed_in ?? "not stated"}</dd>
+        <dt className="text-muted-foreground">Update</dt><dd>{app.available ? <>Version <span className="font-mono text-xs">{app.available}</span> is available{app.update_id ? " (winget)" : ""}</> : "No newer version listed"}</dd>
+        {exposed.length > 0 && <><dt className="text-muted-foreground">Exposure</dt><dd>{exposed.map((s) => <span key={s.id} className="block">Service <b className="font-medium">{s.name}</b>{s.running ? ", running," : ""} open to the network on <span className="font-mono text-xs">{s.ports.filter((p) => p.network).map((p) => p.port).join(", ")}</span></span>)}</dd></>}
+        <dt className="text-muted-foreground">Matched as</dt><dd className="font-mono text-xs leading-5">{app.products.join(", ")}</dd>
+      </dl>
+      <div className="flex flex-wrap items-center gap-2 border-t pt-4">
+        {remediate && app.available && <UpdateButton app={app} />}
+        {remediate && exposed.filter((s) => s.running).map((s) => <StopButton key={s.id} svc={s} />)}
+        {app.update_id && <Button variant="outline" size="sm" onClick={() => copyUpgrade(app.update_id!)}><Copy /> Copy update command</Button>}
+        <Tip tip="Not this product, or already dealt with"><Button variant="ghost" size="sm" onClick={onHide}><EyeOff /> Hide program</Button></Tip>
+      </div>
+      {!remediate && (app.available || exposed.length > 0) && <p className="text-xs text-muted-foreground">Update and Stop buttons appear when changes from the console are switched on in Settings.</p>}
+      <p className="font-mono text-[11px] text-muted-foreground">Matched by product, maker and version range against the local copy of NVD and CISA's list.</p>
+    </Card>
+  );
+}
 
 function Programs({ apps, onHide, remediate }: { apps: SecApp[]; onHide: (a: SecApp) => void; remediate: boolean }) {
   const [show, setShow] = useState<"flaws" | "all">("flaws");

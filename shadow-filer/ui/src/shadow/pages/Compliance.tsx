@@ -10,7 +10,7 @@ import { usePoll } from "@/lib/hooks";
 import { when } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { CheckStatus, ComplianceCheck, ComplianceControl, ComplianceResponse, DeclaredAnswer } from "@/lib/types";
-import { act, Card, Confirm, ListSkeleton, LoadError, Notice, PageHeader, Segmented, Spin, Stat, Tip, useBusy } from "../ui";
+import { act, Card, Confirm, ListSkeleton, LoadError, PageHeader, Segmented, Spin, Tip, useBusy } from "../ui";
 
 const ORDER: Record<CheckStatus, number> = { fail: 0, warn: 1, unknown: 2, info: 3, pass: 4 };
 const LABEL: Record<CheckStatus, string> = { pass: "Passed", fail: "Failing", warn: "Worth a look", unknown: "Could not be checked", info: "Note" };
@@ -164,12 +164,29 @@ function Section({ title, sub, children }: { title: string; sub?: ReactNode; chi
   return <section className="space-y-3"><div><h2 className="text-sm font-semibold">{title}</h2>{sub && <p className="text-sm text-muted-foreground">{sub}</p>}</div>{children}</section>;
 }
 
+const CODE: Record<CheckStatus, { glyph: string; label: string; cls: string }> = {
+  fail: { glyph: "✕", label: "FAIL", cls: "bg-danger-soft text-destructive" },
+  warn: { glyph: "▲", label: "LOOK", cls: "bg-warning-soft text-warning" },
+  unknown: { glyph: "?", label: "UNKNOWN", cls: "bg-muted text-muted-foreground" },
+  info: { glyph: "○", label: "NOTE", cls: "bg-muted text-muted-foreground" },
+  pass: { glyph: "✓", label: "PASS", cls: "bg-success-soft text-success" },
+};
+function Code({ status, accepted }: { status: CheckStatus; accepted?: boolean }) {
+  const c = CODE[status];
+  return <span className={cn("inline-flex min-w-[76px] items-center gap-1.5 rounded px-1.5 font-mono text-[11px] font-semibold leading-5", c.cls, accepted && "opacity-60")} title={LABEL[status]}><span aria-hidden>{c.glyph}</span>{c.label}{accepted && <span className="font-normal"> · acc.</span>}</span>;
+}
+const AREA_STATE: Record<string, string> = { pass: "Met", fail: "Not met", warn: "Look at", unknown: "Not judged" };
+
+type Pick = { kind: "check"; id: string } | { kind: "declared"; key: string };
+
 export function CompliancePage() {
   const q = usePoll<ComplianceResponse>(() => api.compliance(), 300_000);
   const { busy, run } = useBusy();
   const [accepting, setAccepting] = useState<ComplianceCheck | null>(null);
   const [reason, setReason] = useState("");
   const keep = useRef(false);
+  const [area, setArea] = useState<string | "all" | "declared">("all");
+  const [pick, setPick] = useState<Pick | null>(null);
   const d = q.data;
 
   const refresh = () => run("refresh", async () => { try { q.setData(await api.compliance(true)); } catch (e) { toast.error((e as Error).message); } });
@@ -181,58 +198,186 @@ export function CompliancePage() {
   };
   const withdraw = async (c: ComplianceCheck) => { if (await act(() => api.complianceAccept(c.id, ""))) q.reload(); };
   const declare = async (key: string, a: DeclaredAnswer, note: string) => { if (await act(() => api.complianceDeclare(key, a, note))) q.reload(); };
+  const startAccept = (c: ComplianceCheck) => { setReason(""); setAccepting(c); };
 
   const dev = d?.device ?? {};
   const deviceLine = [dev.name, [dev.manufacturer, dev.model].filter(Boolean).join(" "), dev.serial && `serial ${dev.serial}`, dev.windows && `${dev.windows}${dev.build ? `, build ${dev.build}` : ""}`].filter(Boolean).join(" · ");
   const s = d?.summary ?? {};
   const assessedDate = d?.assessed_at ? new Date(d.assessed_at).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) : "";
 
+  const controls = d?.controls ?? [];
+  const all = controls.flatMap((ctl) => ctl.checks.map((c) => ({ c, ctl })));
+  const firstBad = all.find((x) => x.c.status === "fail" && !x.c.accepted) ?? all.find((x) => x.c.status === "warn" && !x.c.accepted) ?? all[0];
+  const chosen: Pick | null = pick ?? (firstBad ? { kind: "check", id: firstBad.c.id } : null);
+  const shownControls = area === "all" ? controls : controls.filter((c) => c.key === area);
+  const showDeclared = area === "all" || area === "declared";
+  const answered = d?.declared.filter((x) => x.answer).length ?? 0;
+  const hist = (d?.history ?? []).slice(-30);
+
   return <>
     {d?.assessed_at && <p data-print="only" className="mb-4 hidden text-lg font-semibold">Security posture of {dev.name ?? "this PC"}, assessed {assessedDate}</p>}
     <PageHeader
-      title="Compliance"
-      sub={<><div>Whether this PC meets what insurers and Cyber Essentials ask for. Measured on this PC; nothing is sent anywhere.</div>{deviceLine && <div className="mt-1 text-xs">{deviceLine}</div>}</>}
+      title="Compliance evidence"
+      sub={<><div>Cyber Essentials, measured on this PC and declared by you. Evidence, not a certificate; nothing is sent anywhere.</div>{deviceLine && <div className="mt-1 font-mono text-xs">{deviceLine}</div>}</>}
       actions={<>
         {d?.assessed_at && <span className="text-xs text-muted-foreground">Assessed {when(d.assessed_at)}</span>}
-        <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={busy === "refresh"}>{busy === "refresh" ? <Spin /> : <RefreshCw />}Refresh</Button>
+        <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={busy === "refresh"}>{busy === "refresh" ? <Spin /> : <RefreshCw />}Check again</Button>
         <Button variant="outline" size="sm" onClick={() => void copy()} disabled={!d?.text}><Copy />Copy as text</Button>
-        <Button variant="outline" size="sm" onClick={() => window.print()} disabled={!d}><Printer />Print</Button>
+        <Button size="sm" onClick={() => window.print()} disabled={!d}><Printer />Print evidence</Button>
       </>}
     />
     {q.error && <div className="mb-4"><LoadError error={q.error} onRetry={q.reload} /></div>}
     {d && !d.assessed_at && <div className="mb-4"><LoadError error={new Error(d.error ?? "The assessment has not run yet.")} onRetry={() => void refresh()} /></div>}
-    {!d ? (!q.error && <ListSkeleton rows={5} />) : d.assessed_at && <div className="space-y-8">
-      <Card data-print-card className="rounded-lg p-5">
-        <div className="flex flex-wrap items-center justify-between gap-6">
-          <div className="text-xl font-semibold tabular">{s.controls_passing ?? "—"} of {s.controls ?? d.controls.length} control areas pass</div>
-          <div className="grid grid-cols-4 gap-8">
-            <Stat label="Failing checks" value={<span className={s.fail ? "text-destructive" : undefined}>{s.fail ?? "—"}</span>} />
-            <Stat label="Worth a look" value={<span className={s.warn ? "text-warning" : undefined}>{s.warn ?? "—"}</span>} />
-            <Stat label="Could not be checked" value={s.unknown ?? "—"} />
-            <Stat label="Accepted with a reason" value={s.accepted ?? "—"} />
+    {!d ? (!q.error && <ListSkeleton rows={5} />) : d.assessed_at && <div className="space-y-6">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-px overflow-hidden rounded-lg border bg-border" data-print-card>
+        {[
+          ["Control areas met", `${s.controls_passing ?? "—"}/${s.controls ?? controls.length}`, s.controls_passing != null && s.controls_passing < (s.controls ?? controls.length) ? "text-warning" : ""],
+          ["Failing checks", s.fail ?? "—", s.fail ? "text-destructive" : ""],
+          ["To look at", s.warn ?? "—", s.warn ? "text-warning" : ""],
+          ["Not judged", s.unknown ?? "—", ""],
+          ["Accepted", s.accepted ?? "—", ""],
+          ["Declared", `${answered}/${d.declared.length}`, ""],
+        ].map(([label, value, tone]) => (
+          <div key={label as string} className="bg-card px-4 py-3"><div className="label-caps text-muted-foreground">{label}</div><div className={cn("mt-1 font-mono text-2xl font-semibold tabular", tone as string)}>{value}</div></div>
+        ))}
+      </div>
+
+      <div data-print-hide className="grid items-start gap-4 min-[1300px]:grid-cols-[230px_minmax(0,1fr)_380px] min-[900px]:grid-cols-[230px_minmax(0,1fr)]">
+        <Card className="space-y-1 rounded-lg p-2 min-[900px]:sticky min-[900px]:top-16">
+          <nav aria-label="Control areas" className="space-y-1">
+            {[{ key: "all", title: "All areas", status: null as null | CheckStatus, sub: `${all.length} checks` },
+              ...controls.map((c) => ({ key: c.key as string, title: c.title, status: c.status as CheckStatus, sub: [AREA_STATE[c.status], c.counts.fail && `${c.counts.fail} fail`, c.counts.warn && `${c.counts.warn} look`].filter(Boolean).join(" · ") })),
+            ].map((x) => (
+              <button key={x.key} aria-pressed={area === x.key} onClick={() => setArea(x.key)}
+                className={cn("flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors", area === x.key ? "bg-accent" : "hover:bg-muted/60")}>
+                <span aria-hidden className={cn("w-4 shrink-0 text-center font-mono text-sm font-bold", x.status ? CODE[x.status].cls.split(" ").find((k) => k.startsWith("text-")) : "text-muted-foreground")}>{x.status ? CODE[x.status].glyph : "≡"}</span>
+                <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{x.title}</span><span className="block truncate text-[11px] text-muted-foreground">{x.sub}</span></span>
+              </button>
+            ))}
+            <div aria-hidden className="mx-2 my-1 h-px bg-border" />
+            <button aria-pressed={area === "declared"} onClick={() => setArea("declared")}
+              className={cn("flex w-full items-center gap-2.5 rounded-md border border-dashed px-2.5 py-2 text-left", area === "declared" ? "bg-accent" : "hover:bg-muted/60")}>
+              <span aria-hidden className="w-4 shrink-0 text-center font-mono text-sm text-muted-foreground">✎</span>
+              <span className="min-w-0 flex-1"><span className="block text-sm font-medium">Declared by you</span><span className="block text-[11px] text-muted-foreground">{answered} of {d.declared.length} answered</span></span>
+            </button>
+          </nav>
+          {hist.length > 1 && (
+            <div className="space-y-1.5 px-2.5 pb-1 pt-3">
+              <div className="label-caps text-muted-foreground">Areas met, last {hist.length} days</div>
+              <div role="img" aria-label={`Control areas met per day: ${hist.map((h) => h.summary.controls_passing).join(", ")}`} className="flex h-9 items-end gap-0.5">
+                {hist.map((h, i) => <span key={h.day} className={cn("flex-1", i === hist.length - 1 ? "bg-primary" : "bg-primary/40")} style={{ height: `${Math.max(1, h.summary.controls_passing) / Math.max(1, controls.length) * 100}%` }} title={`${h.day}: ${h.summary.controls_passing}`} />)}
+              </div>
+              <div className="flex justify-between font-mono text-[10px] text-muted-foreground"><span>{hist[0]!.day.slice(5)}</span><span>today</span></div>
+            </div>
+          )}
+        </Card>
+
+        <Card className="min-w-0 overflow-hidden rounded-lg">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-sm">
+              <thead><tr className="label-caps border-b text-left text-muted-foreground"><th className="px-4 py-2 font-medium">Status</th><th className="px-2 py-2 font-medium">Check</th><th className="px-4 py-2 font-medium">Found</th></tr></thead>
+              {shownControls.map((ctl) => (
+                <tbody key={ctl.key}>
+                  <tr><th scope="rowgroup" colSpan={3} className="label-caps border-b bg-muted/40 px-4 py-1.5 text-left font-medium text-muted-foreground">{ctl.title}</th></tr>
+                  {[...ctl.checks].sort((a, b) => ORDER[a.status] - ORDER[b.status]).map((c) => {
+                    const on = chosen?.kind === "check" && chosen.id === c.id;
+                    return (
+                      <tr key={c.id} onClick={() => setPick({ kind: "check", id: c.id })} className={cn("cursor-pointer border-b align-top last:border-b-0", on ? "bg-accent shadow-[inset_2px_0_0_var(--color-primary)]" : "hover:bg-muted/40")}>
+                        <td className="whitespace-nowrap px-4 py-2"><Code status={c.status} accepted={!!c.accepted} /></td>
+                        <td className="px-2 py-2"><button className="text-left font-medium hover:underline" aria-pressed={on} onClick={(e) => { e.stopPropagation(); setPick({ kind: "check", id: c.id }); }}>{c.title}</button></td>
+                        <td className="px-4 py-2 text-muted-foreground"><span className="line-clamp-2">{c.detail}</span></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              ))}
+              {showDeclared && (
+                <tbody>
+                  <tr><th scope="rowgroup" colSpan={3} className="label-caps border-b bg-muted/40 px-4 py-1.5 text-left font-medium text-muted-foreground">Declared by you · never measured</th></tr>
+                  {d.declared.map((x) => {
+                    const on = chosen?.kind === "declared" && chosen.key === x.key;
+                    return (
+                      <tr key={x.key} onClick={() => setPick({ kind: "declared", key: x.key })} className={cn("cursor-pointer border-b align-top last:border-b-0", on ? "bg-accent shadow-[inset_2px_0_0_var(--color-primary)]" : "hover:bg-muted/40")}>
+                        <td className="whitespace-nowrap px-4 py-2"><span className="inline-flex min-w-[76px] items-center gap-1.5 rounded border border-dashed px-1.5 font-mono text-[11px] font-semibold leading-5 text-muted-foreground"><span aria-hidden>✎</span>{x.answer === "yes" ? "YES" : x.answer === "no" ? "NO" : x.answer === "na" ? "N/A" : "—"}</span></td>
+                        <td className="px-2 py-2"><button className="text-left font-medium hover:underline" aria-pressed={on} onClick={(e) => { e.stopPropagation(); setPick({ kind: "declared", key: x.key }); }}>{x.title}</button></td>
+                        <td className="px-4 py-2 text-muted-foreground">{x.answer ? (x.note || `declared ${when(x.ts)}`) : "not answered"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              )}
+            </table>
           </div>
+        </Card>
+
+        <div className="min-w-0 min-[900px]:max-[1299px]:col-span-2 min-[1300px]:sticky min-[1300px]:top-16">
+          {chosen?.kind === "check" && (() => {
+            const hit = all.find((x) => x.c.id === chosen.id);
+            if (!hit) return null;
+            const { c, ctl } = hit;
+            return (
+              <Card className="space-y-3 rounded-lg p-5">
+                <div className="flex flex-wrap items-center gap-2"><Code status={c.status} accepted={!!c.accepted} /><span className="text-xs text-muted-foreground">{ctl.title}</span></div>
+                <h2 className="font-semibold leading-snug">{c.title}</h2>
+                <p className="text-sm leading-relaxed">{c.detail}</p>
+                {c.evidence.length > 0 && (
+                  <div className="rounded-md border bg-background p-3 font-mono text-xs leading-6">
+                    <div className="text-muted-foreground">$ evidence {c.id}{d.assessed_at && ` · ${d.assessed_at.slice(0, 16).replace("T", " ")}`}</div>
+                    {c.evidence.map((e, i) => <div key={i} className="break-all">{e}</div>)}
+                  </div>
+                )}
+                {c.fix && c.status !== "pass" && <p className="text-sm"><span className="text-muted-foreground">What to do: </span>{c.fix}</p>}
+                {c.accepted && (
+                  <div className="rounded-md border border-dashed px-3 py-2 text-sm">
+                    Accepted {when(c.accepted.ts)}: {c.accepted.reason}
+                    <button className="ml-2 text-xs text-primary hover:underline" onClick={() => void withdraw(c)}>Withdraw</button>
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2 border-t pt-3">
+                  {c.to && <Button asChild size="sm" variant={c.status === "fail" ? "default" : "outline"}><a href={"#" + c.to}>Open {PAGE[c.to] ?? c.to.slice(1)}</a></Button>}
+                  {(c.status === "fail" || c.status === "warn") && !c.accepted && <Button variant="outline" size="sm" onClick={() => startAccept(c)}>Accept with a reason…</Button>}
+                </div>
+                {(c.status === "fail" || c.status === "warn") && <p className="text-xs text-muted-foreground">An accepted exception keeps its failing mark in the evidence; it only stops counting against its area.</p>}
+              </Card>
+            );
+          })()}
+          {chosen?.kind === "declared" && (() => {
+            const x = d.declared.find((y) => y.key === chosen.key);
+            if (!x) return null;
+            return (
+              <Card className="rounded-lg">
+                <div className="px-5 pt-4"><span className="inline-flex items-center gap-1.5 rounded border border-dashed px-1.5 font-mono text-[11px] font-semibold leading-5 text-muted-foreground">✎ DECLARED</span></div>
+                <Declared key={x.key + (x.ts ?? "")} d={x} onSave={(a, n) => void declare(x.key, a, n)} />
+                <p className="px-5 pb-4 text-xs text-muted-foreground">Your own statement. It is shown as declared in the evidence, never as measured.</p>
+              </Card>
+            );
+          })()}
         </div>
-        <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">This follows the Cyber Essentials control areas. It is not the scheme's own tool and passing here is not a certificate.</p>
-      </Card>
+      </div>
 
-      <Section title="Control areas">
-        <div className="space-y-4">{d.controls.map((ctl) => <ControlCard key={ctl.key} ctl={ctl} onAccept={(c) => { setReason(""); setAccepting(c); }} onWithdraw={(c) => void withdraw(c)} />)}</div>
-      </Section>
+      <div data-print-hide>
+        <Section title="History" sub="One line per control area, one square per day.">
+          <Card className="rounded-lg"><History data={d} /></Card>
+        </Section>
+      </div>
 
-      <Section title="Declared by you" sub="Things a program on the PC cannot measure.">
-        <Notice>These are your own statements. They are always shown as declared, never as measured.</Notice>
-        <Card data-print-card className="divide-y rounded-lg">{d.declared.map((x) => <Declared key={x.key + (x.ts ?? "")} d={x} onSave={(a, n) => void declare(x.key, a, n)} />)}</Card>
-      </Section>
-
-      <Section title="History" sub="One line per control area, one square per day.">
-        <Card data-print-card className="rounded-lg"><History data={d} /></Card>
-      </Section>
+      <div className="hidden space-y-8 print:block">
+        <Section title="Control areas">
+          <div className="space-y-4">{controls.map((ctl) => <ControlCard key={ctl.key} ctl={ctl} onAccept={startAccept} onWithdraw={(c) => void withdraw(c)} />)}</div>
+        </Section>
+        <Section title="Declared by you" sub="Things a program on the PC cannot measure.">
+          <Card data-print-card className="divide-y rounded-lg">{d.declared.map((x) => <Declared key={x.key + (x.ts ?? "")} d={x} onSave={(a, n) => void declare(x.key, a, n)} />)}</Card>
+        </Section>
+        <Section title="History" sub="One line per control area, one square per day.">
+          <Card data-print-card className="rounded-lg"><History data={d} /></Card>
+        </Section>
+      </div>
 
       <Section title="Updates and changes made from the console" sub="The record of patches and changes an insurer asks for.">
         <Card data-print-card className="overflow-hidden rounded-lg">
           {d.patch_log.length ? (
             <table className="w-full text-sm">
-              <thead className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
+              <thead className="label-caps border-b bg-muted/40 text-left text-muted-foreground">
                 <tr><th className="px-4 py-2 font-medium">When</th><th className="px-4 py-2 font-medium">What</th><th className="px-4 py-2 font-medium">Result</th></tr>
               </thead>
               <tbody className="divide-y">
@@ -248,6 +393,7 @@ export function CompliancePage() {
           ) : <p className="px-5 py-4 text-sm text-muted-foreground">Nothing has been changed from the console yet.</p>}
         </Card>
       </Section>
+      <p className="text-xs text-muted-foreground">Follows the Cyber Essentials control areas. It is not the scheme's own tool and passing here is not a certificate.</p>
       <p data-print="only" className="hidden text-sm">Measured on the PC by Shadow Filer. Follows the Cyber Essentials control areas; not a certificate.</p>
     </div>}
 

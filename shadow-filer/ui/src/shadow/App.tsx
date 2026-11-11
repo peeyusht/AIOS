@@ -1,7 +1,7 @@
-import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
   Activity as ActivityIcon, ClipboardCheck, LayoutDashboard, LibraryBig, BellRing, Eye, EyeOff, FlaskConical, Inbox as InboxIcon, Moon, Network as NetworkIcon, RefreshCw, Search as SearchIcon,
-  Settings as SettingsIcon, ShieldAlert, Sparkles, Sun, Trash2, WifiOff,
+  Lock, Settings as SettingsIcon, ShieldAlert, Sparkles, Sun, Trash2, WifiOff,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { api, isMock, onConnection } from "@/lib/api";
 import { usePoll, navigationGuard } from "@/lib/hooks";
 import type { Status } from "@/lib/types";
+import { Tip } from "./ui";
 import { InboxPage } from "./pages/Inbox";
 import { DashboardPage } from "./pages/Dashboard";
 import { SearchPage } from "./pages/Search";
@@ -49,26 +50,33 @@ function useTheme() {
   return { dark, toggle };
 }
 
-const NAV = [
-  { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { path: "/inbox", label: "Inbox", icon: InboxIcon },
-  { path: "/search", label: "Search", icon: SearchIcon },
-  { path: "/cleanup", label: "Cleanup", icon: Trash2 },
-  { path: "/watch", label: "Watch", icon: BellRing },
-  { path: "/security", label: "Security", icon: ShieldAlert },
-  { path: "/network", label: "Network", icon: NetworkIcon },
-  { path: "/compliance", label: "Compliance", icon: ClipboardCheck },
-  { path: "/library", label: "Library", icon: LibraryBig },
-  { path: "/activity", label: "Activity", icon: ActivityIcon },
-  { path: "/settings", label: "Settings", icon: SettingsIcon },
-] as const;
+type NavItem = { path: string; label: string; icon: typeof InboxIcon };
+const GROUPS: { name: string | null; items: NavItem[] }[] = [
+  { name: null, items: [{ path: "/dashboard", label: "Today", icon: LayoutDashboard }] },
+  { name: "Files", items: [
+    { path: "/inbox", label: "Inbox", icon: InboxIcon },
+    { path: "/search", label: "Search", icon: SearchIcon },
+    { path: "/cleanup", label: "Cleanup", icon: Trash2 },
+    { path: "/watch", label: "Watch", icon: BellRing },
+    { path: "/library", label: "Library", icon: LibraryBig },
+  ] },
+  { name: "Protection", items: [
+    { path: "/security", label: "Security", icon: ShieldAlert },
+    { path: "/network", label: "Network", icon: NetworkIcon },
+    { path: "/compliance", label: "Compliance", icon: ClipboardCheck },
+  ] },
+  { name: "Agent", items: [
+    { path: "/activity", label: "Activity", icon: ActivityIcon },
+    { path: "/settings", label: "Settings", icon: SettingsIcon },
+  ] },
+];
+const NAV = GROUPS.flatMap((g) => g.items);
 
 function Logo() {
   return (
-    <svg viewBox="0 0 24 24" className="size-7" aria-hidden>
-      <rect x="2" y="2" width="20" height="20" rx="6" className="fill-primary" />
-      <path d="M7 9.5h4l1.2 1.5H17v6H7z" className="fill-primary-foreground" opacity=".95" />
-      <path d="M8.5 13.5h7" className="stroke-primary" strokeWidth="1.3" strokeLinecap="round" />
+    <svg viewBox="0 0 32 32" className="size-8" aria-hidden>
+      <rect x="1" y="1" width="30" height="30" rx="8" className="fill-primary" />
+      <path d="M9 12h6l1.6 2H23v8H9z" className="fill-primary-foreground" />
     </svg>
   );
 }
@@ -129,75 +137,71 @@ export default function ShadowApp() {
     default: page = <DashboardPage />;
   }
 
+  const counts: Record<string, { n: number; tone: string; label: string } | null> = {
+    "/inbox": count.data && count.data.total > 0 ? { n: count.data.total, tone: "bg-primary text-primary-foreground", label: `${count.data.total} files waiting` } : null,
+    "/watch": watch.data && watch.data.counts.soon > 0 ? { n: watch.data.counts.soon, tone: "bg-warning text-background", label: `${watch.data.counts.soon} dates coming up` } : null,
+    "/security": security.data?.summary
+      ? security.data.summary.kev > 0 ? { n: security.data.summary.kev, tone: "bg-destructive text-destructive-foreground", label: `${security.data.summary.kev} flaws used in real attacks` }
+        : security.data.summary.apps_affected > 0 ? { n: security.data.summary.apps_affected, tone: "bg-warning text-background", label: `${security.data.summary.apps_affected} programs with known flaws` } : null
+      : null,
+  };
+  const here = NAV.find((n) => n.path === section) ?? NAV[0]!;
+  const group = GROUPS.find((g) => g.items.includes(here))?.name;
+
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="flex min-h-screen bg-background text-foreground">
-        <aside className="sticky top-0 flex h-screen w-56 shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-3 py-4 text-sidebar-foreground max-[1000px]:w-48">
-          <div className="mb-6 flex items-center gap-2.5 px-2">
-            <Logo />
-            <div className="leading-tight">
-              <div className="text-sm font-semibold text-foreground">Shadow Filer</div>
-              <div className="text-xs text-muted-foreground">on this PC</div>
-            </div>
-          </div>
-          <nav aria-label="Main" className="space-y-0.5">
-            {NAV.map(({ path: p, label, icon: Icon }) => {
-              const active = section === p;
-              return (
-                <a
-                  key={p}
-                  href={`#${p}`}
-                  onClick={(e) => go(e, p)}
-                  aria-current={active ? "page" : undefined}
-                  className={cn(
-                    "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm transition-colors",
-                    active ? "bg-sidebar-accent font-medium text-foreground" : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground",
-                  )}
-                >
-                  <Icon className="size-4" aria-hidden />
-                  <span className="flex-1">{label}</span>
-                  {p === "/inbox" && count.data && count.data.total > 0 && (
-                    <span className="rounded-full bg-primary px-1.5 text-[11px] font-semibold leading-5 text-primary-foreground tabular" aria-label={`${count.data.total} files waiting`}>
-                      {count.data.total}
-                    </span>
-                  )}
-                  {p === "/watch" && watch.data && watch.data.counts.soon > 0 && (
-                    <span className="rounded-full bg-warning-soft px-1.5 text-[11px] font-semibold leading-5 text-warning ring-1 ring-warning/30 tabular" aria-label={`${watch.data.counts.soon} dates coming up`}>
-                      {watch.data.counts.soon}
-                    </span>
-                  )}
-                  {p === "/security" && security.data?.summary && security.data.summary.kev > 0 && (
-                    <span className="rounded-full bg-danger-soft px-1.5 text-[11px] font-semibold leading-5 text-destructive ring-1 ring-destructive/30 tabular" aria-label={`${security.data.summary.kev} flaws used in real attacks`}>
-                      {security.data.summary.kev}
-                    </span>
-                  )}
-                  {p === "/security" && security.data?.summary && security.data.summary.kev === 0 && security.data.summary.apps_affected > 0 && (
-                    <span className="rounded-full bg-warning-soft px-1.5 text-[11px] font-semibold leading-5 text-warning ring-1 ring-warning/30 tabular" aria-label={`${security.data.summary.apps_affected} programs with known flaws`}>
-                      {security.data.summary.apps_affected}
-                    </span>
-                  )}
-                </a>
-              );
-            })}
+      <div className="flex min-h-screen bg-background text-foreground max-[700px]:flex-col">
+        <aside className="sticky top-0 z-30 flex h-screen w-[84px] shrink-0 flex-col items-center gap-3 overflow-y-auto border-r border-rail-border bg-rail py-3 text-rail-foreground max-[700px]:h-auto max-[700px]:w-full max-[700px]:flex-row max-[700px]:overflow-x-auto max-[700px]:border-b max-[700px]:border-r-0 max-[700px]:px-2 max-[700px]:py-1.5">
+          <a href="#/dashboard" onClick={(e) => go(e, "/dashboard")} className="shrink-0 rounded-lg" aria-label="Shadow Filer: Today"><Logo /></a>
+          <nav aria-label="Main" className="flex flex-col items-center gap-1 max-[700px]:flex-row">
+            {GROUPS.map((g, gi) => (
+              <div key={gi} className="contents">
+                {gi > 0 && <span aria-hidden className="my-1.5 h-px w-9 shrink-0 bg-rail-border max-[700px]:mx-1 max-[700px]:h-8 max-[700px]:w-px" />}
+                {g.items.map(({ path: p, label, icon: Icon }) => {
+                  const active = section === p;
+                  const badge = counts[p];
+                  return (
+                    <a
+                      key={p}
+                      href={`#${p}`}
+                      onClick={(e) => go(e, p)}
+                      aria-current={active ? "page" : undefined}
+                      aria-label={badge ? `${label}, ${badge.label}` : undefined}
+                      className={cn(
+                        "relative flex min-h-[52px] w-[68px] shrink-0 flex-col items-center justify-center gap-1 rounded-lg text-[10.5px] font-medium leading-none transition-colors",
+                        active ? "bg-rail-active text-rail-active-foreground ring-1 ring-inset ring-white/10" : "text-rail-foreground hover:bg-rail-active/60 hover:text-rail-active-foreground",
+                      )}
+                    >
+                      <Icon className="size-[18px]" aria-hidden />
+                      <span>{label}</span>
+                      {badge && <span aria-hidden className={cn("absolute right-1.5 top-1 min-w-4 rounded-full px-1 text-center font-mono text-[10px] font-bold leading-4 tabular", badge.tone)}>{badge.n}</span>}
+                    </a>
+                  );
+                })}
+              </div>
+            ))}
           </nav>
-          <div className="mt-auto px-2 text-xs leading-relaxed text-muted-foreground">
-            Runs only on this computer. Nothing leaves it.
+          <div className="mt-auto flex flex-col items-center gap-1 pb-1 max-[700px]:ml-auto max-[700px]:mt-0 max-[700px]:flex-row max-[700px]:pb-0">
+            <Button variant="ghost" size="icon" onClick={toggle} className="text-rail-foreground hover:bg-rail-active hover:text-rail-active-foreground" aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}>
+              {dark ? <Sun /> : <Moon />}
+            </Button>
           </div>
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-20 flex h-12 items-center gap-3 border-b bg-background/85 px-6 backdrop-blur">
-            <StatusLine s={s} reachable={conn.reachable} />
-            <div className="ml-auto flex items-center gap-2">
+          <header className="sticky top-0 z-20 flex flex-wrap items-center gap-x-4 gap-y-2 border-b bg-card/90 px-6 py-2.5 backdrop-blur">
+            <span className="font-mono text-xs text-muted-foreground">
+              this PC{group && <><span className="px-1 opacity-50">/</span>{group.toLowerCase()}</>}<span className="px-1 opacity-50">/</span><span className="text-foreground">{here.label.toLowerCase()}</span>
+            </span>
+            {section !== "/search" && <TopSearch />}
+            <div className="ml-auto flex flex-wrap items-center gap-1.5">
+              <StatusChips s={s} reachable={conn.reachable} />
               {s?.restart_needed && (
                 <a href="#/settings" onClick={(e) => go(e, "/settings")}>
                   <Badge variant="warning" className="cursor-pointer"><RefreshCw className="size-3" /> Restart needed</Badge>
                 </a>
               )}
               {mock && <DemoMenu onChange={() => { status.reload(); count.reload(); }} />}
-              <Button variant="ghost" size="icon" onClick={toggle} aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}>
-                {dark ? <Sun /> : <Moon />}
-              </Button>
             </div>
           </header>
 
@@ -222,11 +226,40 @@ export default function ShadowApp() {
             )}
           </div>
 
-          <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8 fade-in" key={section}>{page}</main>
+          <main className="mx-auto w-full max-w-[1440px] flex-1 px-6 py-6 fade-in" key={section}>{page}</main>
         </div>
       </div>
       <Toaster position="top-center" offset={{ top: 60 }} theme={dark ? "dark" : "light"} closeButton />
     </TooltipProvider>
+  );
+}
+
+/** The search box in the top bar: Ctrl K (or /) focuses it, Enter opens Search with the words typed. */
+function TopSearch() {
+  const ref = useRef<HTMLInputElement>(null);
+  const [q, setQ] = useState("");
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const typing = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+      if ((e.key === "k" && (e.ctrlKey || e.metaKey)) || (e.key === "/" && !typing)) { e.preventDefault(); ref.current?.focus(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!q.trim()) return;
+    try { sessionStorage.setItem("sf-q", q.trim()); } catch { /* ignore */ }
+    window.location.hash = "#/search";
+  };
+  return (
+    <form role="search" onSubmit={submit} className="mx-auto flex h-9 w-full min-w-[220px] max-w-md flex-1 items-center gap-2 rounded-lg border bg-background px-3 text-muted-foreground focus-within:ring-2 focus-within:ring-ring">
+      <SearchIcon className="size-4 shrink-0" aria-hidden />
+      <input ref={ref} value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search your files" placeholder="Search your files by what they are about"
+        className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground" />
+      <kbd className="rounded border px-1.5 font-mono text-[11px]">Ctrl K</kbd>
+    </form>
   );
 }
 
@@ -242,22 +275,21 @@ function Banner({ tone, icon, children }: { tone: "danger" | "warn"; icon?: Reac
   );
 }
 
-function StatusLine({ s, reachable }: { s: Status | null; reachable: boolean }) {
-  if (!s) return <span className="text-sm text-muted-foreground">Connecting to the agent…</span>;
+function StatusChips({ s, reachable }: { s: Status | null; reachable: boolean }) {
+  const chip = "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 font-mono text-[11px] text-muted-foreground";
+  if (!s) return <span className={chip}>connecting…</span>;
   const watching = reachable && s.watching;
   const modelReady = s.ollama && !s.model_missing;
   return (
-    <div className="flex min-w-0 items-center gap-4 text-sm">
-      <span className="flex items-center gap-2">
-        <span className={cn("size-2 rounded-full", watching ? "bg-success" : "bg-warning")} aria-hidden />
-        <span className="font-medium">{watching ? "Watching" : "Not watching"}</span>
-        {watching && s.inbox[0] && <span className="path hidden text-muted-foreground xl:inline">{s.inbox[0]}</span>}
-      </span>
-      <span className="flex items-center gap-1.5 text-muted-foreground">
-        Model <span className="path text-foreground">{s.model}</span>
-        <Badge variant={modelReady ? "success" : "warning"}>{modelReady ? "ready" : "not ready"}</Badge>
-      </span>
-    </div>
+    <>
+      <Tip tip={s.inbox[0] ? `Watching ${s.inbox.join(", ")}` : undefined}>
+        <span className={chip} tabIndex={0}><span className={cn("size-1.5 rounded-full", watching ? "bg-success" : "bg-warning")} aria-hidden />{watching ? "watching" : "not watching"}</span>
+      </Tip>
+      <span className={cn(chip, !modelReady && "border-warning/40 text-warning")}>{s.model} {modelReady ? "ready" : "not ready"}</span>
+      <Tip tip="Your files are read on this PC. Nothing about them leaves it.">
+        <span className={cn(chip, "border-primary/30 bg-info-soft text-accent-foreground")} tabIndex={0}><Lock className="size-3" aria-hidden />local only</span>
+      </Tip>
+    </>
   );
 }
 

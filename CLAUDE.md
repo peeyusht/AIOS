@@ -30,7 +30,7 @@ for small organisations; not EDR.
 Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console). Console: http://127.0.0.1:8765.
 - Watches `%USERPROFILE%\Downloads`; PARA tree is `D:\Organized` (37 destinations at depth 2).
 - Ollama: `qwen3:4b` (filing guesses), `nomic-embed-text` (search + suggestions).
-- Console: **Dashboard** (home: what needs attention, key numbers, the week), **Inbox** (Waiting / Recent moves / Auto-filing), **Search**, **Cleanup**, **Watch** (Dates /
+- Console (redesigned 11 Nov 2026: icon rail in groups Files / Protection / Agent, top bar with search; light and dark themes, see `ui/README.md`): **Today** (home, `#/dashboard`: key numbers, action queue, the week), **Inbox** (Waiting / Recent moves / Auto-filing), **Search**, **Cleanup**, **Watch** (Dates /
   Sensitive files), **Security** (Programs / Services), **Network** (Interfaces / Routes / Exposure / Connections / Devices / DNS & proxy), **Compliance** (five control areas / declared / history / update log), **Library** (Images / Versions / Pictures / Installers / Applications), **Activity** (Journal / Accuracy /
   Predictions / Log), **Settings** (form + System + Advanced YAML). Designed in Lovable.
 
