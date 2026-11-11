@@ -14,15 +14,23 @@ What it writes, all in the agent's database: one line per day with each check's 
 kept 400 days, so "patched within 14 days" can be shown for past months), your declarations and your accepted
 exceptions (each with a reason and a date).
 
+The rules follow "Cyber Essentials: Requirements for IT Infrastructure" v3.3 (NCSC, April 2026, read on
+11 Nov 2026): fixes for flaws scored 7 or more (or with no score given) within 14 days of release, unsupported
+software removed, AutoPlay off, an unlock password protected against guessing (locked after at most 10 wrong
+tries), separate administrator accounts, anti-malware on and current. The scheme sets no inactivity lock time
+and does not ask for drive encryption: those two are shown as notes (insurers ask for them), never as a failing
+Cyber Essentials check.
+
 Honest limits, stated on the page too:
-  - "up to date" for Windows means "an update was installed in the last 35 days": whether a newer build
-    exists cannot be known without going online;
+  - Windows counts as patched when an update was installed on or after the newest monthly security release
+    (second Tuesday) whose 14 days are over; whether that update was the security one, and whether a newer
+    build exists, cannot be known without going online;
   - the age of a flaw counts from the day it was published, the nearest thing the CVE list has to "the day
     the fix came out";
   - 49 of 85 programs on the user's PC match no product in the CVE list and are not judged;
   - the checks follow the published Cyber Essentials control areas, but this is not the scheme's own tool and
-    passing here is not a certificate. The thresholds (14 days, 15 minutes) are in THRESHOLDS for checking
-    against the current official text.
+    passing here is not a certificate. Thresholds are in THRESHOLDS; "signature_days" (7) and "lock_seconds"
+    (15 minutes, a note only) are our own choices, the official text gives no number for either.
 
 Measured on the user's PC (12 Oct 2026): see CLAUDE.md.
 """
@@ -36,7 +44,8 @@ import time
 from datetime import date, datetime, timedelta
 
 CREATE_NO_WINDOW = 0x08000000
-THRESHOLDS = {"patch_days": 14, "windows_update_days": 35, "lock_seconds": 900, "signature_days": 7, "high_score": 7.0}
+THRESHOLDS = {"patch_days": 14, "unlock_tries": 10, "lock_seconds": 900, "signature_days": 7, "high_score": 7.0}
+SCHEME = "Cyber Essentials v3.3 (April 2026)"
 HISTORY_DAYS = 400
 CACHE_SECONDS = 300
 _lock = threading.Lock()
@@ -83,6 +92,9 @@ $admins = @(Get-LocalGroupMember -SID 'S-1-5-32-544' | ForEach-Object {
   [pscustomobject]@{ name = "$($_.Name)"; kind = "$($_.ObjectClass)"; sid = "$($_.SID)" } })
 $who = if ($system) { '' } else { & "$env:SystemRoot\System32\whoami.exe" /groups }
 $desk = "$hkcu\Control Panel\Desktop"
+# Account lockout after wrong passwords: 'net accounts' (English text; anything else reads as -1, not known).
+$lt = net accounts | Where-Object { $_ -match '^Lockout threshold' } | Select-Object -First 1
+$lockout = if ($lt -match '(\d+)\s*$') { [int]$Matches[1] } elseif ($lt -match 'Never\s*$') { 0 } else { -1 }
 $out = [pscustomobject]@{
   computer = "$env:COMPUTERNAME"; user = "$env:USERNAME"; manufacturer = "$($cs.Manufacturer)"; model = "$($cs.Model)";
   serial = "$($bios.SerialNumber)"; edition = "$($cv.EditionID)"; display_version = "$($cv.DisplayVersion)";
@@ -94,7 +106,7 @@ $out = [pscustomobject]@{
     realtime = [bool]$mp.RealTimeProtectionEnabled; signature_age = if ($mp) { [int]$mp.AntivirusSignatureAge } else { -1 } };
   drives = $drives; users = $users; admins = $admins; admins_read = [bool]$admins;
   me_admin = if ($system) { [bool]($usid -and (@($admins | ForEach-Object { $_.sid }) -contains $usid)) } else { [bool]($who -match 'S-1-5-32-544') };
-  as_system = $system; user_hive = $hive;
+  as_system = $system; user_hive = $hive; lockout_threshold = $lockout;
   screensaver = [pscustomobject]@{ active = "$(Reg $desk 'ScreenSaveActive')"; secure = "$(Reg $desk 'ScreenSaverIsSecure')";
     timeout = "$(Reg $desk 'ScreenSaveTimeOut')" };
   inactivity = [int](Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'InactivityTimeoutSecs');
@@ -238,12 +250,15 @@ def configuration_checks(p: dict) -> list:
     idle = min([x for x in (p.get("display_off"), p.get("sleep_after")) if isinstance(x, int) and x > 0] or [0])
     if 0 < idle <= t and p.get("lock_on_wake") == 1:
         ways.append(f"the screen goes off or the PC sleeps after {idle // 60} minutes and asks to sign in on waking")
+    # Must stay first and "pass" when a lock is found: fleet.payload() reads it as lock_found.
     out = [_check("cfg.lock", "The PC locks by itself when left alone",
-                  "pass" if ways else "warn",
+                  "pass" if ways else "info",
                   ("Found: " + "; ".join(ways) + ".") if ways else
                   f"No automatic lock within {t // 60} minutes was found (no locking screen saver, no inactivity limit, "
-                  "and the screen is not set to go off and ask to sign in). Windows Hello's dynamic lock is not visible here.",
+                  "and the screen is not set to go off and ask to sign in). Windows Hello's dynamic lock is not visible here. "
+                  f"{SCHEME} sets no time limit, so this does not count against the control area; insurers often ask.",
                   fix=None if ways else "Settings > Accounts > Sign-in options, and Settings > System > Power > Screen and sleep.")]
+    out.append(unlock_check(p))
     auto_off = p.get("autoplay_off") == 1 or (p.get("autorun_policy") or 0) >= 0x91
     out.append(_check("cfg.autoplay", "AutoPlay is off, so a plugged-in drive runs nothing by itself",
                       "pass" if auto_off else "fail",
@@ -267,14 +282,42 @@ def configuration_checks(p: dict) -> list:
     drives = _list(p.get("drives"))
     plain = [d["letter"] for d in drives if d.get("protection") not in (1, 3, 5)]
     out.append(_check("cfg.encryption", "Drives are encrypted (BitLocker)",
-                      "unknown" if not drives else "fail" if plain else "pass",
+                      "unknown" if not drives else "info" if plain else "pass",
                       "The drives could not be read." if not drives else
-                      f"Not encrypted: {', '.join(plain)}. A lost or stolen PC gives up its files." if plain else
+                      f"Not encrypted: {', '.join(plain)}. A lost or stolen PC gives up its files. Not a Cyber Essentials "
+                      "requirement, so this does not count against the control area; insurers often ask." if plain else
                       f"Encrypted: {', '.join(d['letter'] for d in drives)}.",
                       [f"{d['letter']} {'encrypted' if d.get('protection') in (1, 3, 5) else 'not encrypted'}" for d in drives],
                       None if not plain else "Settings > Privacy & security > Device encryption, or Manage BitLocker. "
                                              "Asked for by insurers; not one of the five Cyber Essentials controls."))
     return out
+
+
+def unlock_check(p: dict) -> dict:
+    """Cyber Essentials: an unlock password must be protected against guessing, by locking the account after no more
+    than 10 wrong tries (or throttling). Windows' own lockout setting is what can be read; Windows Hello's PIN has
+    its own protection in the TPM, which is not visible here."""
+    n, lim = p.get("lockout_threshold"), THRESHOLDS["unlock_tries"]
+    title = f"Wrong passwords lock the account after {lim} tries or fewer"
+    if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+        return _check("cfg.unlock", title, "unknown", "Windows' account lockout setting could not be read.")
+    ok = 0 < n <= lim
+    return _check("cfg.unlock", title, "pass" if ok else "fail",
+                  f"Accounts lock after {n} wrong password{'s' if n != 1 else ''}." if ok else
+                  "Accounts never lock after wrong passwords, so a password can be guessed without limit." if n == 0 else
+                  f"Accounts lock only after {n} wrong passwords.",
+                  fix=None if ok else f"In an administrator terminal: net accounts /lockoutthreshold:{lim}")
+
+
+def security_release_due(today: date) -> date:
+    """The newest monthly Windows security release (second Tuesday) whose 14 days are over on `today`."""
+    d = today - timedelta(days=THRESHOLDS["patch_days"])
+    while True:
+        first = date(d.year, d.month, 1)
+        tuesday = first + timedelta(days=(1 - first.weekday()) % 7 + 7)
+        if tuesday <= d:
+            return tuesday
+        d = first - timedelta(days=1)
 
 
 def browser_checks(p: dict, appsv: dict | None) -> dict | None:
@@ -310,6 +353,27 @@ def browser_checks(p: dict, appsv: dict | None) -> dict | None:
                   "Remove the policy, or set the update service back to automatic." if bad or doubt else None)
 
 
+def windows_update_check(last: str | None, kb: str, today: date) -> dict:
+    """Windows' monthly security update must be in within 14 days of its release (second Tuesday)."""
+    due = security_release_due(today)
+    lim = THRESHOLDS["patch_days"]
+    title = f"Windows' monthly security update was installed within {lim} days"
+    if _days(last, today) is None:
+        return _check("upd.windows", title, "unknown", "The date of the last update could not be read.")
+    ok = last[:10] >= due.isoformat()
+    return _check("upd.windows", title, "pass" if ok else "fail",
+                  f"Last update {kb + ' ' if kb else ''}on {last[:10]}. The monthly release of {due.isoformat()} had to be "
+                  f"in by {(due + timedelta(days=lim)).isoformat()}"
+                  + (". The date is that of the newest update of any kind; whether it was the security one is not checked "
+                     "(that would go online)." if ok else ", and nothing was installed since."),
+                  fix=None if ok else "Settings > Windows Update > Check for updates.")
+
+
+def high_or_unscored(x: dict) -> bool:
+    """Cyber Essentials: fixes for flaws scored 7 or more, and fixes whose severity is not given, within 14 days."""
+    return x.get("score") is None or x["score"] >= THRESHOLDS["high_score"]
+
+
 def update_checks(p: dict, vul: dict | None, appsv: dict | None, today: date, cfg: dict | None = None) -> list:
     out = []
     build = p.get("build") or 0
@@ -330,14 +394,7 @@ def update_checks(p: dict, vul: dict | None, appsv: dict | None, today: date, cf
                       f"{name} gets security updates until {win['until']}." if win["until"] else
                       f"{name}. Not known to be out of support.",
                       fix="Upgrade Windows." if win["state"] in ("ended", "soon") else None))
-    age = _days(p.get("last_update"), today)
-    lim = THRESHOLDS["windows_update_days"]
-    out.append(_check("upd.windows", f"Windows installed an update in the last {lim} days",
-                      "unknown" if age is None else "pass" if 0 <= age <= lim else "fail",
-                      "The date of the last update could not be read." if age is None else
-                      f"Last update {p.get('last_update_id') or ''} on {p['last_update']}, {age} days ago. "
-                      "Whether a newer one exists is not checked (that would go online).",
-                      fix=None if age is not None and age <= lim else "Settings > Windows Update > Check for updates."))
+    out.append(windows_update_check(p.get("last_update"), p.get("last_update_id") or "", today))
     off, paused = p.get("no_auto_update") == 1, bool(p.get("paused_until"))
     out.append(_check("upd.automatic", "Windows installs updates by itself",
                       "fail" if off else "warn" if paused else "pass",
@@ -350,7 +407,7 @@ def update_checks(p: dict, vul: dict | None, appsv: dict | None, today: date, cf
     else:
         old, rows = [], []
         for a in vul.get("apps", []):
-            hit = [x for x in a["cves"] if (x.get("score") or 0) >= THRESHOLDS["high_score"]
+            hit = [x for x in a["cves"] if high_or_unscored(x)
                    and (_days(x.get("published"), today) or 0) > THRESHOLDS["patch_days"]]
             if hit:
                 old.append(a["name"])
@@ -386,7 +443,9 @@ def update_checks(p: dict, vul: dict | None, appsv: dict | None, today: date, cf
                               + f"{len(judged)} of {sum(1 for a in appsv.get('apps', []) if a.get('kind') == 'desktop')} programs are in the "
                                 "end-of-life list; the others are not judged.",
                               [row(x, "ended on") for x in ended] + [row(x, "ends on") for x in soon],
-                              "Move to a supported release line of the program." if ended or soon else None, "/library"))
+                              "Remove the program or move to a supported release line (Cyber Essentials: unsupported "
+                              "software is removed, or kept off the internet)." if ended else
+                              "Move to a supported release line of the program." if soon else None, "/library"))
     b = browser_checks(p, appsv)
     if b:
         out.append(b)
@@ -462,7 +521,8 @@ CONTROLS = (("firewalls", "Firewalls", "Every device is protected by a firewall,
             ("access", "User access control", "Administrator rights are used only when needed."),
             ("malware", "Malware protection", "Antivirus is on and current."))
 
-DECLARED = (("mfa", "Multi-factor login is on for email and cloud services", "Asked by insurers and by Cyber Essentials for cloud services."),
+DECLARED = (("mfa", "Multi-factor login is on for email and cloud services",
+             "Cyber Essentials v3.3: every cloud service must use it; without it the assessment fails. Insurers ask too."),
             ("backups", "Important files are backed up, with one copy offline or unchangeable", "Asked by insurers."),
             ("backup_test", "A restore from backup was tested in the last 12 months", "Asked by insurers."),
             ("incident_plan", "There is a written plan for what to do after a break-in", "Asked by insurers."),

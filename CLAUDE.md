@@ -162,9 +162,14 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   declarations by the owner and must always be shown as declared, never as measured or passed. An accepted
   exception needs a reason, keeps its failing mark, and only stops counting against its control area. Never
   present the result as a certificate or a score. Account names appear on the page, not in the log. The
-  thresholds (`THRESHOLDS`: 14 days for flaws, 35 for Windows updates, 15 minutes for the lock) and the
-  Windows end-of-support rule are from general knowledge of the scheme, not checked against the current
-  official text: check before telling anyone the page proves compliance.
+  rules were checked on 11 Nov 2026 against the official "Cyber Essentials: Requirements for IT
+  Infrastructure" v3.3 (NCSC, April 2026; `compliance.SCHEME`): fixes for flaws scored 7+ or with no score
+  within 14 days; Windows' monthly security release (second Tuesday) installed within 14 days
+  (`security_release_due`); lockout after at most 10 wrong passwords (`cfg.unlock`, read from `net
+  accounts`); unsupported software removed. The scheme sets no inactivity-lock time and does not ask for
+  encryption, so `cfg.lock` and `cfg.encryption` are notes (`info`) that never fail a control area; don't
+  make them fail again. The 7-day antivirus definitions limit and the 15-minute lock are our own numbers.
+  Re-read the official text when a new version comes out (they change each April).
 - `remedy.py` is the only code that changes installed software or a running service, and only while
   `library.remediate` is on (off by default; allowed by the user on 12 Oct 2026). Don't relax any of this
   without asking: one application or one service per click, never "all"; the page sends only WHICH listed
@@ -404,9 +409,10 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   no PDF: the report is text, a device page prints. The
   console was built locally in the Lovable style, not in Lovable. No cloud server has been rented.
 - Compliance is for one PC. Not checked: multi-factor login, backups and the router
-  (declared). "Windows is up to date" means an update within 35 days, not "no newer build exists". The
-  14 days and the CVSS 7 line agree with several published summaries of the scheme (looked up 12 Oct 2026);
-  the official NCSC text was not read, and the 15-minute lock and 35 days are our own choices.
+  (declared). "Windows is up to date" means an update of any kind installed on or after the last monthly
+  release whose 14 days are over, not "the security update is in" or "no newer build exists". The
+  lockout reading (`net accounts`) is matched on English text; other languages read as unknown. The
+  server has no lockout check: it needs a field in `fleet.payload()` (the user's yes first).
 - Network: view only except for switching Windows Firewall on (through `remedy.py`); a network's
   Public/Private mark, rules and shares cannot be changed from the page. The firewall button has run on demo
   data only: on 12 Oct 2026 the user's firewall was still off on all profiles and switching it on was left to them. No names for devices (no vendor lookup, no reverse DNS) and no per-connection traffic amounts.

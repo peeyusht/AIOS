@@ -778,7 +778,7 @@ function mockCompliance(): ComplianceResponse {
       ck("cfg.encryption", "Drives are encrypted (BitLocker)", "pass", "Encrypted: C:.", ["C: encrypted"])]],
     ["updates", "Security update management", "Windows and installed programs are supported and patched promptly.", [
       ck("upd.supported", "Windows is a version that still gets security updates", "pass", "Windows 11 Professional 25H2, build 26200.1234. Not known to be out of support."),
-      ck("upd.windows", "Windows installed an update in the last 35 days", "pass", `Last update KB5000001 on ${ago(11 * 1440).slice(0, 10)}, 11 days ago. Whether a newer one exists is not checked (that would go online).`),
+      ck("upd.windows", "Windows' monthly security update was installed within 14 days", "pass", `Last update KB5000001 on ${ago(11 * 1440).slice(0, 10)}. The date is that of the newest update of any kind; whether it was the security one is not checked (that would go online).`),
       ck("upd.automatic", "Windows installs updates by itself", "pass", "Automatic updates are not switched off or paused."),
       ck("upd.flaws", "No high or critical flaw older than 14 days in installed programs", "fail", "2 programs have high or critical flaws published more than 14 days ago; 1 of the flaws is being used in real attacks.",
         ["Tessellate Containers 4.94.0: 3 high or critical, oldest 120 days", "Pine Runtime 3.12.4: 2 high or critical, oldest 110 days, fix: update to 3.12.10"], "Security > Programs: Update, or the fix version shown.", "/security"),
@@ -817,7 +817,7 @@ function mockCompliance(): ComplianceResponse {
   const log = (min: number, action: "update" | "stop" | "firewall", name: string, ok: number, message: string) => ({ ts: ago(min), action, name, target: "", before: "", after: "", ok, message });
   return {
     assessed_at: iso(now()), device: { name: "DEMO-PC", manufacturer: "Contoso", model: "Tower 5", serial: "SN-48213", windows: "Windows 11 Professional 25H2", build: "26200.1234", user: "alex" },
-    controls, declared, thresholds: { patch_days: 14, windows_update_days: 35, lock_seconds: 900, signature_days: 7, high_score: 7 },
+    controls, declared, thresholds: { patch_days: 14, unlock_tries: 10, lock_seconds: 900, signature_days: 7, high_score: 7 },
     summary: { controls_passing: controls.filter((c) => c.status === "pass").length, controls: controls.length, fail: every.filter((c) => c.status === "fail" && !c.accepted).length,
       warn: every.filter((c) => c.status === "warn" && !c.accepted).length, unknown: every.filter((c) => c.status === "unknown").length, passed: every.filter((c) => c.status === "pass").length,
       accepted: every.filter((c) => c.accepted).length, declared_yes: declared.filter((x) => x.answer === "yes").length, declared_no: declared.filter((x) => x.answer === "no").length, declared_open: declared.filter((x) => !x.answer).length },

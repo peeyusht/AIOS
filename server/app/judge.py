@@ -167,10 +167,11 @@ def configuration_checks(p) -> list:
     if not isinstance(p, dict):
         return [C("cfg.lock", "The PC locks by itself when left alone", "unknown", "The device has not reported its settings.")]
     lim = T["lock_seconds"] // 60
-    out = [C("cfg.lock", "The PC locks by itself when left alone", "pass" if p.get("lock_found") else "warn",
+    out = [C("cfg.lock", "The PC locks by itself when left alone", "pass" if p.get("lock_found") else "info",
              f"An automatic lock within {lim} minutes is set." if p.get("lock_found") else
              f"No automatic lock within {lim} minutes was found for the signed-in user (no locking screen saver, no inactivity "
-             "limit, and the screen is not set to go off and ask to sign in).",
+             f"limit, and the screen is not set to go off and ask to sign in). {agent.SCHEME} sets no time limit, so this "
+             "does not count against the control area; insurers often ask.",
              fix=None if p.get("lock_found") else "On the PC: Settings > Accounts > Sign-in options, and Settings > System > Power.")]
     off = bool(p.get("autoplay_off"))
     out.append(C("cfg.autoplay", "AutoPlay is off, so a plugged-in drive runs nothing by itself", "pass" if off else "fail",
@@ -188,10 +189,11 @@ def configuration_checks(p) -> list:
                  fix="On the PC, in an administrator terminal: net user <name> /passwordreq:yes" if nopw else None))
     enc, drives = p.get("drives_encrypted"), p.get("drives") or 0
     out.append(C("cfg.encryption", "Drives are encrypted (BitLocker)",
-                 "unknown" if enc is None else "pass" if enc else "fail",
+                 "unknown" if enc is None else "pass" if enc else "info",
                  "The drives were not reported." if enc is None else
                  f"Encrypted: all {drives} drive{_s(drives)}." if enc else
-                 f"Not every drive is encrypted ({drives} drive{_s(drives)} reported). A lost or stolen PC gives up its files.",
+                 f"Not every drive is encrypted ({drives} drive{_s(drives)} reported). A lost or stolen PC gives up its files. "
+                 "Not a Cyber Essentials requirement, so this does not count against the control area; insurers often ask.",
                  fix=None if enc is not False else "On the PC: Settings > Privacy & security > Device encryption, or Manage "
                                                    "BitLocker. Asked for by insurers; not one of the five Cyber Essentials controls."))
     return out
@@ -218,12 +220,10 @@ def update_checks(p, device, vul, sup, apps, today: date) -> list:
                  f"{name} gets security updates until {win['until']}." if win.get("until") else
                  f"{name}. Not known to be out of support.",
                  fix="Upgrade Windows." if state in ("ended", "soon") else None))
-    age, lim = agent._days(p.get("windows_last_update"), today), T["windows_update_days"]
-    out.append(C("upd.windows", f"Windows installed an update in the last {lim} days",
-                 "unknown" if age is None else "pass" if 0 <= age <= lim else "fail",
-                 "The date of the last update was not reported." if age is None else
-                 f"Last update on {p['windows_last_update']}, {age} days ago. Whether a newer one exists is not checked.",
-                 fix=None if age is not None and age <= lim else "On the PC: Settings > Windows Update > Check for updates."))
+    w = agent.windows_update_check(p.get("windows_last_update"), "", today)       # the agent's rule, one copy
+    out.append(C("upd.windows", w["title"], w["status"],
+                 "The date of the last update was not reported." if w["status"] == "unknown" else w["detail"],
+                 fix=w["fix"] and "On the PC: " + w["fix"]))
     if p:
         off, paused = bool(p.get("windows_updates_off")), bool(p.get("windows_updates_paused"))
         out.append(C("upd.automatic", "Windows installs updates by itself", "fail" if off else "warn" if paused else "pass",
@@ -236,7 +236,7 @@ def update_checks(p, device, vul, sup, apps, today: date) -> list:
     else:
         old, rows = [], []
         for a in vul["apps"]:
-            hit = [x for x in a["cves"] if (x.get("score") or 0) >= T["high_score"] and (agent._days(x.get("published"), today) or 0) > T["patch_days"]]
+            hit = [x for x in a["cves"] if agent.high_or_unscored(x) and (agent._days(x.get("published"), today) or 0) > T["patch_days"]]
             if hit:
                 old.append(a["name"])
                 worst = max(agent._days(x.get("published"), today) or 0 for x in hit)
@@ -266,7 +266,9 @@ def update_checks(p, device, vul, sup, apps, today: date) -> list:
                      + (f"{len(soon)} more lose{_s(len(soon), 's', '')} support within 90 days. " if soon else "")
                      + f"{len(sup['programs'])} of {sup['installed']} programs are in the end-of-life list; the others are not judged.",
                      [row(x, "ended on") for x in ended] + [row(x, "ends on") for x in soon],
-                     "Move to a supported release line of the program." if ended or soon else None, "programs"))
+                     "Remove the program or move to a supported release line (Cyber Essentials: unsupported software is "
+                     "removed, or kept off the internet)." if ended else
+                     "Move to a supported release line of the program." if soon else None, "programs"))
     if p:
         bad = sorted({BROWSER[k] for k in p.get("browser_updates_off") or [] if k in BROWSER})
         out.append(C("upd.browsers", "Browsers update themselves", "fail" if bad else "pass",
