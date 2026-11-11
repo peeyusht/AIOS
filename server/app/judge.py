@@ -185,6 +185,8 @@ def configuration_checks(p) -> list:
         out.append(agent._on_pc(agent.password_policy_check({k: p.get(k) for k in ("pw_min_length", "pw_max_age_days", "pw_history")})))
     if "smb1_on" in p:                      # F-7, sent from 11 Nov 2026
         out += [agent._on_pc(c) for c in agent.protocol_checks(p)]
+    if "usb_storage" in p:                  # F-5
+        out.append(agent._on_pc(agent.usb_check(p)))
     off = bool(p.get("autoplay_off"))
     out.append(C("cfg.autoplay", "AutoPlay is off, so a plugged-in drive runs nothing by itself", "pass" if off else "fail",
                  "AutoPlay is off." if off else "AutoPlay is on for removable drives.",

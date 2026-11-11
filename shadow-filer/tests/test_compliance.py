@@ -29,7 +29,7 @@ def pc(**over):
          "display_off": 0, "sleep_after": 0, "lock_on_wake": -1, "autoplay_off": 1, "autorun_policy": 0, "inbound_allow_rules": 40,
          "lockout_threshold": 10, "pw_min_length": 14, "pw_max_age_days": 90, "pw_history": 5,
          "smb1_on": False, "rdp_on": False, "rdp_nla": True, "remote_registry_on": False, "psv2_present": False,
-         "bios_version": "F39", "bios_date": "2024-03-22"}
+         "bios_version": "F39", "bios_date": "2024-03-22", "usb_storage": "read_only"}
     p.update(over)
     return p
 
@@ -114,7 +114,7 @@ class ChecksTest(unittest.TestCase):
         c = by_id(compliance.configuration_checks(bad))
         self.assertEqual({k: v["status"] for k, v in c.items()},
                          {"cfg.lock": "info", "cfg.unlock": "fail", "cfg.pwpolicy": "warn", "cfg.autoplay": "fail", "cfg.guest": "fail", "cfg.password": "fail",
-                          "cfg.unused": "warn", "cfg.encryption": "info", "cfg.smb1": "pass", "cfg.rdp": "pass", "cfg.remreg": "pass", "cfg.psv2": "pass"})
+                          "cfg.unused": "warn", "cfg.encryption": "info", "cfg.smb1": "pass", "cfg.rdp": "pass", "cfg.remreg": "pass", "cfg.psv2": "pass", "cfg.usb": "pass"})
         # Cyber Essentials v3.3 sets no lock time and does not ask for encryption: notes, never failing the area
         self.assertEqual(compliance._roll([c["cfg.lock"], c["cfg.encryption"], c["cfg.guest"] | {"status": "pass"}]), "pass")
         self.assertEqual(compliance._roll([c["cfg.lock"], c["cfg.encryption"]]), "info")         # notes alone are not "met"
@@ -172,6 +172,21 @@ class ChecksTest(unittest.TestCase):
         for bad in (None, 0, 1, "False"):
             self.assertEqual(set(st(smb1_on=bad, rdp_on=bad, remote_registry_on=bad, psv2_present=bad).values()), {"unknown"}, bad)
         self.assertIn("Set-SmbServerConfiguration -EnableSMB1Protocol $false", compliance.protocol_checks(pc(smb1_on=True))[0]["fix"])
+
+    def test_usb_storage(self):
+        """F-5: allowed USB storage is a note in Cyber Essentials and DPDP, a look in CERT-In (restrict or control,
+        not block); blocked or read-only passes; anything else is unknown."""
+        tmp = Path(tempfile.mkdtemp(prefix="sf-test-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        cfg = {"database": tmp / "t.db", "cve_database": tmp / "cve.db"}
+
+        def st(u):
+            checks = compliance.measure(cfg, pc(usb_storage=u), net(), VUL, APPS, TODAY)
+            return tuple(by_id([c for g in compliance.judge_framework(k, checks, {})["controls"] for c in g["checks"]])["cfg.usb"]["status"]
+                         for k in ("ce", "certin", "dpdp"))
+        self.assertEqual([st(u) for u in ("blocked", "read_only", "allowed", "", None, "BLOCKED")],
+                         [("pass",) * 3, ("pass",) * 3, ("info", "warn", "info"), ("unknown",) * 3, ("unknown",) * 3, ("unknown",) * 3])
+        self.assertIn("CERT-In EMS.4", compliance.usb_check({"usb_storage": "allowed"}, strict=True)["detail"])
 
     def test_firmware_age(self):
         """F-8: older than 3 years (our own number, and the text says so) is a look; never "out of date"."""

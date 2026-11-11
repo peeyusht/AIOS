@@ -175,7 +175,7 @@ ports (number, program name, reachable from the network or not), counts of rules
 settings as true/false or counts (antivirus on, drives encrypted, lock, AutoPlay, how many administrator
 accounts, after how many wrong passwords accounts lock, the password policy's minimum length, maximum age and
 remembered history as three numbers, and whether SMBv1, Remote Desktop (and its sign-in first), Remote Registry
-and PowerShell 2.0 are on, and how many days old the firmware is).
+and PowerShell 2.0 are on, how many days old the firmware is, whether USB storage is blocked, read-only or allowed).
 
 Never sent: anything about files or documents (the whole file-organising half), account names, install
 folders and program paths (they contain the user name), IP and MAC addresses, the addresses of open
