@@ -142,7 +142,7 @@ actor)` with row-level security and a line in the isolation test.
 | GC.1 | Named security in-charge / SPoC | F-23 governance record | W | **NEW** |
 | GC.2–3 | Approved security policy, periodic review | F-23 | W | **NEW** |
 | GC.4 | Follow CERT-In and regulator directions | Declared | D | **NEW** question |
-| RPP.1 | Length 8–12+, complexity, expiry, no reuse | F-13 password policy | M | **NEW** (same `net accounts` call already made for lockout) |
+| RPP.1 | Length 8–12+, complexity, expiry, no reuse | F-13 password policy | M | **BUILT** 11 Nov 2026 `cfg.pwpolicy` (length, expiry, history; complexity not read) |
 | RPP.2 | Lock after 3–5 failed attempts | Lockout threshold | M | **BUILT** 11 Nov 2026 `cfg.unlock`: ≤10 in CE and DPDP, 3–5 in the CERT-In profile (F-0) |
 | RPP.3 | MFA for critical systems, admins, remote access | Declared | D | **BUILT** `mfa` (worded for cloud services; add admin/remote wording) |
 | RPP.4 | Passwords stored with secure hashing | Out of scope for an endpoint agent | – | not planned |
@@ -236,7 +236,14 @@ Facts: `backup_tool` (bool), `backup_last_days` (int or null when not knowable).
 no tool is found, warn if the last known run is older than 7 days. Never fail: a backup taken elsewhere
 (NAS, server-side) is invisible here; the declared answer stays the evidence.
 
-**F-13 Password policy (M).** Extend the existing `net accounts` read: minimum length, maximum age, history
+**F-13 Password policy (M) — BUILT 11 Nov 2026** (`cfg.pwpolicy`, payload `pw_min_length`, `pw_max_age_days`,
+`pw_history`). Built differently: complexity is not read (`net accounts` does not show it; `secedit` is too heavy,
+as below). The check is in all three frameworks, not CERT-In only: Cyber Essentials v3.3 asks for 12+ characters,
+or 8+ with a deny list, or multi-factor login, and advises against forced expiry; only the length is visible, so
+under 12 is `warn` there (and in DPDP, which uses CE's numbers). CERT-In: under 8 fails; no expiry or no
+history is `warn`; the fix's 90 days and 5 remembered are labelled as our own suggestion. Measured on the
+owner's PC: minimum length 0, maximum age 42 days, history none (Windows' defaults): CE look, CERT-In fail.
+Original: Extend the existing `net accounts` read: minimum length, maximum age, history
 length, and complexity (from `secedit /export` is too heavy; use the `PasswordComplexity` value from the
 local policy via `net accounts` where available, otherwise unknown). Facts: `pw_min_length`, `pw_max_age_days`,
 `pw_history`. Check `cfg.pwpolicy`: CERT-In fail below 8. Same English-text limit as the lockout read
@@ -300,6 +307,9 @@ never come out), `device-agent/tests` (the new readings work as SYSTEM), `server
 
 ## 7. Decisions the owner must take first
 
+- **D-1 — APPROVED by the owner on 11 Nov 2026 for all of step 2**, with two changes to this list: `bios_age_days`
+  (days) instead of `bios_date`, and `wifi_connected` (bool) added so "no Wi-Fi" can be told from "unknown".
+  Each field is added in its own feature's commit, with both SENT lists and `tests/test_fleet.py`. Asked as:
 - **D-1 Widen `fleet.payload()`** with: `pw_min_length`, `pw_max_age_days`, `pw_history`, `smb1_on`, `rdp_on`,
   `rdp_nla`, `remote_registry_on`, `psv2_present`, `bios_date`, `usb_storage`, `builtin_admin_enabled`,
   `accounts_never_used`, `wifi_auth`, `wifi_open_autoconnect`, `log_days_security`, `log_mode_security`,

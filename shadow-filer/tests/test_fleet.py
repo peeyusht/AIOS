@@ -63,6 +63,7 @@ class FleetTest(unittest.TestCase):
         self.assertEqual((svc["name"], svc["account"], svc["ports"], svc["exposed"]), ("Tessellate Engine", "system", [{"port": 27017, "network": True}], True))
         self.assertEqual(sn["posture"]["accounts_without_password"], 1)        # a count, not who
         self.assertEqual(sn["posture"]["lockout_threshold"], 10)               # a number of tries, nothing else
+        self.assertEqual([sn["posture"][k] for k in ("pw_min_length", "pw_max_age_days", "pw_history")], [14, 90, 5])
         self.assertEqual((sn["posture"]["daily_account_is_admin"], sn["posture"]["admin_accounts"], sn["posture"]["drives_encrypted"]), (True, 1, True))
         self.assertEqual((sn["network"]["shared_folders"], sn["network"]["rules"]["programs"]), (1, 1))
         self.assertEqual(sorted(sn["network"]["listening"][0]), ["port", "process", "proto", "reach", "windows"])
@@ -74,6 +75,14 @@ class FleetTest(unittest.TestCase):
         text = fleet.as_text(p)
         self.assertIn("apps      2 programs", text)
         self.assertIn("Not sent: files and documents, account names", text)
+
+    def test_numbers_stay_numbers(self):
+        """A posture value that is not a plain number (a name, a path, true/false) is sent as nothing."""
+        odd = pc(user=SECRET_USER, pw_min_length=f"C:\\Users\\{SECRET_USER}", pw_max_age_days=True, pw_history=-1, lockout_threshold="10")
+        with mock.patch("compliance._posture", return_value=odd):
+            sent = fleet.payload(self.cfg)["snapshots"]["posture"]
+        self.assertEqual([sent[k] for k in ("pw_min_length", "pw_max_age_days", "pw_history", "lockout_threshold")], [None] * 4)
+        self.assertNotIn(SECRET_USER, json.dumps(sent))
 
     def test_enrol_checkin_leave(self):
         calls = []
