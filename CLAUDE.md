@@ -128,8 +128,11 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   command to a device before phase 5 is designed and agreed. The worker connects as `fleet_worker`, under
   the same row-level security: its one door across organisations is `judge_queue()`, which gives ids only.
   It may read and write nothing about keys, tokens or the audit log, and only it may create a judgement.
-  It is the only container that goes online, and only for the same three public downloads as the agent
-  (NVD, CISA, endoflife.date): never add a request that carries anything about a customer or a device.
+  It is the only container that goes online: for the same three public downloads as the agent (NVD, CISA,
+  endoflife.date), and, since the owner's decision D-3 of 11 Nov 2026 (spec F-3, `server/app/mail.py`), once a
+  day for the DNS TXT records (SPF, DMARC, named DKIM selectors) of each organisation's own mail domain through
+  the container's resolver; that query names the domain and nothing else. Never add another request that carries
+  anything about a customer or a device, and never anything about a device at all.
   The server judges only what `fleet.payload()` sends (counts and true/false), so its evidence says how
   many, never who; do not widen the payload to make a server page nicer without asking. Declarations are
   always shown as declared; an accepted exception keeps its failing mark; never a certificate or a score.
@@ -145,6 +148,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   `db.org()` after writing something that has to stay (a failed sign-in is counted): leave the block first.
   Each new way to turn a presented secret into an organisation is one more SECURITY DEFINER function in
   `schema.sql` (eight now; `auth_device` takes a device id and answers with its public key since phase 4) and one more thing to test from another organisation.
+  The worker has two doors that give ids only: `judge_queue` and `mail_queue` (spec F-3).
 - The device agent (`device-agent/`; decided by the user on 13 Oct 2026, don't relax without asking): it is
   the reporter only. Nothing that changes a PC goes into its installer (`NEVER` in `build/make_msi.py`, and
   a test that those modules are not even loaded); it listens on no port; nothing can send it a command. It

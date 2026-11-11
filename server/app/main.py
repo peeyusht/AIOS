@@ -18,6 +18,7 @@ organisation key can read but change nothing):
                 POST /api/v1/devices/{id}/labels        mark a device as holding personal data, or as critical
                 GET/POST /api/v1/incidents[/{id}]       the incident register with CERT-In's and DPDP's clocks (app/incidents.py)
                 GET /api/v1/records, POST /reviews, /governance   reviews signed off and the governance record (app/records.py)
+                GET/POST /api/v1/mail-domain            the mail domain whose SPF/DMARC/DKIM the worker looks up (app/mail.py)
                 (fleet, report and shared take ?framework=ce|certin|dpdp; the default is the organisation's first)
                 GET  /api/v1/audit
                 GET  /api/v1/agent/installer            the newest agent installer, for whoever may add a PC
@@ -38,7 +39,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from psycopg.types.json import Jsonb
 
-from . import agents, db, incidents, judge, people, records
+from . import agents, db, incidents, judge, mail, people, records
 from .agents import device
 from .people import editor, reader
 
@@ -61,6 +62,7 @@ app.include_router(people.router)
 app.include_router(agents.router)
 app.include_router(incidents.router)
 app.include_router(records.router)
+app.include_router(mail.router)
 if (CONSOLE / "assets").is_dir():
     app.mount("/assets", StaticFiles(directory=CONSOLE / "assets"), name="assets")
 
@@ -283,6 +285,8 @@ def fleet(framework: str | None = None, who: dict = Depends(reader)):
                          (now.date() - timedelta(days=HISTORY_DAYS - 1), fw)).fetchall()
         ref, said = _reference(c), _declared(c, fw)
         due = records.view(c, now.date())["due"] if fw != "ce" else []     # CERT-In and DPDP ask for these; Cyber Essentials does not
+        md = c.execute("SELECT domain, selectors, result FROM mail_domains").fetchone() if fw == "certin" else None
+        org_checks = [x for x in [mail.check(dict(md)) if md else None] if x]          # CERT-In NES.4
     judged = [d for d in rows if d["judgement"]]
     short = {d["id"]: judge.framework_summary(d["judgement"], fw) for d in judged}
     sup = lambda d: d["judgement"].get("support") or {}
@@ -304,7 +308,7 @@ def fleet(framework: str | None = None, who: dict = Depends(reader)):
             if k in x["areas"] and v == "pass":
                 x["areas"][k] += 1
     return {"organisation": org["name"] if org else "", "generated_at": _iso(now), "devices": len(rows), "judged": len(judged),
-            "framework": fw, "frameworks": fws, "records_due": due,
+            "framework": fw, "frameworks": fws, "records_due": due, "org_checks": org_checks,
             "silent": [{"id": d["id"], "name": d["name"], "last_seen": d["last_seen"]} for d in rows
                        if d["silent_seconds"] is None or d["silent_seconds"] > SILENT_HOURS * 3600],
             "all_passing": sum(1 for v in short.values() if v and v["controls_passing"] == v["controls"]),

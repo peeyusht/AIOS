@@ -66,6 +66,9 @@ export const api = {
   records: () => request<Records>("GET", "/api/v1/records"),
   addReview: (kind: string, reviewed_on: string, note: string) => request<{ ok: boolean }>("POST", "/api/v1/reviews", { kind, reviewed_on, note }),
   setGovernance: (f: Record<string, string>) => request<{ ok: boolean }>("POST", "/api/v1/governance", f),
+  // mail domain (spec F-3)
+  mailDomain: () => request<MailDomain>("GET", "/api/v1/mail-domain"),
+  setMailDomain: (domain: string, selectors: string[]) => request<{ ok: boolean }>("POST", "/api/v1/mail-domain", { domain, selectors }),
   // who has access
   access: () => request<Access>("GET", "/api/v1/access"),
   addUser: (email: string, name: string, role: Role) => request<{ ok: boolean; setup_token: string; valid_days: number }>("POST", "/api/v1/users", { email, name, role }),
@@ -174,7 +177,7 @@ export interface Declared { key: string; title: string; about: string; answer: A
 export interface FleetDay { day: string; devices: number; all_passing: number; areas: Record<string, number> }
 export interface Fleet {
   organisation: string; generated_at: string; devices: number; judged: number; all_passing: number; silent_hours: number;
-  framework: string; frameworks: Framework[]; records_due?: { kind: string; text: string }[];
+  framework: string; frameworks: Framework[]; records_due?: { kind: string; text: string }[]; org_checks?: Check[];
   silent: { id: string; name: string; last_seen: string | null }[];
   areas: ({ key: string; title: string; about: string } & Record<CheckStatus, number>)[];
   failing: { id: string; title: string; control: string; devices: { id: string; name: string }[] }[];
@@ -230,4 +233,5 @@ export interface Records {
     updated_at: string; updated_by: string } | null;
   due: { kind: string; text: string }[];
 }
+export interface MailDomain { domain: string; selectors: string[]; result: Record<string, unknown> | null; check: Check | null }
 export interface AuditEntry { at: string; actor: string; action: string; detail: Record<string, unknown> }

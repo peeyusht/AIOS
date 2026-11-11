@@ -114,7 +114,7 @@ actor)` with row-level security and a line in the isolation test.
 | | | Perimeter firewall | D | **PARTIAL**: declared item `router` exists, worded for Cyber Essentials (router password, firmware). Add a CERT-In wording. Later: F-30 FortiGate read-only |
 | NES.2 | Wi-Fi WPA2/WPA3, no default creds, guest segregated, no auto-connect to open Wi-Fi | F-2 Wi-Fi posture | M | **BUILT** 11 Nov 2026 `net.wifi` (the PC's side only; the access point's credentials and guest network are not visible) |
 | NES.3 | Encrypted VPN with MFA for remote access | Declared | D | **NEW** question |
-| NES.4 | SPF, DKIM, DMARC | F-3 mail domain check | S | **NEW**. Needs decision D-3 |
+| NES.4 | SPF, DKIM, DMARC | F-3 mail domain check | S | **BUILT** 11 Nov 2026 `org.mail` (D-3 yes) |
 | EMS.1 | Licensed AV, current; Defender and Firewall not disabled | AV present and on, real-time, definition age | M | **BUILT** `mal.present`, `mal.realtime`, `mal.signatures`, `fw.on` |
 | EMS.2 | No pirated or unauthorised software; only authorised people install | F-4 approved-software list; daily account not admin | M+S | **PARTIAL**: `acc.daily` BUILT; approved list NEW |
 | EMS.3 | Onboard with Cyber Swachhta Kendra | Declared | D | **NEW** question |
@@ -198,7 +198,12 @@ arguments built from data). Facts: `wifi_connected` (bool), `wifi_auth` of the c
 connect by themselves). Check `net.wifi`: fail on open or WEP, warn on WPA (v1) or open networks saved with
 auto-connect. Desktop with no Wi-Fi adapter: check not shown.
 
-**F-3 Mail domain (S).** On the server: the organisation enters its mail domain; the worker looks up the SPF
+**F-3 Mail domain (S) — BUILT 11 Nov 2026** (`server/app/mail.py`, table `mail_domains` with row-level security,
+the worker's second ids-only door `mail_queue`, `dnspython`). Built as specified, plus: no SPF or no DMARC record
+fails; a named DKIM selector without a key is a look; a failed lookup is unknown; only the mail records' text is
+kept (other TXT records at the domain are dropped). `org.mail` is an organisation-level check: shown on the CERT-In
+Overview (under Needs attention when not passing) and on the Evidence page with the domain; it does not change any
+device's areas. Original: On the server: the organisation enters its mail domain; the worker looks up the SPF
 and DMARC TXT records (and DKIM for selectors the organisation names; DKIM cannot be found without a selector)
 once a day. Check `org.mail`: pass if SPF exists and DMARC policy is `quarantine` or `reject`; warn on
 `p=none`. **Breaks the current rule** that the worker sends nothing about a customer (a DNS query carries the
