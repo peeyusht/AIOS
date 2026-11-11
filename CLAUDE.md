@@ -411,8 +411,9 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 - Compliance is for one PC. Not checked: multi-factor login, backups and the router
   (declared). "Windows is up to date" means an update of any kind installed on or after the last monthly
   release whose 14 days are over, not "the security update is in" or "no newer build exists". The
-  lockout reading (`net accounts`) is matched on English text; other languages read as unknown. The
-  server has no lockout check: it needs a field in `fleet.payload()` (the user's yes first).
+  lockout reading (`net accounts`) is matched on English text; other languages read as unknown. It is
+  sent as `lockout_threshold` (a number; added to `fleet.payload()` with the user's yes on 11 Nov 2026), and
+  the server judges it only when a device sends it (agents before that send nothing, and get no check).
 - Network: view only except for switching Windows Firewall on (through `remedy.py`); a network's
   Public/Private mark, rules and shares cannot be changed from the page. The firewall button has run on demo
   data only: on 12 Oct 2026 the user's firewall was still off on all profiles and switching it on was left to them. No names for devices (no vendor lookup, no reverse DNS) and no per-connection traffic amounts.

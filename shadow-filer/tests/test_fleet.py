@@ -62,6 +62,7 @@ class FleetTest(unittest.TestCase):
         svc = sn["services"]["services"][0]
         self.assertEqual((svc["name"], svc["account"], svc["ports"], svc["exposed"]), ("Tessellate Engine", "system", [{"port": 27017, "network": True}], True))
         self.assertEqual(sn["posture"]["accounts_without_password"], 1)        # a count, not who
+        self.assertEqual(sn["posture"]["lockout_threshold"], 10)               # a number of tries, nothing else
         self.assertEqual((sn["posture"]["daily_account_is_admin"], sn["posture"]["admin_accounts"], sn["posture"]["drives_encrypted"]), (True, 1, True))
         self.assertEqual((sn["network"]["shared_folders"], sn["network"]["rules"]["programs"]), (1, 1))
         self.assertEqual(sorted(sn["network"]["listening"][0]), ["port", "process", "proto", "reach", "windows"])

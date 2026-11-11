@@ -171,7 +171,7 @@ publisher, install date, size); Windows services that are not part of Windows (n
 product, version, port numbers); firewall state per profile, the network's Public/Private mark, listening
 ports (number, program name, reachable from the network or not), counts of rules and shared folders; security
 settings as true/false or counts (antivirus on, drives encrypted, lock, AutoPlay, how many administrator
-accounts).
+accounts, after how many wrong passwords accounts lock).
 
 Never sent: anything about files or documents (the whole file-organising half), account names, install
 folders and program paths (they contain the user name), IP and MAC addresses, the addresses of open
