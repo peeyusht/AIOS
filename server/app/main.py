@@ -15,6 +15,7 @@ organisation key can read but change nothing):
                 POST /api/v1/declarations               what the organisation states about what cannot be measured
                 POST /api/v1/devices/{id}/exceptions    accept a failing check with a reason, or withdraw that
                 POST /api/v1/frameworks                 which frameworks the console shows (Cyber Essentials, CERT-In, DPDP)
+                POST /api/v1/devices/{id}/labels        mark a device as holding personal data, or as critical
                 (fleet, report and shared take ?framework=ce|certin|dpdp; the default is the organisation's first)
                 GET  /api/v1/audit
                 GET  /api/v1/agent/installer            the newest agent installer, for whoever may add a PC
@@ -215,10 +216,11 @@ def _device_row(r: dict, now: datetime) -> dict:
     return {"id": str(r["id"]), "name": r["name"], "enrolled_at": _iso(r["enrolled_at"]), "last_seen": _iso(r["last_seen"]),
             "silent_seconds": int((now - r["last_seen"]).total_seconds()) if r["last_seen"] else None,
             "agent_version": r["agent_version"], "summary": r["summary"],
-            "judged_at": _iso(r["judged_at"]), "judgement": r["judgement"]}
+            "judged_at": _iso(r["judged_at"]), "judgement": r["judgement"], "labels": list(r.get("labels") or [])}
 
 
-DEVICES_SQL = ("SELECT d.id, d.name, d.enrolled_at, d.last_seen, d.agent_version, d.summary, j.judged_at, j.summary AS judgement "
+DEVICES_SQL = ("SELECT d.id, d.name, d.enrolled_at, d.last_seen, d.agent_version, d.summary, j.judged_at, j.summary AS judgement, "
+               "(SELECT coalesce(array_agg(l.label ORDER BY l.label), '{}') FROM device_labels l WHERE l.device_id = d.id) AS labels "
                "FROM devices d LEFT JOIN judgements j ON j.device_id = d.id ")
 
 
@@ -381,6 +383,33 @@ async def accept_check(device_id: str, request: Request, who: dict = Depends(edi
         c.execute("INSERT INTO audit_log (org_id, actor, action, detail) VALUES (%s,%s,%s,%s)",
                   (who["org_id"], _actor(who), "check.accepted" if reason else "check.acceptance_withdrawn",
                    Jsonb({"device": device_id, "name": dev["name"], "check": check_id, "reason": reason})))
+    return {"ok": True}
+
+
+LABELS = {"personal_data": "holds personal data", "critical": "critical"}
+
+
+@app.post("/api/v1/devices/{device_id}/labels")
+async def label_device(device_id: str, request: Request, who: dict = Depends(editor)):
+    """Put a label on a device or take it off (spec F-1). A label is a person's statement, so it is recorded under
+    their name; the device is judged again, because DPDP judges encryption and log retention by it."""
+    body = await request.json()
+    label, on = body.get("label"), body.get("on")
+    if label not in LABELS or not isinstance(on, bool):
+        raise HTTPException(400, "That is not a label, or not on/off.")
+    now = datetime.now(timezone.utc)
+    with db.org(who["org_id"]) as c:
+        dev = _one_device(c, device_id, now)
+        if on:
+            done = c.execute("INSERT INTO device_labels (org_id, device_id, label, actor) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                             (who["org_id"], device_id, label, _actor(who))).rowcount
+        else:
+            done = c.execute("DELETE FROM device_labels WHERE device_id = %s AND label = %s", (device_id, label)).rowcount
+        if done:
+            c.execute("UPDATE devices SET judged_day = NULL WHERE id = %s", (device_id,))      # judge it again with the label
+            c.execute("INSERT INTO audit_log (org_id, actor, action, detail) VALUES (%s,%s,%s,%s)",
+                      (who["org_id"], _actor(who), "device.labelled" if on else "device.unlabelled",
+                       Jsonb({"device": device_id, "name": dev["name"], "label": label})))
     return {"ok": True}
 
 

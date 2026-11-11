@@ -114,10 +114,11 @@ def judge_device(device_id, org_id, cfg: dict, ref: str, today, use_lists: bool 
             "SELECT DISTINCT ON (kind) kind, payload FROM snapshots WHERE device_id=%s ORDER BY kind, received_at DESC, id DESC", (device_id,))}
         accepted = {r["check_id"]: {"reason": r["reason"], "ts": r["at"].isoformat(timespec="seconds"), "actor": r["actor"]}
                     for r in c.execute("SELECT check_id, reason, at, actor FROM exceptions WHERE device_id = %s", (device_id,))}
+        labels = tuple(r["label"] for r in c.execute("SELECT label FROM device_labels WHERE device_id = %s", (device_id,)))
     # the comparison takes a few seconds and needs no database connection
     vul = judge.flaws(cfg, snaps) if use_lists else None
     sup = judge.support(cfg, snaps, today) if use_lists else None
-    comp = judge.assess(snaps, vul, sup, accepted, today)
+    comp = judge.assess(snaps, vul, sup, accepted, today, labels)
     summ = judge.summary(comp, vul, sup)
     with db.org(org_id) as c:
         c.execute("""INSERT INTO judgements (device_id, org_id, judged_at, ref, summary, security, compliance)

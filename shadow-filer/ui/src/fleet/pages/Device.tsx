@@ -10,7 +10,7 @@ import { usePoll } from "@/lib/hooks";
 import { bytes, when } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Card, Confirm, ListSkeleton, LoadError, Notice, PageHeader, Segmented, Stat } from "@/shadow/ui";
-import { api, type AppFact, type AreaStatus, type Check, type Cve, type DeviceDetail, type FlawApp, type FlawService, type SupportProgram } from "../api";
+import { api, LABELS, type Label, type AppFact, type AreaStatus, type Check, type Cve, type DeviceDetail, type FlawApp, type FlawService, type SupportProgram } from "../api";
 import { useCan } from "../session";
 import { ControlCard, FrameworkSwitch, HistoryGrid, LABEL, ReferenceLine, Section, silentFor, SQUARE, Tile, useFramework } from "../parts";
 
@@ -265,6 +265,20 @@ export function DevicePage({ id, tab }: { id: string; tab?: string }) {
         </>}
       />
       {q.error && <div className="mb-4"><LoadError error={q.error} onRetry={q.reload} /></div>}
+      <div className="mb-4 flex flex-wrap items-center gap-2 text-sm" aria-label="Labels">
+        <span className="text-muted-foreground">Labels:</span>
+        {(Object.keys(LABELS) as Label[]).map((l) => {
+          const on = (d.labels ?? []).includes(l);
+          return canEdit
+            ? <label key={l} className={cn("inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-0.5", on && "border-primary bg-accent")}>
+                <input type="checkbox" checked={on} onChange={async (e) => { try { await api.label(id, l, e.target.checked); await q.reload(); } catch (err) { toast.error((err as Error).message); } }} />
+                {LABELS[l]}
+              </label>
+            : on ? <Badge key={l} variant="muted">{LABELS[l]}</Badge> : null;
+        })}
+        {!canEdit && !(d.labels ?? []).length && <span className="text-muted-foreground">none</span>}
+        <span className="text-xs text-muted-foreground">Set by a person, not measured. DPDP judges encryption and log retention on a device that holds personal data; it is judged again within a minute.</span>
+      </div>
       {silent && <Notice tone="warn" className="mb-4">This PC has {d.last_seen ? `not reported since ${when(d.last_seen)}` : "never reported"} ({silentFor(d.silent_seconds)}). What is shown may be out of date.</Notice>}
       <Tabs value={current} onValueChange={(v) => { window.location.hash = `/devices/${id}/${v}`; }}>
         <TabsList className="mb-6" data-print-hide>

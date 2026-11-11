@@ -105,6 +105,7 @@ Phase 2 tables:
 | `compliance_history` | one line per device per day per framework with each check's result |
 | `declarations` | what the organisation states about things no program can measure |
 | `exceptions` | a failing check accepted on one device, with the reason and who (it holds in every framework) |
+| `device_labels` | what a person states about a device: holds personal data, critical (spec F-1); DPDP judges by it |
 | `reference_status` | how fresh the public lists are (shared; no customer data) |
 
 The lists themselves (`cve`, `aff`, `kev`, `eol_product`) are not in PostgreSQL: they are public, the same

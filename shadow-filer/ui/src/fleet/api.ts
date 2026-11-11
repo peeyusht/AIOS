@@ -57,6 +57,7 @@ export const api = {
   declare: (key: string, answer: Answer, note: string) => request<{ ok: boolean }>("POST", "/api/v1/declarations", { key, answer, note }),
   accept: (d: string, check_id: string, reason: string) => request<{ ok: boolean }>("POST", `/api/v1/devices/${id(d)}/exceptions`, { check_id, reason }),
   removeDevice: (d: string) => request<{ ok: boolean }>("POST", `/api/v1/devices/${id(d)}/remove`),
+  label: (d: string, label: Label, on: boolean) => request<{ ok: boolean }>("POST", `/api/v1/devices/${id(d)}/labels`, { label, on }),
   // who has access
   access: () => request<Access>("GET", "/api/v1/access"),
   addUser: (email: string, name: string, role: Role) => request<{ ok: boolean; setup_token: string; valid_days: number }>("POST", "/api/v1/users", { email, name, role }),
@@ -148,9 +149,12 @@ export interface DeviceSummary {
   windows?: string; model?: string; programs?: number; updates?: number; services?: number; services_exposed?: number;
   firewall?: "on" | "off" | "partly" | null; ports_open?: number; antivirus?: boolean | null; encrypted?: boolean | null; daily_admin?: boolean | null;
 }
+/** What a person states about a device (spec F-1). DPDP judges encryption and log retention by "personal_data". */
+export type Label = "personal_data" | "critical";
+export const LABELS: Record<Label, string> = { personal_data: "Holds personal data", critical: "Critical" };
 export interface DeviceRow {
   id: string; name: string; enrolled_at: string; last_seen: string | null; silent_seconds: number | null; agent_version: string;
-  summary: DeviceSummary; judged_at: string | null; judgement: Judgement | null;
+  summary: DeviceSummary; judged_at: string | null; judgement: Judgement | null; labels?: Label[];
 }
 export interface Devices { organisation: string; generated_at: string; checkin_seconds: number; framework: string; frameworks: Framework[]; devices: DeviceRow[] }
 

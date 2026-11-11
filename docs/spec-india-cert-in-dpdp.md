@@ -91,7 +91,12 @@ Original specification:
 - `judge.py` keeps importing the profiles from the agent's `compliance.py`, as today, so the two cannot drift.
 - Tests: the same posture judged under all three profiles gives the verdicts in the table above.
 
-**F-1 Device labels — NEW (W).** On the server, an admin can mark a device `personal_data` and/or `critical`
+**F-1 Device labels — BUILT 11 Nov 2026 (W).** Table `device_labels` (row-level security, in the isolation test),
+`POST /api/v1/devices/{id}/labels` (admin or owner, audit-logged as `device.labelled` / `device.unlabelled`),
+toggles on the device page and badges in the device list. Setting or removing a label sends the device round
+the worker again at once, so DPDP's encryption and log-retention verdicts follow within a minute. The PC's own
+console has no labels. Not built yet: F-11 suggesting the label.
+Original: On the server, an admin can mark a device `personal_data` and/or `critical`
 (CERT-In EAM.1 "classification of sensitive assets"). DPDP checks that say "on personal-data devices" use the
 label. F-11 can suggest the label; a person sets it. New table `device_labels (org_id, device_id, label, at,
 actor)` with row-level security and a line in the isolation test.
@@ -103,7 +108,7 @@ actor)` with row-level security and a line in the isolation test.
 | # | Recommendation (short) | Feature | Type | Status |
 |---|---|---|---|---|
 | EAM.1 | Inventory of hardware, software, information assets; classify sensitive ones | Device + program inventory | M | **BUILT** (device, apps, services snapshots) |
-| | | "Personal data" / "critical" labels | W | **NEW** (F-1) |
+| | | "Personal data" / "critical" labels | W | **BUILT** 11 Nov 2026 (F-1) |
 | EAM.2 | Asset lifecycle to secure disposal | Device retirement record (F-20) | W | **NEW**. Today "remove a device" only deletes it |
 | NES.1 | Perimeter firewall; host firewall on and configured | Windows Firewall per profile, default inbound block, wide-open and left-over rules | M | **BUILT** `fw.on`, `fw.default`, `fw.rules` |
 | | | Perimeter firewall | D | **PARTIAL**: declared item `router` exists, worded for Cyber Essentials (router password, firmware). Add a CERT-In wording. Later: F-30 FortiGate read-only |
@@ -348,7 +353,7 @@ rest) must come first.
 2. **Measured, payload change needed (D-1; approved 11 Nov 2026):** BUILT so far: F-13, F-7, F-8, F-5, built-in
    Administrator, never-used accounts, F-2, F-10, F-12: step 2 is complete (11 Nov 2026). F-13 password policy, F-7 protocols, F-8 firmware, F-5 USB,
    built-in Administrator enabled, never-used account count, F-2 Wi-Fi, F-10 logs, F-12 backups.
-3. **Server workflows without uploads:** F-1 labels, F-21 incidents, F-24 reviews, F-23 (without document),
+3. **Server workflows without uploads:** (F-1 BUILT 11 Nov 2026) F-1 labels, F-21 incidents, F-24 reviews, F-23 (without document),
    new declared questions with dates.
 4. **Uploads**, after phase 6 hardening: F-20, F-22, F-23 documents, F-25.
 5. **Decision-gated:** F-11 (D-1, D-2), F-3 (D-3), F-9 (feasibility), F-30 (own design).

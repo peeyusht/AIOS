@@ -164,6 +164,17 @@ CREATE TABLE IF NOT EXISTS exceptions (
   PRIMARY KEY (device_id, check_id)
 );
 
+-- Labels a person puts on a device (spec F-1; CERT-In EAM.1 "classify sensitive assets"): it holds personal
+-- data (DPDP judges encryption and log retention there), or it is critical. Set by a person, never by a device.
+CREATE TABLE IF NOT EXISTS device_labels (
+  org_id uuid NOT NULL REFERENCES organisations ON DELETE CASCADE,
+  device_id uuid NOT NULL REFERENCES devices ON DELETE CASCADE,
+  label text NOT NULL CHECK (label IN ('personal_data', 'critical')),
+  at timestamptz NOT NULL DEFAULT now(),
+  actor text NOT NULL DEFAULT '',
+  PRIMARY KEY (device_id, label)
+);
+
 -- How fresh the public reference lists are (CVE, known exploited, end of life). No customer data: shared.
 CREATE TABLE IF NOT EXISTS reference_status (
   k text PRIMARY KEY,
@@ -244,7 +255,7 @@ DO $$
 DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['admin_keys', 'enrolment_tokens', 'devices', 'snapshots', 'audit_log',
-                           'judgements', 'compliance_history', 'declarations', 'exceptions',
+                           'judgements', 'compliance_history', 'declarations', 'exceptions', 'device_labels',
                            'users', 'setup_links', 'sessions', 'recovery_codes', 'share_links'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
@@ -266,6 +277,7 @@ GRANT UPDATE (frameworks) ON organisations TO fleet_app;    -- its own organisat
 GRANT SELECT, INSERT, UPDATE, DELETE ON admin_keys, enrolment_tokens, devices, snapshots TO fleet_app;
 GRANT SELECT, INSERT ON audit_log TO fleet_app;          -- the audit log is append-only for the application
 GRANT SELECT, INSERT, UPDATE, DELETE ON declarations, exceptions TO fleet_app;
+GRANT SELECT, INSERT, DELETE ON device_labels TO fleet_app;
 GRANT SELECT, UPDATE ON judgements TO fleet_app;          -- the API re-applies exceptions; only the worker judges
 GRANT SELECT, INSERT, UPDATE ON compliance_history TO fleet_app;
 GRANT SELECT ON reference_status TO fleet_app;
@@ -274,7 +286,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON users, setup_links, sessions, recovery_c
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO fleet_app;
 
 GRANT USAGE ON SCHEMA public TO fleet_worker;
-GRANT SELECT ON organisations, snapshots, exceptions, declarations TO fleet_worker;
+GRANT SELECT ON organisations, snapshots, exceptions, declarations, device_labels TO fleet_worker;
 GRANT SELECT, UPDATE ON devices TO fleet_worker;
 GRANT SELECT, INSERT, UPDATE ON judgements, compliance_history TO fleet_worker;
 GRANT SELECT, INSERT, UPDATE, DELETE ON reference_status TO fleet_worker;
