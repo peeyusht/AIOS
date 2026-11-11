@@ -14,6 +14,8 @@ organisation key can read but change nothing):
                 GET  /api/v1/report, /devices/{id}/report      the evidence as plain text
                 POST /api/v1/declarations               what the organisation states about what cannot be measured
                 POST /api/v1/devices/{id}/exceptions    accept a failing check with a reason, or withdraw that
+                POST /api/v1/frameworks                 which frameworks the console shows (Cyber Essentials, CERT-In, DPDP)
+                (fleet, report and shared take ?framework=ce|certin|dpdp; the default is the organisation's first)
                 GET  /api/v1/audit
                 GET  /api/v1/agent/installer            the newest agent installer, for whoever may add a PC
 With a share link:  GET /api/v1/shared                  the organisation's evidence, read-only, until the link expires
@@ -229,8 +231,25 @@ def _reference(c) -> dict:
             "syncing": m.get("syncing") == "1", "error": m.get("cve_error") or m.get("eol_error") or None}
 
 
-def _declared(c) -> list:
-    return judge.declared([{**r, "at": _iso(r["at"])} for r in c.execute("SELECT key, answer, note, at FROM declarations")])
+def _declared(c, fw: str = "ce") -> list:
+    return judge.declared([{**r, "at": _iso(r["at"])} for r in c.execute("SELECT key, answer, note, at FROM declarations")], fw)
+
+
+def _frameworks(c) -> list:
+    """The frameworks this organisation shows, in its order; Cyber Essentials when none is set."""
+    r = c.execute("SELECT frameworks FROM organisations").fetchone()
+    return [k for k in (r["frameworks"] if r else []) or [] if k in judge.FRAMEWORKS] or ["ce"]
+
+
+def _pick(c, asked: str | None) -> tuple:
+    shown = _frameworks(c)
+    fw = asked if asked in judge.FRAMEWORKS else shown[0]
+    return fw, [{"key": k, "title": f["title"], "scheme": f["scheme"], "footer": f["footer"], "shown": k in shown,
+                 "areas": [{"key": a, "title": t} for a, t, _about, _ids in f["controls"]]} for k, f in judge.FRAMEWORKS.items()]
+
+
+def _areas(fw: str) -> list:
+    return [(k, t, about) for k, t, about, _ids in judge.FRAMEWORKS[fw]["controls"]]
 
 
 @app.get("/api/v1/devices")
@@ -238,45 +257,49 @@ def devices(who: dict = Depends(reader)):
     with db.org(who["org_id"]) as c:
         org = c.execute("SELECT name FROM organisations").fetchone()
         rows = c.execute(DEVICES_SQL + "ORDER BY lower(d.name)").fetchall()
+        fw, fws = _pick(c, None)
     now = datetime.now(timezone.utc)
     return {"organisation": org["name"] if org else "", "generated_at": _iso(now), "checkin_seconds": CHECKIN_SECONDS,
-            "devices": [_device_row(r, now) for r in rows]}
+            "framework": fw, "frameworks": fws, "devices": [_device_row(r, now) for r in rows]}
 
 
 @app.get("/api/v1/fleet")
-def fleet(who: dict = Depends(reader)):
-    """The dashboard: how many devices pass each control area, which checks fail on which devices, flaws
-    that are being used in real attacks, and the last 90 days."""
+def fleet(framework: str | None = None, who: dict = Depends(reader)):
+    """The dashboard for one framework: how many devices pass each control area, which checks fail on which
+    devices, flaws that are being used in real attacks, and the last 90 days."""
     now = datetime.now(timezone.utc)
     with db.org(who["org_id"]) as c:
         org = c.execute("SELECT name FROM organisations").fetchone()
+        fw, fws = _pick(c, framework)
         rows = [_device_row(r, now) for r in c.execute(DEVICES_SQL + "ORDER BY lower(d.name)")]
-        hist = c.execute("SELECT day, line FROM compliance_history WHERE day >= %s ORDER BY day",
-                         (now.date() - timedelta(days=HISTORY_DAYS - 1),)).fetchall()
-        ref, said = _reference(c), _declared(c)
+        hist = c.execute("SELECT day, line FROM compliance_history WHERE day >= %s AND framework = %s ORDER BY day",
+                         (now.date() - timedelta(days=HISTORY_DAYS - 1), fw)).fetchall()
+        ref, said = _reference(c), _declared(c, fw)
     judged = [d for d in rows if d["judgement"]]
+    short = {d["id"]: judge.framework_summary(d["judgement"], fw) for d in judged}
     sup = lambda d: d["judgement"].get("support") or {}
     areas = [{"key": k, "title": t, "about": about,
-              **{s: sum(1 for d in judged if d["judgement"]["compliance"]["areas"].get(k) == s) for s in ("pass", "fail", "warn", "unknown")}}
-             for k, t, about in judge.agent.CONTROLS]
+              **{s: sum(1 for d in judged if ((short[d["id"]] or {}).get("areas") or {}).get(k) == s) for s in ("pass", "fail", "warn", "unknown", "info")}}
+             for k, t, about in _areas(fw)]
     failing = {}
     for d in judged:
-        for f in d["judgement"].get("failing") or []:
+        for f in (short[d["id"]] or {}).get("failing") or []:
             failing.setdefault(f["id"], {**f, "devices": []})["devices"].append({"id": d["id"], "name": d["name"]})
     sec = [d for d in judged if d["judgement"].get("security")]
     days = {}
     for h in hist:
-        x = days.setdefault(h["day"], {"day": _iso(h["day"]), "devices": 0, "all_passing": 0, "areas": {k: 0 for k, _, _ in judge.agent.CONTROLS}})
+        x = days.setdefault(h["day"], {"day": _iso(h["day"]), "devices": 0, "all_passing": 0, "areas": {k: 0 for k, _, _ in _areas(fw)}})
         ctl = h["line"].get("controls") or {}
         x["devices"] += 1
-        x["all_passing"] += int(bool(ctl) and all(v == "pass" for v in ctl.values()))
+        x["all_passing"] += int(bool(ctl) and all(v in ("pass", "info") for v in ctl.values()))
         for k, v in ctl.items():
             if k in x["areas"] and v == "pass":
                 x["areas"][k] += 1
     return {"organisation": org["name"] if org else "", "generated_at": _iso(now), "devices": len(rows), "judged": len(judged),
+            "framework": fw, "frameworks": fws,
             "silent": [{"id": d["id"], "name": d["name"], "last_seen": d["last_seen"]} for d in rows
                        if d["silent_seconds"] is None or d["silent_seconds"] > SILENT_HOURS * 3600],
-            "all_passing": sum(1 for d in judged if d["judgement"]["compliance"]["controls_passing"] == d["judgement"]["compliance"]["controls"]),
+            "all_passing": sum(1 for v in short.values() if v and v["controls_passing"] == v["controls"]),
             "areas": areas, "failing": sorted(failing.values(), key=lambda f: (-len(f["devices"]), f["id"])),
             "exploited": [{"device_id": d["id"], "device": d["name"], **e} for d in sec for e in d["judgement"]["security"].get("exploited") or []],
             "unsupported": [{"device_id": d["id"], "device": d["name"], "windows": sup(d).get("windows") == "ended",
@@ -287,7 +310,7 @@ def fleet(who: dict = Depends(reader)):
                        "exploited": sum(d["judgement"]["security"]["kev"] for d in sec),
                        "critical": sum(d["judgement"]["security"]["critical"] for d in sec),
                        "updates": sum((d["summary"] or {}).get("updates") or 0 for d in rows),
-                       "accepted": sum(d["judgement"]["compliance"]["accepted"] for d in judged)},
+                       "accepted": sum((v or {}).get("accepted") or 0 for v in short.values())},
             "history": list(days.values()), "reference": ref, "declared": said, "thresholds": judge.T,
             "silent_hours": SILENT_HOURS, "device_list": rows}
 
@@ -312,14 +335,17 @@ def device_detail(device_id: str, who: dict = Depends(reader)):
         history = c.execute("SELECT kind, count(*) AS versions, min(received_at) AS first, max(received_at) AS last FROM snapshots "
                             "WHERE device_id=%s GROUP BY kind ORDER BY kind", (device_id,)).fetchall()
         j = c.execute("SELECT security, compliance FROM judgements WHERE device_id = %s", (device_id,)).fetchone()
-        days = c.execute("SELECT day, line FROM compliance_history WHERE device_id = %s AND day >= %s ORDER BY day",
+        days = c.execute("SELECT day, framework, line FROM compliance_history WHERE device_id = %s AND day >= %s ORDER BY day",
                          (device_id, now.date() - timedelta(days=HISTORY_DAYS - 1))).fetchall()
         ref = _reference(c)
+        fw, fws = _pick(c, None)
     return {**dev, "snapshots": {s["kind"]: {"received_at": _iso(s["received_at"]), "payload": s["payload"]} for s in snaps},
             "history": [{"kind": h["kind"], "versions": h["versions"], "first": _iso(h["first"]), "last": _iso(h["last"])} for h in history],
             "compliance": j["compliance"] if j else None, "flaws": (j["security"] or {}).get("flaws") if j else None,
             "support": (j["security"] or {}).get("support") if j else None,
-            "compliance_history": [{"day": _iso(d["day"]), **d["line"]} for d in days], "reference": ref}
+            "compliance_history": [{"day": _iso(d["day"]), **d["line"]} for d in days if d["framework"] == "ce"],
+            "histories": {k: [{"day": _iso(d["day"]), **d["line"]} for d in days if d["framework"] == k] for k in judge.FRAMEWORKS},
+            "framework": fw, "frameworks": fws, "reference": ref}
 
 
 @app.post("/api/v1/devices/{device_id}/exceptions")
@@ -348,9 +374,10 @@ async def accept_check(device_id: str, request: Request, who: dict = Depends(edi
         sec = j["security"] or {}
         c.execute("UPDATE judgements SET compliance = %s, summary = %s WHERE device_id = %s",
                   (Jsonb(comp), Jsonb(judge.summary(comp, sec.get("flaws"), sec.get("support"))), device_id))
-        c.execute("INSERT INTO compliance_history (org_id, device_id, day, line) VALUES (%s,%s,%s,%s) "
-                  "ON CONFLICT (device_id, day) DO UPDATE SET line = EXCLUDED.line",
-                  (who["org_id"], device_id, now.date(), Jsonb(judge.history_line(comp))))
+        for fw, line in judge.history_lines(comp).items():
+            c.execute("INSERT INTO compliance_history (org_id, device_id, day, framework, line) VALUES (%s,%s,%s,%s,%s) "
+                      "ON CONFLICT (device_id, day, framework) DO UPDATE SET line = EXCLUDED.line",
+                      (who["org_id"], device_id, now.date(), fw, Jsonb(line)))
         c.execute("INSERT INTO audit_log (org_id, actor, action, detail) VALUES (%s,%s,%s,%s)",
                   (who["org_id"], _actor(who), "check.accepted" if reason else "check.acceptance_withdrawn",
                    Jsonb({"device": device_id, "name": dev["name"], "check": check_id, "reason": reason})))
@@ -376,7 +403,23 @@ async def declare(request: Request, who: dict = Depends(editor)):
     return {"ok": True}
 
 
-def _report(c, now: datetime, only: str | None = None) -> str:
+@app.post("/api/v1/frameworks")
+async def set_frameworks(request: Request, who: dict = Depends(editor)):
+    """Which frameworks the organisation's console shows, in order. Every device is judged under all of them
+    anyway; this only chooses what is shown, and the first is shown first."""
+    body = await request.json()
+    keys = body.get("frameworks")
+    if not isinstance(keys, list) or not keys or any(k not in judge.FRAMEWORKS for k in keys) or len(set(keys)) != len(keys):
+        raise HTTPException(400, "Choose at least one of the listed frameworks.")
+    with db.org(who["org_id"]) as c:
+        before = _frameworks(c)
+        c.execute("UPDATE organisations SET frameworks = %s", (keys,))
+        c.execute("INSERT INTO audit_log (org_id, actor, action, detail) VALUES (%s,%s,%s,%s)",
+                  (who["org_id"], _actor(who), "frameworks.changed", Jsonb({"from": before, "to": keys})))
+    return {"ok": True, "frameworks": keys}
+
+
+def _report(c, now: datetime, only: str | None = None, fw: str = "ce") -> str:
     org = c.execute("SELECT name FROM organisations").fetchone()
     rows = c.execute("SELECT d.id, d.name, d.last_seen, d.summary, j.judged_at, j.security, j.compliance FROM devices d "
                      "LEFT JOIN judgements j ON j.device_id = d.id " + ("WHERE d.id = %s " if only else "") + "ORDER BY lower(d.name)",
@@ -385,29 +428,31 @@ def _report(c, now: datetime, only: str | None = None) -> str:
     devs = [({"name": r["name"], "windows": (r["summary"] or {}).get("windows"), "model": ((r["summary"] or {}).get("model") or "").strip(),
               "last_seen": stamp(r["last_seen"])},
              r["compliance"], (r["security"] or {}).get("flaws") if r["compliance"] else None, stamp(r["judged_at"])) for r in rows]
-    return judge.report_text(org["name"] if org else "", stamp(now) + " UTC", devs, _declared(c))
+    return judge.report_text(org["name"] if org else "", stamp(now) + " UTC", devs, _declared(c, fw), fw)
 
 
 @app.get("/api/v1/report")
-def report(who: dict = Depends(reader)):
+def report(framework: str | None = None, who: dict = Depends(reader)):
     """The evidence for the whole organisation as plain text: to paste into a questionnaire or send to a broker."""
     now = datetime.now(timezone.utc)
     with db.org(who["org_id"]) as c:
-        text = _report(c, now)
-    return {"generated_at": _iso(now), "text": text}
+        fw, _ = _pick(c, framework)
+        text = _report(c, now, fw=fw)
+    return {"generated_at": _iso(now), "framework": fw, "text": text}
 
 
 @app.get("/api/v1/devices/{device_id}/report")
-def device_report(device_id: str, who: dict = Depends(reader)):
+def device_report(device_id: str, framework: str | None = None, who: dict = Depends(reader)):
     now = datetime.now(timezone.utc)
     with db.org(who["org_id"]) as c:
         _one_device(c, device_id, now)
-        text = _report(c, now, device_id)
-    return {"generated_at": _iso(now), "text": text}
+        fw, _ = _pick(c, framework)
+        text = _report(c, now, device_id, fw)
+    return {"generated_at": _iso(now), "framework": fw, "text": text}
 
 
 @app.get("/api/v1/shared")
-def shared(authorization: str | None = Header(default=None)):
+def shared(framework: str | None = None, authorization: str | None = Header(default=None)):
     """What a share link shows: the organisation's devices with their checks, the declarations and the report.
     Read-only, no account needed, until the link expires or is withdrawn. Every opening is counted."""
     token = authorization[6:].strip() if authorization and authorization.lower().startswith("share ") else ""
@@ -420,17 +465,23 @@ def shared(authorization: str | None = Header(default=None)):
         org = c.execute("SELECT name FROM organisations").fetchone()
         rows = c.execute("SELECT d.id, d.name, d.last_seen, d.summary, j.judged_at, j.summary AS judgement, j.compliance FROM devices d "
                          "LEFT JOIN judgements j ON j.device_id = d.id ORDER BY lower(d.name)").fetchall()
-        said, text = _declared(c), _report(c, now)
+        fw, fws = _pick(c, framework)
+        fws = [f for f in fws if f["shown"]]                  # a share link sees only what the organisation shows
+        if fw not in [f["key"] for f in fws]:
+            fw = fws[0]["key"]
+        said, text = _declared(c, fw), _report(c, now, fw=fw)
     judged = [r for r in rows if r["judgement"]]
+    short = {r["id"]: judge.framework_summary(r["judgement"], fw) for r in judged}
     return {"organisation": org["name"] if org else "", "label": link["label"], "expires_at": _iso(link["expires_at"]), "generated_at": _iso(now),
             "devices": len(rows), "judged": len(judged),
-            "all_passing": sum(1 for r in judged if r["judgement"]["compliance"]["controls_passing"] == r["judgement"]["compliance"]["controls"]),
+            "framework": fw, "frameworks": fws,
+            "all_passing": sum(1 for v in short.values() if v and v["controls_passing"] == v["controls"]),
             "areas": [{"key": k, "title": t, "about": about,
-                       **{s: sum(1 for r in judged if r["judgement"]["compliance"]["areas"].get(k) == s) for s in ("pass", "fail", "warn", "unknown")}}
-                      for k, t, about in judge.agent.CONTROLS],
+                       **{s: sum(1 for v in short.values() if ((v or {}).get("areas") or {}).get(k) == s) for s in ("pass", "fail", "warn", "unknown", "info")}}
+                      for k, t, about in _areas(fw)],
             "device_list": [{"id": str(r["id"]), "name": r["name"], "windows": (r["summary"] or {}).get("windows"),
                              "model": ((r["summary"] or {}).get("model") or "").strip(), "last_seen": _iso(r["last_seen"]),
-                             "judged_at": _iso(r["judged_at"]), "compliance": r["compliance"],
+                             "judged_at": _iso(r["judged_at"]), "compliance": judge.profile(r["compliance"], fw),
                              "security": (r["judgement"] or {}).get("security")} for r in rows],
             "declared": said, "text": text}
 

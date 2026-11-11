@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { when } from "@/lib/format";
 import { Card, ListSkeleton, Notice, Stat } from "@/shadow/ui";
 import { api, type Shared } from "../api";
-import { ControlCard, Mark, Section } from "../parts";
+import { ControlCard, FrameworkSwitch, Mark, Section } from "../parts";
 import { Frame, Logo } from "./SignIn";
 
 const ANSWER = { yes: "Yes", no: "No", na: "Does not apply" } as const;
@@ -14,7 +14,9 @@ const ANSWER = { yes: "Yes", no: "No", na: "Does not apply" } as const;
 export function SharedPage({ token }: { token: string }) {
   const [d, setD] = useState<Shared | null>(null);
   const [gone, setGone] = useState<string | null>(null);
-  useEffect(() => { api.shared(token).then(setD).catch((e) => setGone((e as Error).message)); }, [token]);
+  const [fw, setFw] = useState<string | undefined>(undefined);
+  useEffect(() => { api.shared(token, fw).then(setD).catch((e) => setGone((e as Error).message)); }, [token, fw]);
+  const f = d?.frameworks?.find((x) => x.key === d.framework);
   const copy = async () => { try { await navigator.clipboard.writeText(d?.text ?? ""); toast.success("Copied"); } catch { toast.error("Could not copy."); } };
 
   if (gone) return <Frame title="This link does not open anything"><Notice tone="warn">{gone}</Notice><p className="mt-3 text-sm text-muted-foreground">Ask the organisation that sent it for a new one.</p></Frame>;
@@ -34,7 +36,8 @@ export function SharedPage({ token }: { token: string }) {
                   Shared as “{d.label}”. This link stops working on {new Date(d.expires_at).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}. Produced {when(d.generated_at)}.
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <FrameworkSwitch all={d.frameworks} value={d.framework} onChange={setFw} />
                 <Button variant="outline" size="sm" onClick={() => void copy()}><Copy />Copy as text</Button>
                 <Button variant="outline" size="sm" onClick={() => window.print()}><Printer />Print</Button>
               </div>
@@ -42,14 +45,14 @@ export function SharedPage({ token }: { token: string }) {
 
             <Card data-print-card className="rounded-lg p-5">
               <div className="flex flex-wrap items-center justify-between gap-6">
-                <div className="text-xl font-semibold tabular">{d.all_passing} of {d.devices} device{d.devices === 1 ? "" : "s"} pass{d.all_passing === 1 ? "es" : ""} all five control areas</div>
-                <div className="grid grid-cols-5 gap-6">
+                <div className="text-xl font-semibold tabular">{d.all_passing} of {d.devices} device{d.devices === 1 ? "" : "s"} pass{d.all_passing === 1 ? "es" : ""} every control area</div>
+                <div className="flex flex-wrap gap-6">
                   {d.areas.map((a) => <Stat key={a.key} label={a.title} value={<span className="tabular">{a.pass}<span className="text-sm font-normal text-muted-foreground"> of {d.judged}</span></span>} />)}
                 </div>
               </div>
               <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">
-                Each PC is measured by an agent on the PC and judged on the organisation's server against the five Cyber Essentials control areas. A PC reports counts and settings, never account names, file names or addresses.
-                This is not the scheme's own tool and passing here is not a certificate.
+                Each PC is measured by an agent on the PC and judged on the organisation's server against {f?.scheme ?? "the Cyber Essentials control areas"}. A PC reports counts and settings, never account names, file names or addresses.
+                {" "}{f?.footer ?? "This is not the scheme's own tool and passing here is not a certificate."}
               </p>
             </Card>
 

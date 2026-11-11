@@ -41,8 +41,10 @@ home routers and office firewalls with nothing to configure.
 
 The matching and end-of-life code (`cve.py`, `eol.py`) is plain Python with no dependence on Windows, which
 is why the server is Python: the server image copies those two files from the agent unchanged, so there is
-one set of matching rules. The thresholds, the five control areas and the declared questions come from the
-agent's `compliance.py` in the same way. The checks themselves are written a second time for the server
+one set of matching rules. The frameworks (Cyber Essentials, CERT-In MSME, DPDP Rule 6), their control areas,
+thresholds and declared questions, and the function that judges the measured checks for each, come from the
+agent's `compliance.py` in the same way; an organisation chooses which frameworks its console shows
+(`organisations.frameworks`). The checks themselves are written a second time for the server
 (`server/app/judge.py`), because the server sees less than the PC does: counts and true/false, never an
 account name or a path. Its evidence says "1 account does not require a password"; the PC's own console
 says which.
@@ -100,9 +102,9 @@ Phase 2 tables:
 | Table | Holds |
 |---|---|
 | `judgements` | the latest judgement of each device: flaws, end of support, the checks, a summary |
-| `compliance_history` | one line per device per day with each check's result |
+| `compliance_history` | one line per device per day per framework with each check's result |
 | `declarations` | what the organisation states about things no program can measure |
-| `exceptions` | a failing check accepted on one device, with the reason and who |
+| `exceptions` | a failing check accepted on one device, with the reason and who (it holds in every framework) |
 | `reference_status` | how fresh the public lists are (shared; no customer data) |
 
 The lists themselves (`cve`, `aff`, `kev`, `eol_product`) are not in PostgreSQL: they are public, the same

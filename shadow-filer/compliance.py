@@ -293,20 +293,23 @@ def configuration_checks(p: dict) -> list:
     return out
 
 
-def unlock_check(p: dict) -> dict:
-    """Cyber Essentials: an unlock password must be protected against guessing, by locking the account after no more
-    than 10 wrong tries (or throttling). Windows' own lockout setting is what can be read; Windows Hello's PIN has
-    its own protection in the TPM, which is not visible here."""
-    n, lim = p.get("lockout_threshold"), THRESHOLDS["unlock_tries"]
-    title = f"Wrong passwords lock the account after {lim} tries or fewer"
+def unlock_check(p: dict, lo: int = 1, hi: int | None = None, ref: str = "") -> dict:
+    """Wrong passwords must lock the account. Cyber Essentials: after no more than 10 wrong tries (or throttling);
+    CERT-In RPP.2: after 3 to 5. Windows' own lockout setting is what can be read; Windows Hello's PIN has its own
+    protection in the TPM, which is not visible here. The number read is kept as the check's `fact`, so a profile
+    can judge it again with its own range."""
+    n, hi = p.get("lockout_threshold"), hi or THRESHOLDS["unlock_tries"]
+    title = f"Wrong passwords lock the account after {hi} tries or fewer" if lo <= 1 else         f"Wrong passwords lock the account after {lo} to {hi} tries"
     if not isinstance(n, int) or isinstance(n, bool) or n < 0:
-        return _check("cfg.unlock", title, "unknown", "Windows' account lockout setting could not be read.")
-    ok = 0 < n <= lim
-    return _check("cfg.unlock", title, "pass" if ok else "fail",
-                  f"Accounts lock after {n} wrong password{'s' if n != 1 else ''}." if ok else
-                  "Accounts never lock after wrong passwords, so a password can be guessed without limit." if n == 0 else
-                  f"Accounts lock only after {n} wrong passwords.",
-                  fix=None if ok else f"In an administrator terminal: net accounts /lockoutthreshold:{lim}")
+        return {**_check("cfg.unlock", title, "unknown", "Windows' account lockout setting could not be read."), "fact": -1}
+    ok, strict = lo <= n <= hi, 0 < n < lo
+    detail = (f"Accounts lock after {n} wrong password{'s' if n != 1 else ''}." if ok else
+              "Accounts never lock after wrong passwords, so a password can be guessed without limit." if n == 0 else
+              f"Accounts lock after {n} wrong password{'s' if n != 1 else ''}: stricter than {ref or 'asked'} ({lo} to {hi}), "
+              "which locks people out easily." if strict else
+              f"Accounts lock only after {n} wrong passwords" + (f"; {ref} asks for {lo} to {hi}." if ref else "."))
+    return {**_check("cfg.unlock", title, "pass" if ok else "warn" if strict else "fail", detail,
+                     fix=None if ok else f"In an administrator terminal: net accounts /lockoutthreshold:{hi}"), "fact": n}
 
 
 def security_release_due(today: date) -> date:
@@ -521,14 +524,170 @@ CONTROLS = (("firewalls", "Firewalls", "Every device is protected by a firewall,
             ("access", "User access control", "Administrator rights are used only when needed."),
             ("malware", "Malware protection", "Antivirus is on and current."))
 
-DECLARED = (("mfa", "Multi-factor login is on for email and cloud services",
-             "Cyber Essentials v3.3: every cloud service must use it; without it the assessment fails. Insurers ask too."),
-            ("backups", "Important files are backed up, with one copy offline or unchangeable", "Asked by insurers."),
-            ("backup_test", "A restore from backup was tested in the last 12 months", "Asked by insurers."),
-            ("incident_plan", "There is a written plan for what to do after a break-in", "Asked by insurers."),
-            ("training", "Everyone who uses the PC has had security awareness training", "Asked by insurers."),
-            ("router", "The router's default password was changed and its firmware is current", "Cyber Essentials: boundary firewall."),
-            ("admin_separate", "Administrator accounts are not used for email or browsing", "Cyber Essentials: user access control."))
+# Every question that can be declared, once. A framework lists the ones it asks, with its own reason. One
+# answer per key, shared by every framework that asks it: so two frameworks never share a key unless they ask
+# the same thing (CERT-In's perimeter firewall is not Cyber Essentials' router question).
+QUESTIONS = {"mfa": "Multi-factor login is on for email and cloud services",
+             "backups": "Important files are backed up, with one copy offline or unchangeable",
+             "backup_test": "A restore from backup was tested in the last 12 months",
+             "incident_plan": "There is a written plan for what to do after a break-in",
+             "training": "Everyone who uses the PC has had security awareness training",
+             "router": "The router's default password was changed and its firmware is current",
+             "perimeter": "A firewall protects the office network at its edge (the router's own or a separate one)",
+             "admin_separate": "Administrator accounts are not used for email or browsing"}
+
+DECLARED = (("mfa", QUESTIONS["mfa"], "Cyber Essentials v3.3: every cloud service must use it; without it the assessment fails. Insurers ask too."),
+            ("backups", QUESTIONS["backups"], "Asked by insurers."),
+            ("backup_test", QUESTIONS["backup_test"], "Asked by insurers."),
+            ("incident_plan", QUESTIONS["incident_plan"], "Asked by insurers."),
+            ("training", QUESTIONS["training"], "Asked by insurers."),
+            ("router", QUESTIONS["router"], "Cyber Essentials: boundary firewall."),
+            ("admin_separate", QUESTIONS["admin_separate"], "Cyber Essentials: user access control."))
+
+FW_IDS = ("fw.on", "fw.default", "fw.ports", "fw.rules", "fw.shares")
+UPD_IDS = ("upd.supported", "upd.windows", "upd.automatic", "upd.flaws", "upd.coverage", "upd.unsupported", "upd.browsers", "upd.pending")
+MAL_IDS = ("mal.present", "mal.realtime", "mal.signatures")
+CERTIN = "CERT-In"
+
+# One measurement, several verdicts (docs/spec-india-cert-in-dpdp.md, F-0). Each framework puts the same checks
+# in its own areas and may judge a few of them by its own rule:
+#   unlock      (lo, hi) wrong passwords before the account locks
+#   encryption  "note": never fails; "personal_data": fails on a device labelled as holding personal data
+# A check a framework does not place goes to its last area, never away.
+FRAMEWORKS = {
+    "ce": {"title": "Cyber Essentials", "scheme": SCHEME, "unlock": (1, THRESHOLDS["unlock_tries"]), "unlock_ref": "Cyber Essentials",
+           "encryption": "note",
+           "controls": tuple((k, t, a, ids) for (k, t, a), ids in zip(CONTROLS, (
+               FW_IDS, ("cfg.lock", "cfg.unlock", "cfg.autoplay", "cfg.guest", "cfg.password", "cfg.unused", "cfg.encryption"),
+               UPD_IDS, ("acc.daily", "acc.admins"), MAL_IDS))),
+           "declared": tuple((k, why) for k, _, why in DECLARED),
+           "footer": "This follows the Cyber Essentials control areas but is not a certificate."},
+    "certin": {"title": "CERT-In MSME", "scheme": "CERT-In Elemental Cyber Defense Controls for MSMEs v1.0 (CISG-2025-03, 1 Sep 2025)",
+               "unlock": (3, 5), "unlock_ref": CERTIN, "encryption": "note",
+               "controls": (
+                   ("nes", "Network security (NES)", "NES.1: the host firewall is on and configured.", ("fw.on", "fw.default", "fw.rules")),
+                   ("ems", "Endpoint security (EMS)", "EMS.1 and EMS.4: antivirus on and current; a plugged-in drive runs nothing by itself.",
+                    MAL_IDS + ("cfg.autoplay",)),
+                   ("sc", "Secure configuration (SC)", "SC.2 and SC.3: unneeded ports and shares closed, default accounts off, "
+                                                       "unsupported software removed.",
+                    ("fw.ports", "fw.shares", "cfg.guest", "upd.unsupported", "cfg.lock", "cfg.encryption")),
+                   ("pm", "Patch management (PM)", "PM.1 and PM.2: Windows and applications patched; known-exploited flaws followed.",
+                    ("upd.supported", "upd.windows", "upd.automatic", "upd.flaws", "upd.coverage", "upd.browsers", "upd.pending")),
+                   ("rpp", "Password policy (RPP)", "RPP.2: accounts lock after 3 to 5 failed attempts; every account needs a password.",
+                    ("cfg.unlock", "cfg.password")),
+                   ("acim", "Access control (ACIM)", "ACIM.1, ACIM.2 and ACIM.4: accounts in use, least privilege, administrator "
+                                                     "rights only when essential.", ("acc.daily", "acc.admins", "cfg.unused"))),
+               "declared": (("mfa", "CERT-In RPP.3: multi-factor login for critical systems, administrators and remote access."),
+                            ("perimeter", "CERT-In NES.1: a perimeter firewall."),
+                            ("backups", "CERT-In DPBP.1: regular backups, encrypted, with a copy offsite and offline."),
+                            ("backup_test", "CERT-In DPBP.2: restores are tested."),
+                            ("incident_plan", "CERT-In IM.1: a documented incident response plan. Incidents are reported to CERT-In "
+                                              "within 6 hours (directions under section 70B(6) of the IT Act)."),
+                            ("training", "CERT-In AT.1: awareness training at least twice a year."),
+                            ("admin_separate", "CERT-In ACIM.4: administrator rights only when essential.")),
+               "footer": "This follows CERT-In's 15 elemental controls for MSMEs, as far as a PC can show them. CERT-In says an MSME "
+                         "may have a yearly baseline audit by an empanelled auditor; this is not that audit and not a certificate."},
+    "dpdp": {"title": "DPDP Rule 6", "scheme": "DPDP Rules 2025, Rule 6 and 7 (G.S.R. 846(E), in force 13 May 2027)",
+             "unlock": (1, THRESHOLDS["unlock_tries"]), "unlock_ref": "", "encryption": "personal_data",
+             "controls": (
+                 ("enc", "6(1)(a) Encryption", "Personal data is protected by encryption, obfuscation, masking or virtual tokens.",
+                  ("cfg.encryption",)),
+                 ("access", "6(1)(b) Access control", "Access to the computer resources that hold personal data is controlled. "
+                                                      "The rule gives no numbers; lockout uses Cyber Essentials' 10 tries.",
+                  ("cfg.unlock", "cfg.password", "cfg.guest", "cfg.unused", "cfg.lock", "acc.daily", "acc.admins") + FW_IDS),
+                 ("other", "Other reasonable safeguards", "Patching and malware protection. Rule 6 does not name these; placing them "
+                                                          "under its reasonable security safeguards is our own mapping.",
+                  UPD_IDS + MAL_IDS + ("cfg.autoplay",))),
+             "declared": (("backups", "DPDP Rule 6(1)(d): continuity measures, including backups."),
+                          ("backup_test", "DPDP Rule 6(1)(d): backups that can be restored."),
+                          ("incident_plan", "DPDP Rule 7: a breach is told to the Board and to the people affected, with a detailed "
+                                            "report within 72 hours."),
+                          ("mfa", "DPDP Rule 6(1)(b): access control over computer resources."),
+                          ("admin_separate", "DPDP Rule 6(1)(b): access control over computer resources.")),
+             "footer": "Rule 6 and 7 evidence only, as far as a PC can show it. Notice, consent, consent managers, the rights of data "
+                       "principals, children's data and transfers abroad are not covered. Not a statement of DPDP compliance."}}
+DEFAULT_FRAMEWORKS = ("ce",)
+
+
+def declared_keys() -> set:
+    return {k for f in FRAMEWORKS.values() for k, _ in f["declared"]}
+
+
+def _on_pc(ch: dict) -> dict:
+    """The server's wording of a check that the agent's code judged: the fix is done on the PC, not on the server."""
+    if ch["status"] == "unknown" and ch["id"] == "cfg.unlock":
+        ch["detail"] = "The device could not read its account lockout setting."
+    if ch.get("fix") and not ch["fix"].startswith("On the PC"):
+        ch["fix"] = "On the PC, " + ch["fix"][0].lower() + ch["fix"][1:]
+    return ch
+
+
+def verdict(fw: str, ch: dict, labels=(), remote: bool = False) -> dict:
+    """The check as this framework judges it: a copy, never the measured one."""
+    f, ch = FRAMEWORKS[fw], dict(ch)
+    if ch["id"] == "cfg.unlock" and "fact" in ch and tuple(f["unlock"]) != (1, THRESHOLDS["unlock_tries"]):
+        u = unlock_check({"lockout_threshold": ch["fact"]}, *f["unlock"], f["unlock_ref"])
+        ch.update({k: u[k] for k in ("title", "status", "detail", "fix")})
+        if remote:
+            _on_pc(ch)
+    if ch["id"] == "cfg.encryption" and f["encryption"] == "personal_data" and ch["status"] == "info":
+        base = ch["detail"].split(" Not a Cyber Essentials")[0]
+        if ch.get("fix"):
+            ch["fix"] = ch["fix"].split(" Asked for by insurers")[0]
+        if "personal_data" in labels:
+            ch.update(status="fail", detail=base + " This device is marked as holding personal data: DPDP Rule 6(1)(a) asks for "
+                                                   "encryption, obfuscation, masking or virtual tokens.")
+        else:
+            ch["detail"] = (base + " This device is not marked as holding personal data, so this is a note; on one that is, "
+                                   "Rule 6(1)(a) asks for it. Devices are marked on the fleet server.")
+    return ch
+
+
+def _roll(checks: list) -> str:
+    s = [c["status"] for c in checks if not c.get("accepted")]
+    if s and all(x == "info" for x in s):
+        return "info"           # an area of notes only is not "met"
+    return "fail" if "fail" in s else "warn" if "warn" in s else "unknown" if "unknown" in s else "pass"
+
+
+def tally(controls: list) -> dict:
+    """An area's status and counts, and the summary, after accepted exceptions are applied."""
+    every = []
+    for g in controls:
+        g["status"] = _roll(g["checks"])
+        g["counts"] = {s: sum(1 for ch in g["checks"] if ch["status"] == s and not ch["accepted"]) for s in ("pass", "fail", "warn", "unknown")}
+        g["accepted"] = sum(1 for ch in g["checks"] if ch["accepted"])
+        every += g["checks"]
+    return {"controls_passing": sum(1 for g in controls if g["status"] == "pass"),
+            "controls": sum(1 for g in controls if g["status"] != "info"),
+            "fail": sum(1 for ch in every if ch["status"] == "fail" and not ch["accepted"]),
+            "warn": sum(1 for ch in every if ch["status"] == "warn" and not ch["accepted"]),
+            "unknown": sum(1 for ch in every if ch["status"] == "unknown"),
+            "passed": sum(1 for ch in every if ch["status"] == "pass"),
+            "accepted": sum(1 for ch in every if ch["accepted"])}
+
+
+def judge_framework(fw: str, checks: list, accepted: dict, labels=(), remote: bool = False) -> dict:
+    """The measured checks placed in one framework's control areas, judged by its rules, exceptions applied.
+    Exceptions are per check, so an accepted check is accepted, with its failing mark, in every framework."""
+    f = FRAMEWORKS[fw]
+    judged = [verdict(fw, ch, labels, remote) for ch in checks]
+    for ch in judged:
+        a = accepted.get(ch["id"])
+        ch["accepted"] = a if a and ch["status"] in ("fail", "warn") else None
+    placed, controls = set(), []
+    for key, title, about, ids in f["controls"]:
+        mine = [ch for i in ids for ch in judged if ch["id"] == i]
+        placed.update(ids)
+        controls.append({"key": key, "title": title, "about": about, "checks": mine})
+    controls[-1]["checks"] += [ch for ch in judged if ch["id"] not in placed]
+    controls = [g for g in controls if g["checks"]]
+    return {"framework": fw, "title": f["title"], "scheme": f["scheme"], "footer": f["footer"],
+            "controls": controls, "summary": tally(controls)}
+
+
+def framework_list(shown) -> list:
+    return [{"key": k, "title": f["title"], "scheme": f["scheme"], "shown": k in shown} for k, f in FRAMEWORKS.items()]
 
 
 # --------------------------------------------------------------------------- what you declared and accepted
@@ -539,13 +698,16 @@ def _conn(db_path):
         CREATE TABLE IF NOT EXISTS compliance_history (day TEXT PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS compliance_declared (key TEXT PRIMARY KEY, answer TEXT, note TEXT, ts TEXT);
         CREATE TABLE IF NOT EXISTS compliance_accepted (check_id TEXT PRIMARY KEY, reason TEXT, ts TEXT);
+        CREATE TABLE IF NOT EXISTS compliance_settings (key TEXT PRIMARY KEY, value TEXT);
+        -- one line per day per framework ('2026-11-11|ce'); lines from before frameworks were Cyber Essentials
+        UPDATE compliance_history SET day = day || '|ce' WHERE day NOT LIKE '%|%';
     """)
     return c
 
 
 def declare(db_path, key: str, answer: str | None, note: str = "") -> bool:
-    """answer: 'yes' | 'no' | 'na' | None (clears it). Only the questions in DECLARED exist."""
-    if key not in {k for k, _, _ in DECLARED} or answer not in ("yes", "no", "na", None):
+    """answer: 'yes' | 'no' | 'na' | None (clears it). Only the questions some framework asks exist."""
+    if key not in declared_keys() or answer not in ("yes", "no", "na", None):
         return False
     c = _conn(db_path)
     try:
@@ -577,14 +739,44 @@ def accept(db_path, check_id: str, reason: str | None) -> bool:
     return True
 
 
+def shown_frameworks(db_path) -> list:
+    """The frameworks the PC's owner chose to see, in FRAMEWORKS order. Cyber Essentials alone until chosen."""
+    c = _conn(db_path)
+    try:
+        r = c.execute("SELECT value FROM compliance_settings WHERE key='frameworks'").fetchone()
+    finally:
+        c.close()
+    try:
+        keys = json.loads(r["value"]) if r else []
+    except ValueError:
+        keys = []
+    keys = [k for k in FRAMEWORKS if isinstance(keys, list) and k in keys]
+    return keys or list(DEFAULT_FRAMEWORKS)
+
+
+def set_frameworks(db_path, keys) -> bool:
+    if not isinstance(keys, list) or not keys or any(k not in FRAMEWORKS for k in keys):
+        return False
+    c = _conn(db_path)
+    try:
+        c.execute("INSERT OR REPLACE INTO compliance_settings VALUES ('frameworks', ?)", (json.dumps([k for k in FRAMEWORKS if k in keys]),))
+        c.commit()
+    finally:
+        c.close()
+    return True
+
+
 # --------------------------------------------------------------------------- putting it together
-def _roll(checks: list) -> str:
-    s = [c["status"] for c in checks if not c.get("accepted")]
-    return "fail" if "fail" in s else "warn" if "warn" in s else "unknown" if "unknown" in s else "pass"
+def measure(cfg: dict, raw: dict, net: dict | None, vul: dict | None, appsv: dict | None, today: date) -> list:
+    """Every check once, as Cyber Essentials words it; the frameworks judge copies of these."""
+    return (firewall_checks(net) + configuration_checks(raw) + update_checks(raw, vul, appsv, today, cfg)
+            + access_checks(raw) + malware_checks(raw))
 
 
-def assess(cfg: dict, raw: dict, net: dict | None, vul: dict | None, appsv: dict | None, today: date | None = None) -> dict:
-    """Everything the page shows, from the PC's settings and what the other modules found."""
+def assess(cfg: dict, raw: dict, net: dict | None, vul: dict | None, appsv: dict | None, today: date | None = None,
+           framework: str = "ce", checks: list | None = None) -> dict:
+    """Everything the page shows for one framework, from the PC's settings and what the other modules found.
+    `checks` are measured ones to reuse, so several frameworks are judged from one measurement."""
     today = today or date.today()
     c = _conn(cfg["database"])
     try:
@@ -592,76 +784,74 @@ def assess(cfg: dict, raw: dict, net: dict | None, vul: dict | None, appsv: dict
         said = {r["key"]: dict(r) for r in c.execute("SELECT * FROM compliance_declared")}
     finally:
         c.close()
-    groups = {"firewalls": firewall_checks(net), "configuration": configuration_checks(raw),
-              "updates": update_checks(raw, vul, appsv, today, cfg), "access": access_checks(raw), "malware": malware_checks(raw)}
-    controls = []
-    for key, title, about in CONTROLS:
-        checks = groups[key]
-        for ch in checks:
-            a = accepted.get(ch["id"])
-            ch["accepted"] = a if a and ch["status"] in ("fail", "warn") else None
-        controls.append({"key": key, "title": title, "about": about, "status": _roll(checks), "checks": checks,
-                         "counts": {s: sum(1 for ch in checks if ch["status"] == s and not ch["accepted"]) for s in ("pass", "fail", "warn", "unknown")},
-                         "accepted": sum(1 for ch in checks if ch["accepted"])})
-    declared = [{"key": k, "title": t, "about": why, "answer": (said.get(k) or {}).get("answer"),
-                 "note": (said.get(k) or {}).get("note") or "", "ts": (said.get(k) or {}).get("ts")} for k, t, why in DECLARED]
-    every = [ch for g in controls for ch in g["checks"]]
-    out = {"assessed_at": datetime.now().isoformat(timespec="seconds"),
-           "device": {"name": raw.get("computer") or "", "manufacturer": raw.get("manufacturer") or "", "model": raw.get("model") or "",
-                      "serial": serial(raw.get("serial")), "windows": windows_name(raw),
-                      "build": f"{raw.get('build') or 0}.{raw.get('ubr') or 0}", "user": raw.get("user") or ""},
-           "controls": controls, "declared": declared, "thresholds": THRESHOLDS,
-           "summary": {"controls_passing": sum(1 for g in controls if g["status"] == "pass"), "controls": len(controls),
-                       "fail": sum(1 for ch in every if ch["status"] == "fail" and not ch["accepted"]),
-                       "warn": sum(1 for ch in every if ch["status"] == "warn" and not ch["accepted"]),
-                       "unknown": sum(1 for ch in every if ch["status"] == "unknown"),
-                       "passed": sum(1 for ch in every if ch["status"] == "pass"),
-                       "accepted": sum(1 for ch in every if ch["accepted"]),
-                       "declared_yes": sum(1 for d in declared if d["answer"] == "yes"),
-                       "declared_no": sum(1 for d in declared if d["answer"] == "no"),
-                       "declared_open": sum(1 for d in declared if not d["answer"])}}
-    return out
+    if checks is None:
+        checks = measure(cfg, raw, net, vul, appsv, today)
+    # The PC itself has no labels: "holds personal data" is set on the fleet server (spec F-1).
+    j = judge_framework(framework, checks, accepted)
+    declared = [{"key": k, "title": QUESTIONS[k], "about": why, "answer": (said.get(k) or {}).get("answer"),
+                 "note": (said.get(k) or {}).get("note") or "", "ts": (said.get(k) or {}).get("ts")}
+                for k, why in FRAMEWORKS[framework]["declared"]]
+    return {"assessed_at": datetime.now().isoformat(timespec="seconds"),
+            "device": {"name": raw.get("computer") or "", "manufacturer": raw.get("manufacturer") or "", "model": raw.get("model") or "",
+                       "serial": serial(raw.get("serial")), "windows": windows_name(raw),
+                       "build": f"{raw.get('build') or 0}.{raw.get('ubr') or 0}", "user": raw.get("user") or ""},
+            "framework": framework, "title": j["title"], "scheme": j["scheme"], "footer": j["footer"],
+            "controls": j["controls"], "declared": declared, "thresholds": THRESHOLDS,
+            "summary": {**j["summary"],
+                        "declared_yes": sum(1 for d in declared if d["answer"] == "yes"),
+                        "declared_no": sum(1 for d in declared if d["answer"] == "no"),
+                        "declared_open": sum(1 for d in declared if not d["answer"])}}
+
+
+def history_line(v: dict) -> dict:
+    return {"controls": {g["key"]: g["status"] for g in v["controls"]},
+            "checks": {ch["id"]: ("accepted" if ch["accepted"] else ch["status"]) for g in v["controls"] for ch in g["checks"]},
+            "summary": {k: v["summary"][k] for k in ("controls_passing", "controls", "fail", "warn", "unknown")}}
 
 
 def record(cfg: dict, v: dict, today: date | None = None) -> None:
-    """Keep today's result per check, so a past month can be shown. One line a day; the last one of the day wins."""
-    day = (today or date.today()).isoformat()
-    line = {"controls": {g["key"]: g["status"] for g in v["controls"]},
-            "checks": {ch["id"]: ("accepted" if ch["accepted"] else ch["status"]) for g in v["controls"] for ch in g["checks"]},
-            "summary": {k: v["summary"][k] for k in ("controls_passing", "fail", "warn", "unknown")}}
+    """Keep today's result per check for v's framework, so a past month can be shown. One line a day per
+    framework; the last one of the day wins."""
+    day = f"{(today or date.today()).isoformat()}|{v.get('framework') or 'ce'}"
     c = _conn(cfg["database"])
     try:
-        c.execute("INSERT OR REPLACE INTO compliance_history VALUES (?,?)", (day, json.dumps(line)))
+        c.execute("INSERT OR REPLACE INTO compliance_history VALUES (?,?)", (day, json.dumps(history_line(v))))
         c.execute("DELETE FROM compliance_history WHERE day < ?", (((today or date.today()) - timedelta(days=HISTORY_DAYS)).isoformat(),))
         c.commit()
     finally:
         c.close()
 
 
-def history(cfg: dict, days: int = 90, today: date | None = None) -> list:
+def history(cfg: dict, days: int = 90, today: date | None = None, framework: str = "ce") -> list:
     since = ((today or date.today()) - timedelta(days=days)).isoformat()
     c = _conn(cfg["database"])
     try:
-        rows = c.execute("SELECT day, value FROM compliance_history WHERE day >= ? ORDER BY day", (since,)).fetchall()
+        rows = c.execute("SELECT day, value FROM compliance_history WHERE day >= ? AND day LIKE ? ORDER BY day",
+                         (since, "%|" + framework)).fetchall()
     finally:
         c.close()
     out = []
     for r in rows:
         try:
-            out.append({"day": r["day"], **json.loads(r["value"])})
+            out.append({"day": r["day"][:10], **json.loads(r["value"])})
         except ValueError:
             pass
     return out
 
 
-def view(cfg: dict, force: bool = False, read=read_posture, log=None, today: date | None = None) -> dict:
-    """Assess now and return the page's data. Reads Windows at most every five minutes unless forced."""
+def view(cfg: dict, force: bool = False, read=read_posture, log=None, today: date | None = None, framework: str | None = None) -> dict:
+    """Assess now and return the page's data for one framework (the first one shown unless asked). Reads Windows
+    at most every five minutes unless forced. Every framework is judged and recorded from the one measurement,
+    so a framework switched on later already has its history."""
     import library
     s = library.settings(cfg)
+    shown = shown_frameworks(cfg["database"])
+    fw = framework if framework in FRAMEWORKS else shown[0]
     raw = _posture(read, force)
     if raw is None:
         return {"assessed_at": None, "error": "Windows could not be asked about this PC's settings.", "controls": [], "declared": [],
-                "summary": {}, "history": [], "patch_log": [], "device": {}, "thresholds": THRESHOLDS}
+                "summary": {}, "history": [], "patch_log": [], "device": {}, "thresholds": THRESHOLDS,
+                "framework": fw, "frameworks": framework_list(shown)}
     import network
     net = network.view(force=force, log=log) if force else (network.peek() or network.view(log=log))
     vul = appsv = None
@@ -671,23 +861,32 @@ def view(cfg: dict, force: bool = False, read=read_posture, log=None, today: dat
         if s["vulnerabilities"]:
             import cve
             vul = cve.view(cfg)
-    v = assess(cfg, raw, net, vul, appsv, today)
-    record(cfg, v, today)
+    today = today or date.today()
+    checks = measure(cfg, raw, net, vul, appsv, today)
+    v = None
+    for k in FRAMEWORKS:
+        x = assess(cfg, raw, net, vul, appsv, today, k, checks)
+        record(cfg, x, today)
+        if k == fw:
+            v = x
     import remedy
-    v["history"] = history(cfg, 90, today)
+    v["frameworks"] = framework_list(shown)
+    v["history"] = history(cfg, 90, today, fw)
     v["patch_log"] = [h for h in remedy.history(cfg["database"], 100)]
     v["text"] = as_text(v)
     if log:      # counts only: no account names in the log
         m = v["summary"]
-        log.info("compliance: %d of %d controls pass, %d failing check(s), %d to look at, %d unknown, %d accepted",
-                 m["controls_passing"], m["controls"], m["fail"], m["warn"], m["unknown"], m["accepted"])
+        log.info("compliance (%s): %d of %d controls pass, %d failing check(s), %d to look at, %d unknown, %d accepted",
+                 fw, m["controls_passing"], m["controls"], m["fail"], m["warn"], m["unknown"], m["accepted"])
     return v
 
 
-def brief(cfg: dict) -> dict | None:
-    """Today's line from the history, for the dashboard: no read of Windows, None before the first assessment."""
-    rows = history(cfg, 1)
-    return rows[-1] if rows else None
+def brief(cfg: dict, today: date | None = None) -> dict | None:
+    """Today's line of the first framework shown, for the dashboard: no read of Windows, None before the first
+    assessment."""
+    fw = shown_frameworks(cfg["database"])[0]
+    rows = history(cfg, 1, today, fw)
+    return {**rows[-1], "framework": fw, "title": FRAMEWORKS[fw]["title"]} if rows else None
 
 
 MARK = {"pass": "PASS", "fail": "FAIL", "warn": "LOOK", "unknown": " ?  ", "info": "note"}
@@ -698,6 +897,7 @@ def as_text(v: dict) -> str:
     d, m = v["device"], v["summary"]
     lines = [f"Security posture of {d.get('name')} ({d.get('manufacturer')} {d.get('model')}, serial {d.get('serial') or '-'})",
              f"{d.get('windows')}, build {d.get('build')}. Assessed {v['assessed_at'].replace('T', ' ')} by Shadow Filer on the PC itself.",
+             f"Judged against: {v.get('scheme') or SCHEME}.",
              f"{m['controls_passing']} of {m['controls']} control areas pass; {m['fail']} failing checks, {m['warn']} to look at, "
              f"{m['unknown']} could not be checked, {m['accepted']} accepted with a reason.", ""]
     for g in v["controls"]:
@@ -718,5 +918,5 @@ def as_text(v: dict) -> str:
         lines += ["", "UPDATES AND CHANGES MADE FROM THE CONSOLE"]
         for h in v["patch_log"][:40]:
             lines.append(f"  {h['ts'][:16].replace('T', ' ')}  {'ok    ' if h['ok'] else 'FAILED'}  {h['message']}")
-    lines += ["", "Measured on the PC by Shadow Filer. This follows the Cyber Essentials control areas but is not a certificate."]
+    lines += ["", "Measured on the PC by Shadow Filer. " + (v.get("footer") or FRAMEWORKS["ce"]["footer"])]
     return "\n".join(lines) + "\n"

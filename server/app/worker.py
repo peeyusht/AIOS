@@ -16,6 +16,7 @@ organisation at a time. It never talks to a device.
   python -m app.worker            run for ever
   python -m app.worker --once     judge whatever is waiting with the lists as they are, then stop (no download)
 """
+import hashlib
 import logging
 import os
 import sys
@@ -35,6 +36,9 @@ SYNC_HOURS = int(os.environ.get("REFERENCE_HOURS", "24"))
 IDLE_SECONDS = 10
 BATCH = 20
 _sync = {"thread": None, "had_lists": False}
+# The judging code itself: a deploy that changes a rule (judge.py, the agent's compliance.py) sends every device
+# round again, instead of waiting for its next new facts or the next day.
+RULES = hashlib.sha256(b"".join(Path(m.__file__).read_bytes() for m in (judge, judge.agent))).hexdigest()[:12]
 
 
 # --------------------------------------------------------------------------- the reference lists
@@ -43,9 +47,9 @@ def ref_version(cfg: dict = CFG) -> str:
     import cve
     import eol
     if not cve.db_path(cfg).exists():
-        return "none"
+        return f"none|rules:{RULES}"
     s = cve.status(cfg)
-    return f"cve:{s['synced_at'] if s['complete'] else 'incomplete'}|eol:{eol.status(cfg)['synced_at']}"
+    return f"cve:{s['synced_at'] if s['complete'] else 'incomplete'}|eol:{eol.status(cfg)['synced_at']}|rules:{RULES}"
 
 
 def publish_status(cfg: dict = CFG, syncing: bool = False) -> None:
@@ -121,9 +125,10 @@ def judge_device(device_id, org_id, cfg: dict, ref: str, today, use_lists: bool 
                      ON CONFLICT (device_id) DO UPDATE SET judged_at = now(), ref = EXCLUDED.ref, summary = EXCLUDED.summary,
                        security = EXCLUDED.security, compliance = EXCLUDED.compliance""",
                   (device_id, org_id, ref, Jsonb(summ), Jsonb({"flaws": vul, "support": sup}), Jsonb(comp)))
-        c.execute("""INSERT INTO compliance_history (org_id, device_id, day, line) VALUES (%s,%s,%s,%s)
-                     ON CONFLICT (device_id, day) DO UPDATE SET line = EXCLUDED.line""",
-                  (org_id, device_id, today, Jsonb(judge.history_line(comp))))
+        for fw, line in judge.history_lines(comp).items():
+            c.execute("""INSERT INTO compliance_history (org_id, device_id, day, framework, line) VALUES (%s,%s,%s,%s,%s)
+                         ON CONFLICT (device_id, day, framework) DO UPDATE SET line = EXCLUDED.line""",
+                      (org_id, device_id, today, fw, Jsonb(line)))
         # the facts this judgement was made for: a check-in that landed meanwhile has a later facts_at and queues it again
         c.execute("UPDATE devices SET judged_facts_at = %s, judged_ref = %s, judged_day = %s WHERE id = %s",
                   (dev["facts_at"], ref, today, device_id))
@@ -137,7 +142,7 @@ def round_(cfg: dict = CFG, today=None) -> int:
     busy = syncing()                # while the lists are being written they are not read at all
     if busy and _sync["had_lists"]:
         return 0                    # a short daily refresh: wait for it
-    ref = "none" if busy else ref_version(cfg)
+    ref = f"none|rules:{RULES}" if busy else ref_version(cfg)
     done = 0
     while True:
         with db.anon() as c:

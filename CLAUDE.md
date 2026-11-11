@@ -47,7 +47,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
 | `services.py` | Windows services that are not part of Windows: program, account, running or not, ports listened on (and whether from the network), the installed application each belongs to. Read-only, local |
 | `cve.py` | Known vulnerabilities: a local copy of the public CVE lists (`cve.db`, NVD yearly files + CISA's known-exploited list) and which installed programs and services they name, by strict name and version matching. Optional, off by default; downloads are the online step, the comparison is local |
 | `network.py` | Network page (`/api/network`): interfaces and addresses, routing table, DNS/proxy/hosts, Windows Firewall and the Public/Private mark, shared folders, listening ports with their programs, open connections, the neighbour table, and findings. Read-only, passive, in memory only |
-| `compliance.py` | Compliance page (`/api/compliance`): the five Cyber Essentials control areas as pass/fail checks with evidence, from this PC's settings (one read-only PowerShell call) and from network.py, cve.py, apps.py and remedy.py; the owner's declarations and accepted exceptions; one history line a day. Read-only for the PC |
+| `compliance.py` | Compliance page (`/api/compliance?framework=`): checks measured once from this PC's settings (one read-only PowerShell call) and from network.py, cve.py, apps.py and remedy.py, then judged per framework (`FRAMEWORKS`: Cyber Essentials, CERT-In MSME, DPDP Rule 6; spec `docs/spec-india-cert-in-dpdp.md`); the owner's declarations and accepted exceptions; one history line a day per framework; which frameworks are shown (`compliance_settings`). Read-only for the PC |
 | `eol.py` | End of support: a local copy of the public endoflife.date list (one 3 MB file, kept in `cve.db`), and which installed programs and which Windows are a release line that no longer gets security updates. Strict whole-name matching; the download is the online step |
 | `fleet.py` | Reports this PC to the central server (`server/`): enrolment with a one-time token, a check-in every 15 minutes, and `payload()`, the exact list of what is sent. The only code that sends anything about the PC off it; off until enrolled by hand |
 | `remedy.py` | The only code that changes installed software or a service: Update one application (winget), Stop one service, and switch Windows Firewall on, each one click, confirmed, logged in `remedy_log`. Off by default |
@@ -169,7 +169,13 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   accounts`); unsupported software removed. The scheme sets no inactivity-lock time and does not ask for
   encryption, so `cfg.lock` and `cfg.encryption` are notes (`info`) that never fail a control area; don't
   make them fail again. The 7-day antivirus definitions limit and the 15-minute lock are our own numbers.
-  Re-read the official text when a new version comes out (they change each April).
+  Re-read the official text when a new version comes out (they change each April). Frameworks (F-0, 11 Nov
+  2026): the same checks are judged by each framework in `FRAMEWORKS` through `judge_framework`, which the
+  server imports too; a framework may re-judge a check from its `fact` (CERT-In: lockout 3 to 5) or by a
+  device label (DPDP: unencrypted drives fail only on a device labelled `personal_data`). Exceptions are per
+  check and hold in every framework. An area of notes only is `info` and does not count as met. Wording
+  rules: the CERT-In baseline audit is something an MSME "may" have, never "mandatory"; the DPDP page is
+  "Rule 6 and 7 evidence", never "DPDP compliance"; our own mappings and numbers say so in the text.
 - `remedy.py` is the only code that changes installed software or a running service, and only while
   `library.remediate` is on (off by default; allowed by the user on 12 Oct 2026). Don't relax any of this
   without asking: one application or one service per click, never "all"; the page sends only WHICH listed
@@ -408,6 +414,8 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   `fleet.payload()`, which needs the user's yes. There is no Hide for a wrong CVE match on the server and
   no PDF: the report is text, a device page prints. The
   console was built locally in the Lovable style, not in Lovable. No cloud server has been rented.
+- Frameworks: the device agent's own PC has no labels, so DPDP encryption is a note there until device
+  labels (spec F-1) exist on the server. Shown by default: Cyber Essentials only (spec decision D-5 open).
 - Compliance is for one PC. Not checked: multi-factor login, backups and the router
   (declared). "Windows is up to date" means an update of any kind installed on or after the last monthly
   release whose 14 days are over, not "the security update is in" or "no newer build exists". The

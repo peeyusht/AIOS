@@ -114,7 +114,8 @@ class ChecksTest(unittest.TestCase):
                          {"cfg.lock": "info", "cfg.unlock": "fail", "cfg.autoplay": "fail", "cfg.guest": "fail", "cfg.password": "fail",
                           "cfg.unused": "warn", "cfg.encryption": "info"})
         # Cyber Essentials v3.3 sets no lock time and does not ask for encryption: notes, never failing the area
-        self.assertEqual(compliance._roll([c["cfg.lock"], c["cfg.encryption"]]), "pass")
+        self.assertEqual(compliance._roll([c["cfg.lock"], c["cfg.encryption"], c["cfg.guest"] | {"status": "pass"}]), "pass")
+        self.assertEqual(compliance._roll([c["cfg.lock"], c["cfg.encryption"]]), "info")         # notes alone are not "met"
         self.assertEqual(compliance.configuration_checks(bad)[0]["id"], "cfg.lock")      # fleet.payload reads it first
         self.assertEqual((c["cfg.password"]["evidence"], c["cfg.encryption"]["detail"][:18]), (["alex", "Guest"], "Not encrypted: C:."))
         for ok in (dict(inactivity=600), dict(display_off=300, lock_on_wake=1), dict(autorun_policy=0xFF, autoplay_off=0)):
@@ -169,6 +170,94 @@ class ChecksTest(unittest.TestCase):
                                               defender={"present": True, "enabled": False, "realtime": False, "signature_age": 30})))
         self.assertEqual({k: v["status"] for k, v in c.items()}, {"mal.present": "fail", "mal.realtime": "fail", "mal.signatures": "fail"})
         self.assertEqual(compliance.malware_checks(pc(antivirus=[], defender={}))[0]["status"], "unknown")
+
+
+class FrameworksTest(unittest.TestCase):
+    """F-0: one measurement, a verdict per framework (docs/spec-india-cert-in-dpdp.md, section 2)."""
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="sf-test-"))
+        self.cfg = {"database": self.tmp / "t.db", "cve_database": self.tmp / "cve.db"}
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def verdicts(self, labels=(), **over):
+        checks = compliance.measure(self.cfg, pc(**over), net(), VUL, APPS, TODAY)
+        return {k: {ch["id"]: ch for g in compliance.judge_framework(k, checks, {}, labels)["controls"] for ch in g["checks"]}
+                for k in compliance.FRAMEWORKS}
+
+    def test_the_table_in_the_spec(self):
+        unenc = [{"letter": "C:", "protection": 2}]
+        v = self.verdicts(lockout_threshold=10, drives=unenc)
+        self.assertEqual({k: (x["cfg.unlock"]["status"], x["cfg.encryption"]["status"], x["cfg.lock"]["status"]) for k, x in v.items()},
+                         {"ce": ("pass", "info", "pass"), "certin": ("fail", "info", "pass"), "dpdp": ("pass", "info", "pass")})
+        self.assertIn("CERT-In asks for 3 to 5", v["certin"]["cfg.unlock"]["detail"])
+        self.assertEqual(v["certin"]["cfg.unlock"]["fix"], "In an administrator terminal: net accounts /lockoutthreshold:5")
+        self.assertIn("not marked as holding personal data", v["dpdp"]["cfg.encryption"]["detail"])
+        # encryption fails only in DPDP, and only on a device labelled as holding personal data
+        v = self.verdicts(("personal_data",), drives=unenc)
+        self.assertEqual([v[k]["cfg.encryption"]["status"] for k in ("ce", "certin", "dpdp")], ["info", "info", "fail"])
+        self.assertIn("Rule 6(1)(a)", v["dpdp"]["cfg.encryption"]["detail"])
+        self.assertEqual(self.verdicts(("personal_data",))["dpdp"]["cfg.encryption"]["status"], "pass")      # encrypted: passes
+        # CERT-In's 3 to 5: below is stricter (a look, not a fail), never-locking fails everywhere, unreadable is unknown
+        st = lambda n: tuple(self.verdicts(lockout_threshold=n)[k]["cfg.unlock"]["status"] for k in ("ce", "certin", "dpdp"))
+        self.assertEqual([st(n) for n in (1, 3, 5, 6, 0, -1)],
+                         [("pass", "warn", "pass"), ("pass", "pass", "pass"), ("pass", "pass", "pass"), ("pass", "fail", "pass"),
+                          ("fail", "fail", "fail"), ("unknown", "unknown", "unknown")])
+        # the measured check is never changed by a framework's verdict
+        checks = compliance.measure(self.cfg, pc(lockout_threshold=10), net(), VUL, APPS, TODAY)
+        compliance.judge_framework("certin", checks, {})
+        self.assertEqual(by_id(checks)["cfg.unlock"]["status"], "pass")
+
+    def test_every_check_has_a_place(self):
+        ce = {i for _, _, _, ids in compliance.FRAMEWORKS["ce"]["controls"] for i in ids}
+        for k, f in compliance.FRAMEWORKS.items():
+            ids = [i for _, _, _, x in f["controls"] for i in x]
+            self.assertEqual((set(ids), len(ids)), (ce, len(set(ids))), k)             # each check exactly once
+        bad = pc(me_admin=True, autoplay_off=0, users=pc()["users"] + [{"name": "old", "enabled": True, "password_required": True, "last_logon": ""}])
+        checks = compliance.measure(self.cfg, bad, net(), VUL, APPS, TODAY)
+        for k in compliance.FRAMEWORKS:
+            j = compliance.judge_framework(k, checks + [compliance._check("zz.new", "A check nobody placed", "fail", "")], {})
+            self.assertEqual(sorted(ch["id"] for g in j["controls"] for ch in g["checks"]), sorted([c["id"] for c in checks] + ["zz.new"]), k)
+
+    def test_page_per_framework(self):
+        db = self.cfg["database"]
+        self.assertEqual(compliance.shown_frameworks(db), ["ce"])                        # nothing changes until chosen
+        self.assertFalse(compliance.set_frameworks(db, ["ce", "iso27001"]))
+        self.assertFalse(compliance.set_frameworks(db, []))
+        self.assertTrue(compliance.set_frameworks(db, ["dpdp", "certin"]))
+        self.assertEqual(compliance.shown_frameworks(db), ["certin", "dpdp"])
+        self.assertTrue(compliance.accept(db, "acc.daily", "Sole user."))
+        self.assertTrue(compliance.declare(db, "perimeter", "yes"))                       # CERT-In's own question
+        out = {}
+        for k in compliance.FRAMEWORKS:
+            v = compliance.assess(self.cfg, pc(me_admin=True, lockout_threshold=10), net(), VUL, APPS, TODAY, k)
+            out[k] = v
+            acc = [ch for g in v["controls"] for ch in g["checks"] if ch["id"] == "acc.daily"][0]
+            self.assertEqual((acc["status"], bool(acc["accepted"])), ("fail", True), k)     # accepted everywhere, failing mark kept
+        self.assertEqual([g["key"] for g in out["certin"]["controls"]], ["nes", "ems", "sc", "pm", "rpp", "acim"])
+        self.assertEqual([g["key"] for g in out["dpdp"]["controls"]], ["enc", "access", "other"])
+        self.assertEqual({k: [q["key"] for q in v["declared"]].count("perimeter") for k, v in out.items()}, {"ce": 0, "certin": 1, "dpdp": 0})
+        self.assertEqual([q["answer"] for q in out["certin"]["declared"] if q["key"] == "perimeter"], ["yes"])
+        self.assertEqual({g["key"]: g["status"] for g in out["certin"]["controls"]}, {"nes": "pass", "ems": "pass", "sc": "unknown", "pm": "fail", "rpp": "fail", "acim": "pass"})   # sc: no end-of-life list here
+        t = {k: compliance.as_text(v) for k, v in out.items()}
+        self.assertIn("Judged against: CERT-In Elemental Cyber Defense Controls", t["certin"])
+        self.assertIn("may have a yearly baseline audit", t["certin"])
+        self.assertNotIn("mandatory", t["certin"].lower())
+        self.assertIn("Rule 6 and 7 evidence", t["dpdp"])
+        self.assertIn("Not a statement of DPDP compliance", t["dpdp"])
+        self.assertNotIn("DPDP compliant", t["dpdp"])
+        # one history line per day per framework; lines kept before frameworks existed count as Cyber Essentials
+        c = compliance._conn(db)
+        c.execute("INSERT INTO compliance_history VALUES ('2026-10-10', ?)", ('{"controls": {"firewalls": "pass"}}',))
+        c.commit()
+        c.close()
+        for v in out.values():
+            compliance.record(self.cfg, v, TODAY)
+        self.assertEqual([h["day"] for h in compliance.history(self.cfg, 90, TODAY)], ["2026-10-10", "2026-10-12"])
+        self.assertEqual([(h["day"], sorted(h["controls"])) for h in compliance.history(self.cfg, 90, TODAY, "dpdp")],
+                         [("2026-10-12", ["access", "enc", "other"])])
+        self.assertEqual(compliance.brief(self.cfg, TODAY)["framework"], "certin")                 # the dashboard follows the first shown
 
 
 class PageTest(unittest.TestCase):

@@ -86,7 +86,9 @@ const p = <T = OkResponse,>(url: string, body: Raw = {}) => request<T>("POST", u
 
 export const api = {
   dashboard: () => g<DashboardResponse>("/api/dashboard"),
-  compliance: (refresh = false) => g<ComplianceResponse>("/api/compliance" + (refresh ? "?refresh=1" : "")),
+  compliance: (refresh = false, framework?: string) =>
+    g<ComplianceResponse>("/api/compliance?" + new URLSearchParams({ ...(refresh ? { refresh: "1" } : {}), ...(framework ? { framework } : {}) })),
+  complianceFrameworks: (frameworks: string[]) => p("/api/compliance/frameworks", { frameworks }),
   complianceDeclare: (key: string, answer: DeclaredAnswer, note: string) => p("/api/compliance/declare", { key, answer, note }),
   complianceAccept: (id: string, reason: string) => p("/api/compliance/accept", { id, reason }),
   network: (refresh = false) => g<NetworkResponse>("/api/network" + (refresh ? "?refresh=1" : "")),

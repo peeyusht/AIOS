@@ -129,6 +129,18 @@ CREATE TABLE IF NOT EXISTS compliance_history (
   PRIMARY KEY (device_id, day)
 );
 CREATE INDEX IF NOT EXISTS compliance_history_org ON compliance_history (org_id, day);
+-- Frameworks (F-0): one line per device per day per framework. Lines from before were Cyber Essentials.
+ALTER TABLE compliance_history ADD COLUMN IF NOT EXISTS framework text NOT NULL DEFAULT 'ce';
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)
+      WHERE i.indrelid = 'compliance_history'::regclass AND i.indisprimary) = 2 THEN
+    ALTER TABLE compliance_history DROP CONSTRAINT compliance_history_pkey;
+    ALTER TABLE compliance_history ADD PRIMARY KEY (device_id, day, framework);
+  END IF;
+END $$;
+-- Which frameworks the organisation's console shows, in order (the first is the one shown first).
+ALTER TABLE organisations ADD COLUMN IF NOT EXISTS frameworks text[] NOT NULL DEFAULT '{ce}';
 
 -- What the organisation states about things no program can measure. Always shown as declared.
 CREATE TABLE IF NOT EXISTS declarations (
@@ -250,6 +262,7 @@ CREATE POLICY own_org ON organisations USING (id = nullif(current_setting('app.o
 
 GRANT USAGE ON SCHEMA public TO fleet_app;
 GRANT SELECT ON organisations TO fleet_app;
+GRANT UPDATE (frameworks) ON organisations TO fleet_app;    -- its own organisation only (the policy above)
 GRANT SELECT, INSERT, UPDATE, DELETE ON admin_keys, enrolment_tokens, devices, snapshots TO fleet_app;
 GRANT SELECT, INSERT ON audit_log TO fleet_app;          -- the audit log is append-only for the application
 GRANT SELECT, INSERT, UPDATE, DELETE ON declarations, exceptions TO fleet_app;

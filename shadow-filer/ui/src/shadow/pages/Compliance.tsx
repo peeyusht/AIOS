@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, Check, Copy, HelpCircle, Info, Printer, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, Check, Copy, HelpCircle, Info, ListChecks, Printer, RefreshCw, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -9,13 +9,13 @@ import { api } from "@/lib/api";
 import { usePoll } from "@/lib/hooks";
 import { when } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { CheckStatus, ComplianceCheck, ComplianceControl, ComplianceResponse, DeclaredAnswer } from "@/lib/types";
+import type { CheckStatus, ComplianceCheck, ComplianceControl, ComplianceFramework, ComplianceResponse, DeclaredAnswer } from "@/lib/types";
 import { act, Card, Confirm, ListSkeleton, LoadError, PageHeader, Segmented, Spin, Tip, useBusy } from "../ui";
 
 const ORDER: Record<CheckStatus, number> = { fail: 0, warn: 1, unknown: 2, info: 3, pass: 4 };
 const LABEL: Record<CheckStatus, string> = { pass: "Passed", fail: "Failing", warn: "Worth a look", unknown: "Could not be checked", info: "Note" };
 const PAGE: Record<string, string> = { "/network": "Network", "/security": "Security", "/library": "Library", "/watch": "Watch", "/settings": "Settings" };
-const SQUARE = { pass: "bg-success", fail: "bg-destructive", warn: "bg-warning", unknown: "bg-muted-foreground/30" };
+const SQUARE = { pass: "bg-success", fail: "bg-destructive", warn: "bg-warning", unknown: "bg-muted-foreground/30", info: "bg-muted" };
 
 function Mark({ status, quiet }: { status: CheckStatus; quiet?: boolean }) {
   const map = {
@@ -175,12 +175,38 @@ function Code({ status, accepted }: { status: CheckStatus; accepted?: boolean })
   const c = CODE[status];
   return <span className={cn("inline-flex min-w-[76px] items-center gap-1.5 rounded px-1.5 font-mono text-[11px] font-semibold leading-5", c.cls, accepted && "opacity-60")} title={LABEL[status]}><span aria-hidden>{c.glyph}</span>{c.label}{accepted && <span className="font-normal"> · acc.</span>}</span>;
 }
-const AREA_STATE: Record<string, string> = { pass: "Met", fail: "Not met", warn: "Look at", unknown: "Not judged" };
+const AREA_STATE: Record<string, string> = { pass: "Met", fail: "Not met", warn: "Look at", unknown: "Not judged", info: "Notes only" };
+
+/** Which frameworks the page offers. Every one is judged from the same measurement; this only chooses what is shown. */
+function FrameworkPicker({ all, onSaved }: { all: ComplianceFramework[]; onSaved: (first: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [on, setOn] = useState<string[]>([]);
+  const start = () => { setOn(all.filter((f) => f.shown).map((f) => f.key)); setOpen(true); };
+  const save = async () => {
+    if (!on.length) { toast.error("Choose at least one."); return; }
+    if (await act(() => api.complianceFrameworks(on))) onSaved(all.find((f) => on.includes(f.key))!.key);
+  };
+  return <>
+    <Button variant="outline" size="sm" onClick={start}><ListChecks />Frameworks</Button>
+    <Confirm open={open} onOpenChange={setOpen} title="Frameworks shown on this page" confirmLabel="Save" onConfirm={save}>
+      <div className="space-y-2 text-foreground">
+        {all.map((f) => (
+          <label key={f.key} className="flex items-start gap-2.5 rounded-md border px-3 py-2">
+            <input type="checkbox" className="mt-1" checked={on.includes(f.key)} onChange={(e) => setOn(e.target.checked ? [...on, f.key] : on.filter((k) => k !== f.key))} />
+            <span><span className="block text-sm font-medium">{f.title}</span><span className="block text-xs text-muted-foreground">{f.scheme}</span></span>
+          </label>
+        ))}
+      </div>
+      <p>The same measurements are judged by each framework's own rules. Nothing is sent anywhere.</p>
+    </Confirm>
+  </>;
+}
 
 type Pick = { kind: "check"; id: string } | { kind: "declared"; key: string };
 
 export function CompliancePage() {
-  const q = usePoll<ComplianceResponse>(() => api.compliance(), 300_000);
+  const [fw, setFw] = useState<string | undefined>(undefined);
+  const q = usePoll<ComplianceResponse>(() => api.compliance(false, fw), 300_000, [fw]);
   const { busy, run } = useBusy();
   const [accepting, setAccepting] = useState<ComplianceCheck | null>(null);
   const [reason, setReason] = useState("");
@@ -189,7 +215,10 @@ export function CompliancePage() {
   const [pick, setPick] = useState<Pick | null>(null);
   const d = q.data;
 
-  const refresh = () => run("refresh", async () => { try { q.setData(await api.compliance(true)); } catch (e) { toast.error((e as Error).message); } });
+  const refresh = () => run("refresh", async () => { try { q.setData(await api.compliance(true, fw)); } catch (e) { toast.error((e as Error).message); } });
+  const switchTo = (k: string) => { setArea("all"); setPick(null); setFw(k); };
+  const frameworks = d?.frameworks ?? [];
+  const shown = frameworks.filter((f) => f.shown);
   const copy = async () => { try { await navigator.clipboard.writeText(d?.text ?? ""); toast.success("Copied"); } catch { toast.error("Could not copy to the clipboard."); } };
   const accept = async () => {
     if (!accepting) return;
@@ -218,8 +247,12 @@ export function CompliancePage() {
     {d?.assessed_at && <p data-print="only" className="mb-4 hidden text-lg font-semibold">Security posture of {dev.name ?? "this PC"}, assessed {assessedDate}</p>}
     <PageHeader
       title="Compliance evidence"
-      sub={<><div>Cyber Essentials, measured on this PC and declared by you. Evidence, not a certificate; nothing is sent anywhere.</div>{deviceLine && <div className="mt-1 font-mono text-xs">{deviceLine}</div>}</>}
+      sub={<><div>{d?.title ?? "Cyber Essentials"}, measured on this PC and declared by you. Evidence, not a certificate; nothing is sent anywhere.</div>
+        {d?.scheme && <div className="mt-0.5 text-xs">Judged against {d.scheme}.</div>}
+        {deviceLine && <div className="mt-1 font-mono text-xs">{deviceLine}</div>}</>}
       actions={<>
+        {shown.length > 1 && <span data-print-hide><Segmented label="Framework" value={d?.framework ?? shown[0]!.key} onChange={switchTo} options={shown.map((f) => ({ value: f.key, label: f.title }))} /></span>}
+        {frameworks.length > 0 && <span data-print-hide><FrameworkPicker all={frameworks} onSaved={switchTo} /></span>}
         {d?.assessed_at && <span className="text-xs text-muted-foreground">Assessed {when(d.assessed_at)}</span>}
         <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={busy === "refresh"}>{busy === "refresh" ? <Spin /> : <RefreshCw />}Check again</Button>
         <Button variant="outline" size="sm" onClick={() => void copy()} disabled={!d?.text}><Copy />Copy as text</Button>
@@ -393,8 +426,8 @@ export function CompliancePage() {
           ) : <p className="px-5 py-4 text-sm text-muted-foreground">Nothing has been changed from the console yet.</p>}
         </Card>
       </Section>
-      <p className="text-xs text-muted-foreground">Follows the Cyber Essentials control areas. It is not the scheme's own tool and passing here is not a certificate.</p>
-      <p data-print="only" className="hidden text-sm">Measured on the PC by Shadow Filer. Follows the Cyber Essentials control areas; not a certificate.</p>
+      <p className="text-xs text-muted-foreground">{d.footer ?? "Follows the Cyber Essentials control areas. It is not the scheme's own tool and passing here is not a certificate."}</p>
+      <p data-print="only" className="hidden text-sm">Measured on the PC by Shadow Filer. {d.footer ?? "Follows the Cyber Essentials control areas; not a certificate."}</p>
     </div>}
 
     <Confirm

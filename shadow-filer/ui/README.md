@@ -73,6 +73,11 @@ built here at the user's request; **send it to Lovable or it is lost on the next
 - `Compliance.tsx`: area list, one table of every check and the declarations, an evidence panel; the
   printed evidence still uses the full control cards (shown only in print).
 - `ui.tsx`: smaller page titles. The fleet console shares `styles.css` and `ui.tsx`, so it changed too.
+- Frameworks (11 Nov 2026, local, not in Lovable): `Compliance.tsx` has a framework switch and a Frameworks
+  dialog (`api.compliance(refresh, framework)`, `api.complianceFrameworks`, `ComplianceFramework` type, area
+  status `info` for an area of notes only); `Dashboard.tsx` labels its key number with the framework shown
+  first. The fleet console has the same switch (`FrameworkSwitch`, `useFramework` in `fleet/parts.tsx`) and
+  the choice of frameworks on its Evidence page.
 
 ## The fleet server's console
 `src/fleet/**`, `fleet.html` and `vite.fleet.config.ts` are a second application built from this tree: the
