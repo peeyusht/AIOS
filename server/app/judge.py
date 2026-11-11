@@ -365,8 +365,15 @@ def overlay(comp: dict, accepted: dict) -> dict:
 
 def measure(snaps: dict, vul: dict | None, sup: dict | None, today: date) -> list:
     p, dev = snaps.get("posture"), snaps.get("device")
-    return (firewall_checks(snaps.get("network")) + configuration_checks(p) + update_checks(p, dev, vul, sup, snaps.get("apps"), today)
+    return (firewall_checks(snaps.get("network")) + wifi_checks(p) + configuration_checks(p) + update_checks(p, dev, vul, sup, snaps.get("apps"), today)
             + access_checks(p) + malware_checks(p))
+
+
+def wifi_checks(p) -> list:
+    """F-2: only when the device sent Wi-Fi facts (it has an adapter, and an agent from 11 Nov 2026)."""
+    if not isinstance(p, dict) or "wifi_connected" not in p:
+        return []
+    return [agent._on_pc(agent.wifi_check({k: p.get(k) for k in ("wifi_connected", "wifi_auth", "wifi_open_autoconnect")}))]
 
 
 def assess(snaps: dict, vul: dict | None, sup: dict | None, accepted: dict, today: date, labels=()) -> dict:

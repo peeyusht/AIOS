@@ -366,6 +366,14 @@ class ServerTest(unittest.TestCase):
         self.assertIn("2 enabled accounts have never signed in. The device's own console names them.", a["cfg.unused"]["detail"])
         a = acc(builtin_admin_enabled=None, accounts_never_used=0)
         self.assertEqual((a["cfg.builtin_admin"]["status"], "cfg.unused" in a), ("unknown", False))
+        # F-2 Wi-Fi: judged when sent; a device with no adapter sends nothing and gets no check
+        a = acc(wifi_connected=True, wifi_auth="open", wifi_open_autoconnect=0)
+        self.assertEqual(a["net.wifi"]["status"], "fail")
+        self.assertEqual(acc(wifi_connected=None, wifi_auth=None, wifi_open_autoconnect=None)["net.wifi"]["detail"], "The device could not read its Wi-Fi settings.")
+        self.assertNotIn("net.wifi", acc())
+        nes = [g for g in judge.assess({**SNAP, "posture": {**SNAP["posture"], "wifi_connected": False, "wifi_auth": None, "wifi_open_autoconnect": 1}},
+                                       None, None, {}, self.today)["profiles"]["certin"]["controls"] if g["key"] == "nes"][0]
+        self.assertIn("net.wifi", [ch["id"] for ch in nes["checks"]])
         self.assertNotIn("upd.firmware", [ch["id"] for g in judge.assess(SNAP, None, None, {}, self.today)["controls"] for ch in g["checks"]])
         d = self.http.get(f"/api/v1/devices/{self.dev_a}", headers=self.auth(self.admin_a)).json()
         self.assertEqual(([a["name"] for a in d["flaws"]["apps"]], d["flaws"]["apps"][0]["cves"][0]["id"], d["flaws"]["apps"][0]["cves"][0]["kev"]),

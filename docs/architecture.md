@@ -176,12 +176,13 @@ settings as true/false or counts (antivirus on, drives encrypted, lock, AutoPlay
 accounts, after how many wrong passwords accounts lock, the password policy's minimum length, maximum age and
 remembered history as three numbers, and whether SMBv1, Remote Desktop (and its sign-in first), Remote Registry
 and PowerShell 2.0 are on, how many days old the firmware is, whether USB storage is blocked, read-only or allowed, whether the built-in Administrator is enabled, how many
-enabled accounts never signed in).
+enabled accounts never signed in, and for Wi-Fi only whether it is connected, the kind of encryption and how many
+saved open networks join by themselves).
 
 Never sent: anything about files or documents (the whole file-organising half), account names, install
 folders and program paths (they contain the user name), IP and MAC addresses, the addresses of open
-connections, the list of neighbouring devices, the routing table, the hosts file, DNS servers, the update
-log's free text.
+connections, the list of neighbouring devices, the routing table, the hosts file, DNS servers, Wi-Fi network
+names, the update log's free text.
 
 ## Remote actions (phase 5)
 
