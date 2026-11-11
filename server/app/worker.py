@@ -10,6 +10,10 @@ Two jobs, in one process:
            each one compares its programs with the lists, runs the compliance checks, and stores the result
            and one history line for the day.
 
+Third, once a day (spec F-3, the owner's decision D-3 of 11 Nov 2026): the TXT records (SPF, DMARC, named DKIM
+selectors) of each organisation's own mail domain, through the container's resolver. That query names the domain:
+the one request that carries something about a customer.
+
 It is under the same row-level security as the API: the queue gives it ids only, and it then works inside one
 organisation at a time. It never talks to a device.
 
@@ -27,7 +31,7 @@ from pathlib import Path
 
 from psycopg.types.json import Jsonb
 
-from . import db, judge
+from . import db, judge, mail
 
 log = logging.getLogger("worker")
 REF = Path(os.environ.get("REFERENCE_DIR", "/data/ref"))
@@ -174,6 +178,11 @@ def main() -> None:
             if not once:
                 sync_if_due()
             n = round_()
+            if not once:
+                try:                # spec F-3: each organisation's mail domain, once a day (decision D-3)
+                    mail.run(datetime.now(timezone.utc).date(), log=log)
+                except Exception:
+                    log.exception("mail domain lookups failed")
             if once:
                 log.info("judged %d device(s)", n)
                 return

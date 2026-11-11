@@ -56,7 +56,7 @@ const ACTION: Record<string, string> = {
   "user.disable": "A person was switched off", "user.enable": "A person was switched on", "user.reset_password": "A new set-password link was made",
   "user.reset_second_factor": "A second factor was reset", "share_link.created": "A share link was made", "share_link.withdrawn": "A share link was withdrawn",
   "enrolment_token.created": "An enrolment token was made", "frameworks.changed": "The frameworks shown were changed",
-  "review.recorded": "A review was signed off", "governance.changed": "The governance record was changed",
+  "review.recorded": "A review was signed off", "mail_domain.changed": "The mail domain was changed", "governance.changed": "The governance record was changed",
   "incident.recorded": "An incident was recorded", "incident.changed": "An incident was changed",
   "device.labelled": "A device was labelled", "device.unlabelled": "A label was taken off a device",
 };

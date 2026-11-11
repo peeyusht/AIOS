@@ -43,7 +43,7 @@ if READY:
     import cve
     import eol
     import release as rel
-    from app import agents, auth, db, judge, manage, people, worker
+    from app import agents, auth, db, judge, mail, manage, people, worker
     from app.main import app, MAX_BODY
 
 
@@ -552,10 +552,38 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(sorted(x["kind"] for x in f["records_due"]), ["access", "policy"])
         self.assertEqual(self.http.get("/api/v1/fleet?framework=ce", headers=self.auth(self.admin_a)).json()["records_due"], [])
         self.assertEqual(self.http.get("/api/v1/records", headers=self.auth(self.admin_b)).json()["governance"], None)
+        # F-3 mail domain: set by an admin or owner; the worker looks it up once a day (a fake resolver here, no network)
+        for bad in ({"domain": "not a domain"}, {"domain": "10.0.0.1"}, {"domain": "acme.example", "selectors": ["bad selector!"]}):
+            self.assertEqual(self.owner_a.post("/api/v1/mail-domain", json=bad).status_code, 400, bad)
+        self.assertEqual(self.http.post("/api/v1/mail-domain", headers=self.auth(self.admin_a), json={"domain": "acme.example"}).status_code, 403)
+        self.assertEqual(self.owner_a.post("/api/v1/mail-domain", json={"domain": "Acme.Example.", "selectors": ["s1"]}).status_code, 200)
+        self.assertEqual(self.http.get("/api/v1/mail-domain", headers=self.auth(self.admin_a)).json()["check"]["status"], "unknown")   # not looked up yet
+        dns = {"acme.example": ["v=spf1 include:_spf.example -all", "google-site-verification=x"], "_dmarc.acme.example": ["v=DMARC1; p=none; rua=mailto:d@acme.example"],
+               "s1._domainkey.acme.example": ["v=DKIM1; k=rsa; p=MIIB"]}
+        asked = []
+        fake = lambda n: (asked.append(n), dns.get(n, []))[1]
+        with as_worker():
+            self.assertEqual(mail.run(self.today, fake), 1)
+            self.assertEqual(mail.run(self.today, fake), 0)                    # once a day
+        self.assertEqual(sorted(asked), ["_dmarc.acme.example", "acme.example", "s1._domainkey.acme.example"])   # only these names
+        m = self.http.get("/api/v1/mail-domain", headers=self.auth(self.admin_a)).json()
+        self.assertEqual((m["domain"], m["check"]["status"]), ("acme.example", "warn"))                      # p=none only reports
+        self.assertNotIn("google-site-verification", json.dumps(m["result"]))                              # only mail records are kept
+        st = lambda d: mail.check({"domain": "x.example", "result": mail.look_up("x.example", ["s1"], lambda n: d.get(n, []))})["status"]
+        self.assertEqual([st({"x.example": ["v=spf1 -all"], "_dmarc.x.example": ["v=DMARC1; p=reject"], "s1._domainkey.x.example": ["p=AB"]}),
+                          st({"_dmarc.x.example": ["v=DMARC1; p=reject"]}), st({"x.example": ["v=spf1 -all"]})], ["pass", "fail", "fail"])
+        def down(n):
+            raise OSError("no resolver")
+        self.assertEqual(mail.check({"domain": "x.example", "result": mail.look_up("x.example", [], down)})["status"], "unknown")
+        c = self.http.get("/api/v1/fleet?framework=certin", headers=self.auth(self.admin_a)).json()["org_checks"]
+        self.assertEqual([x["id"] for x in c], ["org.mail"])
+        self.assertEqual(self.http.get("/api/v1/fleet?framework=ce", headers=self.auth(self.admin_a)).json()["org_checks"], [])
+        self.assertIsNone(self.http.get("/api/v1/mail-domain", headers=self.auth(self.admin_b)).json()["check"])
 
     def test_7_judgements_stay_inside_their_organisation(self):
         with db.anon() as c:
-            for table in ("judgements", "compliance_history", "declarations", "exceptions", "device_labels", "incidents", "reviews", "governance", "users", "sessions", "setup_links",
+            for table in ("judgements", "compliance_history", "declarations", "exceptions", "device_labels", "incidents", "reviews", "governance",
+                          "mail_domains", "users", "sessions", "setup_links",
                           "recovery_codes", "share_links"):
                 self.assertEqual(c.execute(f"SELECT count(*) AS n FROM {table}").fetchone()["n"], 0, table)
         with db.org(self.org_b) as c:
@@ -578,6 +606,10 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(c.execute("UPDATE incidents SET title = 'x'").rowcount, 0)
             self.assertEqual(c.execute("SELECT count(*) AS n FROM reviews").fetchone()["n"], 0)                 # F-23/F-24: A's records are A's
             self.assertEqual(c.execute("UPDATE governance SET incharge_name = 'x'").rowcount, 0)
+            self.assertEqual(c.execute("SELECT count(*) AS n FROM mail_domains").fetchone()["n"], 0)            # F-3: A's domain is A's
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):      # the queue is the worker's door, not the API's
+            with db.anon() as c:
+                c.execute("SELECT * FROM mail_queue(current_date)")
         with self.assertRaises(psycopg.errors.InsufficientPrivilege):      # a review sign-off cannot be changed afterwards
             with db.org(self.org_a) as c:
                 c.execute("UPDATE reviews SET note = 'x'")

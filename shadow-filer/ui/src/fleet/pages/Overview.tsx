@@ -73,7 +73,7 @@ export function OverviewPage() {
             <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">{f?.footer ?? "This follows the Cyber Essentials control areas. It is not the scheme's own tool and passing here is not a certificate."}</p>
           </Card>
 
-          {(d.exploited.length > 0 || d.silent.length > 0 || d.unsupported.length > 0 || (d.records_due ?? []).length > 0) && (
+          {(d.exploited.length > 0 || d.silent.length > 0 || d.unsupported.length > 0 || (d.records_due ?? []).length > 0 || (d.org_checks ?? []).some((c) => c.status !== "pass")) && (
             <Section title="Needs attention">
               <div className="space-y-2">
                 {d.exploited.map((e, i) => (
@@ -88,6 +88,9 @@ export function OverviewPage() {
                     {u.windows && <>its Windows version no longer gets security updates{u.windows_until ? ` (since ${u.windows_until})` : ""}. </>}
                     {u.programs.length > 0 && <>{u.programs.join(", ")} {u.programs.length === 1 ? "is a release line that no longer gets" : "are release lines that no longer get"} security updates.</>}
                   </Notice>
+                ))}
+                {(d.org_checks ?? []).filter((c) => c.status !== "pass").map((c) => (
+                  <Notice key={c.id} tone={c.status === "fail" ? "danger" : "warn"}><a href="#/evidence" className="hover:underline">{c.title}: {c.detail}</a></Notice>
                 ))}
                 {(d.records_due ?? []).map((r) => (
                   <Notice key={"r" + r.kind} tone="warn"><a href="#/evidence" className="hover:underline">{r.text}</a></Notice>

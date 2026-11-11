@@ -8,7 +8,8 @@ import { Input } from "@/components/ui/input";
 import { usePoll } from "@/lib/hooks";
 import { when } from "@/lib/format";
 import { Card, ListSkeleton, LoadError } from "@/shadow/ui";
-import { api, type Records } from "../api";
+import { api, type MailDomain, type Records } from "../api";
+import { LABEL, Mark } from "../parts";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -69,6 +70,44 @@ function Review({ kind, r, canEdit, reload }: { kind: string; r: Records["review
   );
 }
 
+function Mail({ canEdit }: { canEdit: boolean }) {
+  const q = usePoll<MailDomain>(api.mailDomain, null);
+  const [domain, setDomain] = useState<string | null>(null);
+  const [sel, setSel] = useState<string | null>(null);
+  const m = q.data;
+  if (!m) return q.error ? <LoadError error={q.error} onRetry={q.reload} /> : null;
+  const save = async () => {
+    try {
+      await api.setMailDomain((domain ?? m.domain).trim(), (sel ?? m.selectors.join(" ")).split(/[\s,]+/).filter(Boolean));
+      toast.success("Saved; it is looked up within a day"); setDomain(null); setSel(null); await q.reload();
+    } catch (e) { toast.error((e as Error).message); }
+  };
+  const c = m.check;
+  return (
+    <Card className="space-y-2 rounded-lg p-5">
+      <h3 className="font-semibold">Mail domain</h3>
+      <p className="text-sm text-muted-foreground">CERT-In NES.4: SPF, DKIM and DMARC. The server looks up the domain's public DNS records once a day; the
+        query names the domain and nothing else. A DKIM key can only be found by its selector (ask your mail provider; Microsoft 365 uses selector1 and selector2).</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input placeholder="example.co.in" value={domain ?? m.domain} disabled={!canEdit} onChange={(e) => setDomain(e.target.value)} className="h-8 w-64" aria-label="Mail domain" />
+        <Input placeholder="DKIM selectors (optional)" value={sel ?? m.selectors.join(" ")} disabled={!canEdit} onChange={(e) => setSel(e.target.value)} className="h-8 w-64" aria-label="DKIM selectors" />
+        {canEdit && <Button size="sm" variant="outline" onClick={() => void save()}>Save</Button>}
+      </div>
+      {c && (
+        <div className="flex gap-3 border-t pt-3">
+          <Mark status={c.status} />
+          <div className="min-w-0 space-y-1 text-sm">
+            <div className="font-medium">{c.title} <span className="font-normal text-muted-foreground">{LABEL[c.status].toLowerCase()}</span></div>
+            <p>{c.detail}</p>
+            {c.evidence.map((e, i) => <div key={i} className="path break-all text-muted-foreground">{e}</div>)}
+            {c.fix && c.status !== "pass" && <p><span className="text-muted-foreground">What to do: </span>{c.fix}</p>}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export function RecordsSection({ canEdit, onChange }: { canEdit: boolean; onChange?: () => void }) {
   const q = usePoll<Records>(api.records, null);
   if (q.error) return <LoadError error={q.error} onRetry={q.reload} />;
@@ -77,6 +116,7 @@ export function RecordsSection({ canEdit, onChange }: { canEdit: boolean; onChan
   return (
     <div className="space-y-4">
       <Governance key={q.data.governance?.updated_at ?? "none"} r={q.data} canEdit={canEdit} reload={reload} />
+      <Mail canEdit={canEdit} />
       {Object.entries(q.data.reviews).map(([k, r]) => <Review key={k} kind={k} r={r} canEdit={canEdit} reload={reload} />)}
     </div>
   );

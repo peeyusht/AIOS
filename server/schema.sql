@@ -227,6 +227,18 @@ CREATE TABLE IF NOT EXISTS governance (
   updated_by text NOT NULL DEFAULT ''
 );
 
+-- The organisation's mail domain (spec F-3, decision D-3): the worker looks up its SPF, DMARC and named DKIM
+-- records once a day. One row per organisation.
+CREATE TABLE IF NOT EXISTS mail_domains (
+  org_id uuid PRIMARY KEY REFERENCES organisations ON DELETE CASCADE,
+  domain text NOT NULL,
+  selectors text[] NOT NULL DEFAULT '{}',
+  result jsonb,
+  checked_day date,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  updated_by text NOT NULL DEFAULT ''
+);
+
 -- How fresh the public reference lists are (CVE, known exploited, end of life). No customer data: shared.
 CREATE TABLE IF NOT EXISTS reference_status (
   k text PRIMARY KEY,
@@ -307,7 +319,7 @@ DO $$
 DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['admin_keys', 'enrolment_tokens', 'devices', 'snapshots', 'audit_log',
-                           'judgements', 'compliance_history', 'declarations', 'exceptions', 'device_labels', 'incidents', 'reviews', 'governance',
+                           'judgements', 'compliance_history', 'declarations', 'exceptions', 'device_labels', 'incidents', 'reviews', 'governance', 'mail_domains',
                            'users', 'setup_links', 'sessions', 'recovery_codes', 'share_links'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
@@ -333,6 +345,7 @@ GRANT SELECT, INSERT, DELETE ON device_labels TO fleet_app;
 GRANT SELECT, INSERT, UPDATE ON incidents TO fleet_app;          -- no DELETE: an incident is evidence
 GRANT SELECT, INSERT ON reviews TO fleet_app;                     -- a sign-off is added, never changed
 GRANT SELECT, INSERT, UPDATE ON governance TO fleet_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON mail_domains TO fleet_app;
 GRANT SELECT, UPDATE ON judgements TO fleet_app;          -- the API re-applies exceptions; only the worker judges
 GRANT SELECT, INSERT, UPDATE ON compliance_history TO fleet_app;
 GRANT SELECT ON reference_status TO fleet_app;
@@ -344,6 +357,7 @@ GRANT USAGE ON SCHEMA public TO fleet_worker;
 GRANT SELECT ON organisations, snapshots, exceptions, declarations, device_labels TO fleet_worker;
 GRANT SELECT, UPDATE ON devices TO fleet_worker;
 GRANT SELECT, INSERT, UPDATE ON judgements, compliance_history TO fleet_worker;
+GRANT SELECT, UPDATE (result, checked_day) ON mail_domains TO fleet_worker;
 GRANT SELECT, INSERT, UPDATE, DELETE ON reference_status TO fleet_worker;
 
 -- ---------------------------------------------------------------- the doors across organisations
@@ -427,3 +441,11 @@ LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 $$;
 REVOKE ALL ON FUNCTION judge_queue(text, date, int) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION judge_queue(text, date, int) TO fleet_worker;
+
+-- The worker's second door (spec F-3): which organisations' mail domains are not looked up today. Ids only.
+CREATE OR REPLACE FUNCTION mail_queue(p_day date) RETURNS TABLE (org_id uuid)
+LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT m.org_id FROM mail_domains m WHERE m.checked_day IS DISTINCT FROM p_day
+$$;
+REVOKE ALL ON FUNCTION mail_queue(date) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION mail_queue(date) TO fleet_worker;

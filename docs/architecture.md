@@ -67,7 +67,9 @@ proxy.
 **Worker** (`server/app/worker.py`). Downloads the CVE, known-exploited and end-of-life lists daily into a
 SQLite file on its own volume (the same file format the agent keeps), and judges a device again when its
 facts changed, a list changed, or the day changed; it writes the judgement and one compliance line per
-device per day. It is the only container that goes online, and only for those public downloads. It asks
+device per day. It is the only container that goes online: for those public downloads, and (spec F-3, the owner's
+decision D-3 of 11 Nov 2026) once a day for the SPF, DMARC and DKIM records of each organisation's own mail domain,
+a DNS query that names the domain and nothing else. It asks
 the database which devices are waiting through one function that answers with ids only, then works inside
 one organisation at a time under the same row-level security as the API. During the first download
 (about 9 minutes) devices are judged on their settings alone and judged again when the lists are there.
@@ -107,6 +109,7 @@ Phase 2 tables:
 | `exceptions` | a failing check accepted on one device, with the reason and who (it holds in every framework) |
 | `device_labels` | what a person states about a device: holds personal data, critical (spec F-1); DPDP judges by it |
 | `incidents` | the incident register with CERT-In's 6-hour and DPDP's 72-hour clocks (spec F-21); never deleted |
+| `mail_domains` | the organisation's mail domain, its DKIM selectors and the last DNS lookup (spec F-3) |
 | `reviews`, `governance` | access and log review sign-offs (never changed), the security in-charge and policy dates (spec F-23, F-24) |
 | `reference_status` | how fresh the public lists are (shared; no customer data) |
 
