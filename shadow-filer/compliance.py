@@ -311,9 +311,11 @@ def configuration_checks(p: dict) -> list:
                       "Every enabled account requires a password." if users else "The local accounts could not be read.",
                       nopw, None if not nopw else "In an administrator terminal: net user <name> /passwordreq:yes"))
     stale = [u["name"] for u in users if u.get("enabled") and not u.get("last_logon")]
-    if stale:
-        out.append(_check("cfg.unused", "No enabled accounts that nobody uses", "warn",
-                          f"{len(stale)} enabled account{'s have' if len(stale) != 1 else ' has'} never signed in.", stale))
+    u = unused_check(len(stale), stale)
+    if u:
+        out.append(u)
+    builtin = [x["name"] for x in users if str(x.get("sid") or "").endswith("-500") and x.get("enabled")]
+    out.append(builtin_admin_check(bool(builtin) if users else None, builtin))
     drives = _list(p.get("drives"))
     plain = [d["letter"] for d in drives if d.get("protection") not in (1, 3, 5)]
     out.append(_check("cfg.encryption", "Drives are encrypted (BitLocker)",
@@ -449,6 +451,30 @@ def usb_check(p: dict, strict: bool = False) -> dict:
                   "Cyber Essentials does not ask to restrict them (that AutoPlay is off is its rule); CERT-In does."),
                   fix="Group Policy: Computer Configuration > Administrative Templates > System > Removable Storage Access > "
                       "Removable Disks: Deny write access (or deny all access).")
+
+
+def unused_check(n, names=()) -> dict | None:
+    """Enabled accounts that have never signed in (CERT-In ACIM.1: accounts in use, no spare ones). Shown only
+    when there are some, as before; the PC names them, the server only counts."""
+    if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
+        return None
+    return _check("cfg.unused", "No enabled accounts that nobody uses", "warn",
+                  f"{n} enabled account{'s have' if n != 1 else ' has'} never signed in.", list(names),
+                  fix="Disable the account if nobody needs it: Computer Management > Local Users and Groups > Users.")
+
+
+def builtin_admin_check(enabled, names=()) -> dict:
+    """Windows' built-in Administrator account (the one whose id ends in -500, whatever it was renamed to). It is
+    the same name on every PC and has no lockout by default, so it is kept disabled (CERT-In SC.3: default
+    accounts and passwords; Cyber Essentials: remove or disable accounts that are not needed)."""
+    title = "The built-in Administrator account is disabled"
+    if not isinstance(enabled, bool):
+        return _check("cfg.builtin_admin", title, "unknown", "The local accounts could not be read.")
+    return _check("cfg.builtin_admin", title, "warn" if enabled else "pass",
+                  "The built-in Administrator account is enabled. It exists on every Windows PC under a known name, which makes "
+                  "it the first one guessed." if enabled else "Disabled.", list(names),
+                  fix="In an administrator terminal: net user <name> /active:no (after making sure another administrator account works)."
+                  if enabled else None)
 
 
 def security_release_due(today: date) -> date:
@@ -716,7 +742,7 @@ FRAMEWORKS = {
     "ce": {"title": "Cyber Essentials", "scheme": SCHEME, "unlock": (1, THRESHOLDS["unlock_tries"]), "unlock_ref": "Cyber Essentials",
            "encryption": "note",
            "controls": tuple((k, t, a, ids) for (k, t, a), ids in zip(CONTROLS, (
-               FW_IDS, ("cfg.lock", "cfg.unlock", "cfg.pwpolicy", "cfg.autoplay", "cfg.guest", "cfg.password", "cfg.unused",
+               FW_IDS, ("cfg.lock", "cfg.unlock", "cfg.pwpolicy", "cfg.autoplay", "cfg.guest", "cfg.builtin_admin", "cfg.password", "cfg.unused",
                         "cfg.smb1", "cfg.rdp", "cfg.remreg", "cfg.psv2", "cfg.usb", "cfg.encryption"),
                UPD_IDS, ("acc.daily", "acc.admins"), MAL_IDS))),
            "declared": tuple((k, why) for k, _, why in DECLARED),
@@ -730,7 +756,8 @@ FRAMEWORKS = {
                     MAL_IDS + ("cfg.autoplay", "cfg.usb")),
                    ("sc", "Secure configuration (SC)", "SC.2 and SC.3: unneeded ports, shares, services and protocols off, default "
                                                        "accounts off, unsupported software removed.",
-                    ("fw.ports", "fw.shares", "cfg.smb1", "cfg.rdp", "cfg.remreg", "cfg.psv2", "cfg.guest", "upd.unsupported", "cfg.lock", "cfg.encryption")),
+                    ("fw.ports", "fw.shares", "cfg.smb1", "cfg.rdp", "cfg.remreg", "cfg.psv2", "cfg.guest", "cfg.builtin_admin", "upd.unsupported",
+                     "cfg.lock", "cfg.encryption")),
                    ("pm", "Patch management (PM)", "PM.1 and PM.2: Windows and applications patched; known-exploited flaws followed.",
                     ("upd.supported", "upd.windows", "upd.firmware", "upd.automatic", "upd.flaws", "upd.coverage", "upd.browsers", "upd.pending")),
                    ("rpp", "Password policy (RPP)", "RPP.1 and RPP.2: passwords of 8 characters or more that expire and are not reused; "
@@ -755,7 +782,7 @@ FRAMEWORKS = {
                   ("cfg.encryption",)),
                  ("access", "6(1)(b) Access control", "Access to the computer resources that hold personal data is controlled. "
                                                       "The rule gives no numbers; lockout and password length use Cyber Essentials' own.",
-                  ("cfg.unlock", "cfg.pwpolicy", "cfg.password", "cfg.guest", "cfg.unused", "cfg.lock", "acc.daily", "acc.admins") + FW_IDS),
+                  ("cfg.unlock", "cfg.pwpolicy", "cfg.password", "cfg.guest", "cfg.builtin_admin", "cfg.unused", "cfg.lock", "acc.daily", "acc.admins") + FW_IDS),
                  ("other", "Other reasonable safeguards", "Patching, malware protection and old protocols switched off. Rule 6 does not "
                                                           "name these; placing them under its reasonable security safeguards is our own mapping.",
                   UPD_IDS + MAL_IDS + ("cfg.autoplay", "cfg.usb", "cfg.smb1", "cfg.rdp", "cfg.remreg", "cfg.psv2"))),

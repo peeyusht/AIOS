@@ -114,7 +114,8 @@ class ChecksTest(unittest.TestCase):
         c = by_id(compliance.configuration_checks(bad))
         self.assertEqual({k: v["status"] for k, v in c.items()},
                          {"cfg.lock": "info", "cfg.unlock": "fail", "cfg.pwpolicy": "warn", "cfg.autoplay": "fail", "cfg.guest": "fail", "cfg.password": "fail",
-                          "cfg.unused": "warn", "cfg.encryption": "info", "cfg.smb1": "pass", "cfg.rdp": "pass", "cfg.remreg": "pass", "cfg.psv2": "pass", "cfg.usb": "pass"})
+                          "cfg.unused": "warn", "cfg.encryption": "info", "cfg.smb1": "pass", "cfg.rdp": "pass", "cfg.remreg": "pass", "cfg.psv2": "pass", "cfg.usb": "pass",
+                          "cfg.builtin_admin": "pass"})
         # Cyber Essentials v3.3 sets no lock time and does not ask for encryption: notes, never failing the area
         self.assertEqual(compliance._roll([c["cfg.lock"], c["cfg.encryption"], c["cfg.guest"] | {"status": "pass"}]), "pass")
         self.assertEqual(compliance._roll([c["cfg.lock"], c["cfg.encryption"]]), "info")         # notes alone are not "met"
@@ -172,6 +173,19 @@ class ChecksTest(unittest.TestCase):
         for bad in (None, 0, 1, "False"):
             self.assertEqual(set(st(smb1_on=bad, rdp_on=bad, remote_registry_on=bad, psv2_present=bad).values()), {"unknown"}, bad)
         self.assertIn("Set-SmbServerConfiguration -EnableSMB1Protocol $false", compliance.protocol_checks(pc(smb1_on=True))[0]["fix"])
+
+    def test_builtin_admin_and_unused(self):
+        users = lambda *extra: pc()["users"] + list(extra)
+        c = by_id(compliance.configuration_checks(pc(users=users({"name": "Administrator", "enabled": True, "password_required": True,
+                                                                    "last_logon": "", "sid": "S-1-5-21-1-500"}))))
+        self.assertEqual((c["cfg.builtin_admin"]["status"], c["cfg.builtin_admin"]["evidence"], c["cfg.unused"]["evidence"]),
+                         ("warn", ["Administrator"], ["Administrator"]))
+        renamed = {"name": "Boss", "enabled": True, "password_required": True, "last_logon": "2026-10-01", "sid": "S-1-5-21-1-500"}
+        self.assertEqual(by_id(compliance.configuration_checks(pc(users=users(renamed))))["cfg.builtin_admin"]["evidence"], ["Boss"])  # by its id
+        self.assertEqual(by_id(compliance.configuration_checks(pc(users=[])))["cfg.builtin_admin"]["status"], "unknown")
+        self.assertNotIn("cfg.unused", by_id(compliance.configuration_checks(pc())))                       # none: no line, as before
+        self.assertEqual([compliance.builtin_admin_check(x)["status"] for x in (True, False, None, 1)], ["warn", "pass", "unknown", "unknown"])
+        self.assertEqual([bool(compliance.unused_check(x)) for x in (2, 0, None, True)], [True, False, False, False])
 
     def test_usb_storage(self):
         """F-5: allowed USB storage is a note in Cyber Essentials and DPDP, a look in CERT-In (restrict or control,

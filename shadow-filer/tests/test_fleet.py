@@ -69,6 +69,7 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(sn["posture"]["bios_age_days"], (datetime.now().date() - datetime(2024, 3, 22).date()).days)   # days, not the date
         self.assertNotIn("F39", json.dumps(sn["posture"]))                         # nor the version
         self.assertEqual(sn["posture"]["usb_storage"], "read_only")
+        self.assertEqual((sn["posture"]["builtin_admin_enabled"], sn["posture"]["accounts_never_used"]), (False, 0))   # never which
         self.assertEqual((sn["posture"]["daily_account_is_admin"], sn["posture"]["admin_accounts"], sn["posture"]["drives_encrypted"]), (True, 1, True))
         self.assertEqual((sn["network"]["shared_folders"], sn["network"]["rules"]["programs"]), (1, 1))
         self.assertEqual(sorted(sn["network"]["listening"][0]), ["port", "process", "proto", "reach", "windows"])
@@ -92,6 +93,13 @@ class FleetTest(unittest.TestCase):
         self.assertEqual([sent[k] for k in ("smb1_on", "rdp_on", "rdp_nla", "remote_registry_on", "psv2_present")], [None] * 5)
         self.assertIsNone(sent["bios_age_days"])
         self.assertIsNone(sent["usb_storage"])                                      # only the three words
+        many = pc(users=[{"name": SECRET_USER, "enabled": True, "password_required": True, "last_logon": "", "sid": "S-1-5-21-9-500"},
+                         {"name": "x", "enabled": "yes", "password_required": True, "last_logon": "", "sid": "S-1-5-21-9-1001"}])
+        with mock.patch("compliance._posture", return_value=many):
+            sent = fleet.payload(self.cfg)["snapshots"]["posture"]
+        self.assertEqual((sent["builtin_admin_enabled"], sent["accounts_never_used"]), (True, 1))      # "yes" is not true
+        self.assertNotIn(SECRET_USER, json.dumps(sent))
+        self.assertNotIn("S-1-5-21-9", json.dumps(sent))
         self.assertEqual([fleet._age(x) for x in ("2999-01-01", 20240322, None, "2024-13-01")], [None] * 4)
         self.assertNotIn(SECRET_USER, json.dumps(sent))
 

@@ -120,7 +120,7 @@ actor)` with row-level security and a line in the isolation test.
 | | | F-7 SMBv1, RDP and NLA, remote registry, PowerShell v2 | M | **BUILT** 11 Nov 2026 `cfg.smb1`, `cfg.rdp`, `cfg.remreg`, `cfg.psv2` |
 | SC.3 | Remove unused software; change default passwords | End-of-life programs | M | **BUILT** `upd.unsupported` |
 | | | Guest account off | M | **BUILT** `cfg.guest` |
-| | | Built-in Administrator (RID 500) enabled | M | **NEW** (the account list is already read; add the check) |
+| | | Built-in Administrator (RID 500) enabled | M | **BUILT** 11 Nov 2026 `cfg.builtin_admin` (enabled = look; found by its id, whatever its name) |
 | PM.1 | Patch OS, applications, firmware | Windows monthly release within 14 days, auto-update on, CVEs, pending updates, browsers | M | **BUILT** `upd.windows`, `upd.automatic`, `upd.flaws`, `upd.pending`, `upd.browsers` |
 | | | F-8 BIOS/firmware version and date | M | **BUILT** 11 Nov 2026 `upd.firmware` (age; version shown on the PC only) |
 | PM.2 | Monitor vendor notices and CERT-In advisories | CVE + CISA KEV lists | S | **BUILT** (`cve.py`) |
@@ -146,7 +146,7 @@ actor)` with row-level security and a line in the isolation test.
 | RPP.2 | Lock after 3–5 failed attempts | Lockout threshold | M | **BUILT** 11 Nov 2026 `cfg.unlock`: ≤10 in CE and DPDP, 3–5 in the CERT-In profile (F-0) |
 | RPP.3 | MFA for critical systems, admins, remote access | Declared | D | **BUILT** `mfa` (worded for cloud services; add admin/remote wording) |
 | RPP.4 | Passwords stored with secure hashing | Out of scope for an endpoint agent | – | not planned |
-| ACIM.1 | Unique user IDs, no shared accounts | Enabled accounts, accounts with no password, never-used accounts | M | **PARTIAL**: `cfg.password` BUILT; `cfg.unused` BUILT on the PC only (the payload sends `accounts_enabled`, not the unused count, so the server cannot judge it) |
+| ACIM.1 | Unique user IDs, no shared accounts | Enabled accounts, accounts with no password, never-used accounts | M | **BUILT** 11 Nov 2026: `cfg.password`; `cfg.unused` now on the server too (payload `accounts_never_used`, a count) |
 | ACIM.2 | Role-based, least privilege | Daily account not admin | M | **BUILT** `acc.daily` |
 | ACIM.3 | Review access quarterly and on exit | F-24 access review | W | **NEW** |
 | ACIM.4 | Admin rights only when essential | Admin account count | M | **BUILT** `acc.admins` |
@@ -309,7 +309,8 @@ rest) must come first.
 ## 6. Order of work
 
 1. **F-0 profiles** and the CERT-In lockout threshold. No payload change. Unblocks everything. **BUILT 11 Nov 2026.**
-2. **Measured, payload change needed (D-1):** F-13 password policy, F-7 protocols, F-8 firmware, F-5 USB,
+2. **Measured, payload change needed (D-1; approved 11 Nov 2026):** BUILT so far: F-13, F-7, F-8, F-5, built-in
+   Administrator, never-used accounts (11 Nov 2026). F-13 password policy, F-7 protocols, F-8 firmware, F-5 USB,
    built-in Administrator enabled, never-used account count, F-2 Wi-Fi, F-10 logs, F-12 backups.
 3. **Server workflows without uploads:** F-1 labels, F-21 incidents, F-24 reviews, F-23 (without document),
    new declared questions with dates.

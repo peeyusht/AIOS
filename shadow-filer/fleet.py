@@ -20,7 +20,9 @@ SENT, per kind:
              (three numbers; added 11 Nov 2026 with the owner's yes, spec F-13), and five true/false: SMBv1 on,
              Remote Desktop on, Remote Desktop asks for sign-in first, Remote Registry on, PowerShell 2.0 installed
              (spec F-7, same yes), and how many days old the firmware (BIOS) is (a number; spec F-8, same yes;
-             not its version or date), and whether USB storage is blocked, read-only or allowed (spec F-5, same yes)
+             not its version or date), whether USB storage is blocked, read-only or allowed (spec F-5, same yes),
+             whether the built-in Administrator account is enabled and how many enabled accounts never signed
+             in (true/false and a count, same yes; never which accounts)
 
 NEVER SENT, and `payload()` is built so they cannot slip in (it copies named fields, never whole records):
   anything about files or documents (the whole file-organising half); account names; install folders and
@@ -114,6 +116,8 @@ def payload(cfg: dict, settings: dict | None = None, posture=None) -> dict:
             "guest_enabled": any(u.get("enabled") and str(u.get("sid") or "").endswith("-501") for u in users),
             "accounts_enabled": sum(1 for u in users if u.get("enabled")),
             "accounts_without_password": sum(1 for u in users if u.get("enabled") and not u.get("password_required")),
+            "builtin_admin_enabled": any(u.get("enabled") is True and str(u.get("sid") or "").endswith("-500") for u in users) if users else None,
+            "accounts_never_used": sum(1 for u in users if u.get("enabled") is True and not u.get("last_logon")) if users else None,
             "admin_accounts": len(raw.get("admins") or []) if raw.get("admins_read") else None,
             "daily_account_is_admin": bool(raw.get("me_admin")),
             "windows_last_update": raw.get("last_update") or None, "windows_updates_off": raw.get("no_auto_update") == 1,
