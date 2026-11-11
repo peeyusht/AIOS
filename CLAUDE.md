@@ -417,12 +417,14 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   `fleet.payload()`, which needs the user's yes. There is no Hide for a wrong CVE match on the server and
   no PDF: the report is text, a device page prints. The
   console was built locally in the Lovable style, not in Lovable. No cloud server has been rented.
+- Frameworks shown by default: Cyber Essentials only on a PC's own console; on the server a new organisation
+  shows all three, CERT-In first (decision D-5, 11 Nov 2026), existing ones keep their choice.
 - Frameworks: the PC's own console has no labels, so DPDP encryption and log retention are notes there; on the
   server a person labels a device (`device_labels`, spec F-1, 11 Nov 2026) and the worker judges it again.
   Incident register (spec F-21, `server/app/incidents.py`, table `incidents`): CERT-In 6 h and DPDP 72 h clocks
   from "noticed"; the API role has no DELETE on it; nothing is submitted to CERT-In or the Board from here.
   Governance and reviews (F-23, F-24, `server/app/records.py`, tables `governance`, `reviews`): a review sign-off
-  is never changed (no UPDATE grant); overdue items show on the Overview for CERT-In and DPDP only. Shown by default: Cyber Essentials only (spec decision D-5 open).
+  is never changed (no UPDATE grant); overdue items show on the Overview for CERT-In and DPDP only.
 - Compliance is for one PC. Not checked: multi-factor login, backups and the router
   (declared). "Windows is up to date" means an update of any kind installed on or after the last monthly
   release whose 14 days are over, not "the security update is in" or "no newer build exists". The
@@ -438,7 +440,8 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   built-in Administrator (by its -500 id) is sent as true/false and never-used enabled accounts as a count.
   Wi-Fi (F-2, `net.wifi`): saved profiles are exported to a fresh temp folder that is removed at once; only the
   kind of encryption and counts leave PowerShell, never a network name (SSID), and a PC with no Wi-Fi adapter
-  sends no Wi-Fi fields at all. Logs (F-10): only how far back the Security log reaches, its mode and two audit
+  sends no Wi-Fi fields at all. Evidence uploads (D-4) are designed in the spec, not built: nothing on the server
+  stores customer files until phase 6. Logs (F-10): only how far back the Security log reaches, its mode and two audit
   settings are read and sent, never anything from a log; they need administrator rights, so the file agent shows
   them as unknown and only the SYSTEM device agent reads them. We never collect logs (spec F-10). Backups (F-12):
   only whether a known backup tool is set up is sent; when it last ran is not read yet (always null).

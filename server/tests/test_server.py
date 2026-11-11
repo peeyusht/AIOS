@@ -400,12 +400,13 @@ class ServerTest(unittest.TestCase):
         self.assertEqual([p["state"] for p in d["support"]["programs"]], ["ended"])
         self.assertEqual((len(d["compliance"]["controls"]), d["compliance_history"][-1]["controls"]["malware"]), (5, "pass"))
         self.assertTrue(d["reference"]["complete"] is False)               # nothing published the list status in this test
-        f = self.http.get("/api/v1/fleet", headers=self.auth(self.admin_a)).json()
+        f = self.http.get("/api/v1/fleet?framework=ce", headers=self.auth(self.admin_a)).json()
         self.assertEqual((f["devices"], f["judged"], f["all_passing"], f["totals"]["exploited"]), (2, 1, 0, 1))
         self.assertEqual((f["exploited"][0]["device"], f["exploited"][0]["cve"], [s["name"] for s in f["silent"]]), ("DEMO-PC", "CVE-2026-0001", ["SECOND-PC"]))
         self.assertEqual({a["key"]: (a["pass"], a["fail"]) for a in f["areas"]}["malware"], (1, 0))
         self.assertEqual(f["history"][-1]["areas"]["malware"], 1)
-        self.assertEqual((f["framework"], [x["key"] for x in f["frameworks"] if x["shown"]]), ("ce", ["ce"]))     # nothing changes until chosen
+        self.assertEqual((f["framework"], [x["key"] for x in f["frameworks"] if x["shown"]]), ("ce", ["ce", "certin", "dpdp"]))
+        self.assertEqual(self.http.get("/api/v1/fleet", headers=self.auth(self.admin_a)).json()["framework"], "certin")   # D-5: a new organisation shows all three, CERT-In first
         c = self.http.get("/api/v1/fleet?framework=certin", headers=self.auth(self.admin_a)).json()
         self.assertEqual(([a["key"] for a in c["areas"]], c["framework"]), (["nes", "ems", "sc", "pm", "rpp", "acim", "lm", "dpbp"], "certin"))
         self.assertEqual({a["key"]: (a["pass"], a["fail"]) for a in c["areas"]}["ems"], (1, 0))
@@ -481,7 +482,7 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.owner_a.post("/api/v1/declarations", json={"key": "risk_assessment", "answer": "yes", "dated": "2026-08-01"}).status_code, 200)
         q = {x["key"]: x for x in self.http.get("/api/v1/fleet", headers=self.auth(self.admin_a)).json()["declared"]}
         self.assertEqual((q["risk_assessment"]["answer"], q["risk_assessment"]["dated"], q["perimeter"]["dated"]), ("yes", "2026-08-01", ""))
-        self.assertEqual(self.http.get("/api/v1/fleet", headers=self.auth(self.admin_b)).json()["framework"], "ce")     # B's own choice
+        self.assertEqual(self.http.get("/api/v1/fleet", headers=self.auth(self.admin_b)).json()["framework"], "certin")     # B's own (the default)
         t = self.http.get("/api/v1/report?framework=dpdp", headers=self.auth(self.admin_a)).json()["text"]
         for part in ("Judged against: DPDP Rules 2025", "6(1)(A) ENCRYPTION", "Rule 6 and 7 evidence", "Not a statement of DPDP compliance"):
             self.assertIn(part, t)

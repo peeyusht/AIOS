@@ -355,7 +355,30 @@ the PC and the server); the optional uploaded document waits for D-4. Original: 
 (GC.4), physical access controls (PS.1), risk assessment date (VAA.2). Each declared answer gets an optional
 date and an optional uploaded document.
 
-**Evidence uploads (all W features).** Not built today: the server has no file storage. Needs its own design:
+**Evidence uploads — DESIGN (D-4: "design only", owner, 11 Nov 2026). Not built; needs phase 6 first.**
+- *What may be uploaded:* proof for F-20 (disposal certificate), F-22 (contract, the vendor's report), F-23 (the
+  security policy), F-25 (the VA report) and any declared answer. Nothing a device sends; people only (admin or owner).
+- *Types and size:* PDF, PNG and JPEG only, decided by the file's first bytes, not its name or the browser's type;
+  never HTML, SVG, Office files or archives. 10 MB a file and 500 MB an organisation (our own numbers).
+- *Storage:* outside PostgreSQL, on a volume only the API container mounts, under `<org id>/<random id>` (the
+  person's file name is never a path). Each file encrypted (AES-GCM) with a key from the environment
+  (`FLEET_EVIDENCE_KEY`), never in the database, like `FLEET_SECRET_KEY`. The SHA-256 of the plain file is kept so
+  the evidence can be shown unchanged.
+- *Index:* table `evidence_files (id, org_id, kind, ref_id, name, content_type, size, sha256, uploaded_at,
+  uploaded_by, deleted_at)` with row-level security and a line in the isolation test; the API role may insert and
+  mark deleted, never update the file's fields.
+- *Serving:* only to signed-in people of the organisation; `Content-Disposition: attachment`, the stored type,
+  `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`, never cached. Share links do not open
+  files unless that is decided separately. Not virus-scanned: it is downloaded as an attachment, never shown inline.
+- *Deletion and retention:* an owner deletes; the file is unreadable at once and removed from the volume after 30
+  days (backups age out on their own schedule); deleting the organisation removes all its files. Upload, download
+  and delete are in the audit log.
+- *Before building:* phase 6: the TLS proxy with a per-route body limit (the API's 5 MB limit stays for everything
+  else), encrypted backups of the volume with a tested restore, and the key's custody written down.
+- *Tests:* a file of another type with a .pdf name is refused; another organisation's file id gives 404; a deleted
+  file cannot be fetched; the response headers; the isolation test line.
+
+Original note: not built today: the server has no file storage. Needs its own design:
 size limit, allowed types (PDF, images; never HTML or SVG), stored outside the database, scanned for nothing
 and served only with `nosniff` and download disposition, per-organisation, row-level security on the index
 table, retention and deletion rules. This is customer data at rest: phase 6 hardening (backups, encryption at
@@ -372,7 +395,7 @@ rest) must come first.
 3. **Server workflows without uploads:** all BUILT 11 Nov 2026 (F-1, declared questions with dates, F-21, F-23 without the
    document, F-24). F-1 labels, F-21 incidents, F-24 reviews, F-23 (without document),
    new declared questions with dates.
-4. **Uploads**, after phase 6 hardening: F-20, F-22, F-23 documents, F-25.
+4. **Uploads**, after phase 6 hardening: F-20, F-22, F-23 documents, F-25. D-4: design only (11 Nov 2026); not built.
 5. **Decision-gated:** F-11 (D-1, D-2), F-3 (D-3), F-9 (feasibility), F-30 (own design).
 
 Tests for every step, in the existing suites: `shadow-filer/tests/test_compliance.py` (profiles, thresholds),
@@ -384,6 +407,10 @@ never come out), `device-agent/tests` (the new readings work as SYSTEM), `server
 
 ## 7. Decisions the owner must take first
 
+- Decided by the owner on 11 Nov 2026: **D-2 later** (F-11 not built, not declined); **D-3 yes** (F-3 daily SPF
+  and DMARC lookups by the worker); **D-4 design only** (above, under Evidence uploads; nothing that stores files is
+  built); **D-5 all three** (a new organisation shows CERT-In, DPDP and Cyber Essentials, CERT-In first; existing
+  organisations keep their choice).
 - **D-1 — APPROVED by the owner on 11 Nov 2026 for all of step 2**, with two changes to this list: `bios_age_days`
   (days) instead of `bios_date`, and `wifi_connected` (bool) added so "no Wi-Fi" can be told from "unknown".
   Each field is added in its own feature's commit, with both SENT lists and `tests/test_fleet.py`. Asked as:

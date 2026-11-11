@@ -141,6 +141,8 @@ BEGIN
 END $$;
 -- Which frameworks the organisation's console shows, in order (the first is the one shown first).
 ALTER TABLE organisations ADD COLUMN IF NOT EXISTS frameworks text[] NOT NULL DEFAULT '{ce}';
+-- D-5 (owner, 11 Nov 2026): a NEW organisation shows all three, CERT-In first; existing ones keep their choice.
+ALTER TABLE organisations ALTER COLUMN frameworks SET DEFAULT '{certin,dpdp,ce}';
 
 -- What the organisation states about things no program can measure. Always shown as declared.
 CREATE TABLE IF NOT EXISTS declarations (
