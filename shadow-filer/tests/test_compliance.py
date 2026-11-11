@@ -26,7 +26,8 @@ def pc(**over):
                    {"name": "admin", "enabled": True, "password_required": True, "last_logon": "2026-09-01", "sid": "S-1-5-21-1-1002"}],
          "admins": [{"name": "DEMO-PC\\admin", "kind": "User"}], "admins_read": True, "me_admin": False,
          "screensaver": {"active": "1", "secure": "1", "timeout": "600"}, "inactivity": 0,
-         "display_off": 0, "sleep_after": 0, "lock_on_wake": -1, "autoplay_off": 1, "autorun_policy": 0, "inbound_allow_rules": 40}
+         "display_off": 0, "sleep_after": 0, "lock_on_wake": -1, "autoplay_off": 1, "autorun_policy": 0, "inbound_allow_rules": 40,
+         "lockout_threshold": 10}
     p.update(over)
     return p
 
@@ -104,21 +105,46 @@ class ChecksTest(unittest.TestCase):
         self.assertIsNone(compliance.browser_checks(pc(), None))
 
     def test_configuration(self):
-        bad = pc(screensaver={"active": "1", "secure": "", "timeout": ""}, autoplay_off=0,
+        bad = pc(screensaver={"active": "1", "secure": "", "timeout": ""}, autoplay_off=0, lockout_threshold=0,
                  drives=[{"letter": "C:", "protection": 2}, {"letter": "D:", "protection": 1}],
                  users=[{"name": "alex", "enabled": True, "password_required": False, "last_logon": "2026-10-12", "sid": "S-1-5-21-1-1001"},
                         {"name": "Guest", "enabled": True, "password_required": False, "last_logon": "", "sid": "S-1-5-21-1-501"}])
         c = by_id(compliance.configuration_checks(bad))
         self.assertEqual({k: v["status"] for k, v in c.items()},
-                         {"cfg.lock": "warn", "cfg.autoplay": "fail", "cfg.guest": "fail", "cfg.password": "fail",
-                          "cfg.unused": "warn", "cfg.encryption": "fail"})
+                         {"cfg.lock": "info", "cfg.unlock": "fail", "cfg.autoplay": "fail", "cfg.guest": "fail", "cfg.password": "fail",
+                          "cfg.unused": "warn", "cfg.encryption": "info"})
+        # Cyber Essentials v3.3 sets no lock time and does not ask for encryption: notes, never failing the area
+        self.assertEqual(compliance._roll([c["cfg.lock"], c["cfg.encryption"]]), "pass")
+        self.assertEqual(compliance.configuration_checks(bad)[0]["id"], "cfg.lock")      # fleet.payload reads it first
         self.assertEqual((c["cfg.password"]["evidence"], c["cfg.encryption"]["detail"][:18]), (["alex", "Guest"], "Not encrypted: C:."))
         for ok in (dict(inactivity=600), dict(display_off=300, lock_on_wake=1), dict(autorun_policy=0xFF, autoplay_off=0)):
             c = by_id(compliance.configuration_checks(pc(screensaver={}, **ok)))
             self.assertEqual("pass", c["cfg.autoplay" if "autorun_policy" in ok else "cfg.lock"]["status"], ok)
         # going dark without asking to sign in again is not a lock; neither is a lock after an hour
         for no in (dict(display_off=300, lock_on_wake=0), dict(inactivity=3600)):
-            self.assertEqual(by_id(compliance.configuration_checks(pc(screensaver={}, **no)))["cfg.lock"]["status"], "warn", no)
+            self.assertEqual(by_id(compliance.configuration_checks(pc(screensaver={}, **no)))["cfg.lock"]["status"], "info", no)
+
+    def test_unlock_tries(self):
+        st = lambda n: compliance.unlock_check(pc(lockout_threshold=n))["status"]
+        self.assertEqual([st(n) for n in (1, 5, 10, 11, 50, 0, -1, None, True)],
+                         ["pass", "pass", "pass", "fail", "fail", "fail", "unknown", "unknown", "unknown"])
+        self.assertIn("never lock", compliance.unlock_check(pc(lockout_threshold=0))["detail"])
+
+    def test_windows_monthly_release(self):
+        due = compliance.security_release_due
+        # second Tuesdays: 8 Sep, 13 Oct, 10 Nov 2026; 9 Dec 2025, 13 Jan 2026
+        self.assertEqual([due(date.fromisoformat(d)).isoformat() for d in
+                          ("2026-10-12", "2026-10-26", "2026-10-27", "2026-11-23", "2026-11-24", "2026-01-26", "2026-01-27")],
+                         ["2026-09-08", "2026-09-08", "2026-10-13", "2026-10-13", "2026-11-10", "2025-12-09", "2026-01-13"])
+        w = lambda last, today: compliance.windows_update_check(last, "KB1", date.fromisoformat(today))["status"]
+        self.assertEqual([w("2026-10-13", "2026-10-27"), w("2026-10-12", "2026-10-27"), w("2026-10-12", "2026-10-26"),
+                          w("2026-10-20", "2026-11-23"), w("", "2026-11-23"), w(None, "2026-11-23")],
+                         ["pass", "fail", "pass", "pass", "unknown", "unknown"])
+
+    def test_unscored_flaw_counts(self):
+        # v3.3: a fix whose severity is not given is due within 14 days like a high or critical one
+        self.assertEqual([compliance.high_or_unscored({"score": s}) for s in (9.8, 7.0, 6.9, 0, None)],
+                         [True, True, False, False, True])
 
     def test_updates(self):
         c = by_id(compliance.update_checks(pc(), VUL, APPS, TODAY))

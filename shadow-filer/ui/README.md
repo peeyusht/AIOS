@@ -50,7 +50,9 @@ own `#/inbox`-style routing, so it runs unchanged as a static page.
    (bar, buttons, dialogs), its use in `Library.tsx` and `Security.tsx`, the `library.remediate` switch in
    `Settings.tsx`, `remedy*` calls, `UpdatePlan`/`Remedy*` types and mock routes. Also local, on top of Lovable's
    own pages: the Turn on buttons and the result bar in `Network.tsx` (and `FirewallButton` in `remedy.tsx`), and
-   the Network panel in `Dashboard.tsx`; the "Rules that let connections in" block in `Network.tsx`.
+   the Network panel in `Dashboard.tsx`; the "Rules that let connections in" block in `Network.tsx`. On 11 Nov
+   2026 the Compliance demo data in `mock.ts` followed Cyber Essentials v3.3 (Windows' monthly update within
+   14 days, `unlock_tries` instead of `windows_update_days`).
 
 ## The fleet server's console
 `src/fleet/**`, `fleet.html` and `vite.fleet.config.ts` are a second application built from this tree: the
