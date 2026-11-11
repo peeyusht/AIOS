@@ -5,12 +5,20 @@ import sys
 import tempfile
 import unittest
 from datetime import date
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import watch  # noqa: E402
 
 TODAY = date(2026, 10, 11)
+
+
+class _FixedDate(date):
+    """watch.report() reads today's date itself; the dates in these tests are fixed around TODAY."""
+    @classmethod
+    def today(cls):
+        return TODAY
 
 
 def with_check_digit(prefix: str, ok) -> str:
@@ -132,6 +140,7 @@ class ReportTest(unittest.TestCase):
         for secret in ("ABCPK1234L", AADHAAR, A4, CARD, C4):
             self.assertNotIn(secret, text)
 
+    @mock.patch.object(watch, "date", _FixedDate)
     def test_report_and_dismiss(self):
         rep = watch.report(self.cfg, self.db, force=True)
         self.assertEqual(rep["counts"], {"soon": 1, "passed": 1, "later": 0, "sensitive": 2})
