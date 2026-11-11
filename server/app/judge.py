@@ -173,6 +173,11 @@ def configuration_checks(p) -> list:
              f"limit, and the screen is not set to go off and ask to sign in). {agent.SCHEME} sets no time limit, so this "
              "does not count against the control area; insurers often ask.",
              fix=None if p.get("lock_found") else "On the PC: Settings > Accounts > Sign-in options, and Settings > System > Power.")]
+    if "lockout_threshold" in p:            # sent by agents from 11 Nov 2026; older ones say nothing, so no check
+        u = agent.unlock_check({"lockout_threshold": p["lockout_threshold"] if p["lockout_threshold"] is not None else -1})
+        out.append(C("cfg.unlock", u["title"], u["status"],
+                     "The device could not read its account lockout setting." if u["status"] == "unknown" else u["detail"],
+                     fix=u["fix"] and "On the PC, " + u["fix"][0].lower() + u["fix"][1:]))
     off = bool(p.get("autoplay_off"))
     out.append(C("cfg.autoplay", "AutoPlay is off, so a plugged-in drive runs nothing by itself", "pass" if off else "fail",
                  "AutoPlay is off." if off else "AutoPlay is on for removable drives.",

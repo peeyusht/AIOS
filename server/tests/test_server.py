@@ -43,7 +43,7 @@ if READY:
     import cve
     import eol
     import release as rel
-    from app import agents, auth, db, manage, people, worker
+    from app import agents, auth, db, judge, manage, people, worker
     from app.main import app, MAX_BODY
 
 
@@ -317,6 +317,11 @@ class ServerTest(unittest.TestCase):
         self.assertEqual((j["support"]["windows"], j["support"]["ended"]), ("supported", ["Kettle Archive"]))
         self.assertEqual(j["compliance"]["areas"], {"firewalls": "fail", "configuration": "pass", "updates": "fail", "access": "fail", "malware": "pass"})
         self.assertEqual(sorted(f["id"] for f in j["failing"]), ["acc.daily", "fw.on", "upd.flaws", "upd.unsupported"])
+        # account lockout (sent from 11 Nov 2026): judged by the agent's own rule; an older agent sends nothing, so no check
+        unlock = lambda **o: {c["id"]: c for c in judge.configuration_checks({**SNAP["posture"], **o})}.get("cfg.unlock")
+        self.assertEqual([(unlock(lockout_threshold=n) or {}).get("status") for n in (10, 0, 30, None)], ["pass", "fail", "fail", "unknown"])
+        self.assertIsNone(unlock())
+        self.assertTrue(unlock(lockout_threshold=0)["fix"].startswith("On the PC, in an administrator terminal: net accounts"))
         d = self.http.get(f"/api/v1/devices/{self.dev_a}", headers=self.auth(self.admin_a)).json()
         self.assertEqual(([a["name"] for a in d["flaws"]["apps"]], d["flaws"]["apps"][0]["cves"][0]["id"], d["flaws"]["apps"][0]["cves"][0]["kev"]),
                          (["Kettle Archive"], "CVE-2026-0001", True))       # 'Notes' is another maker's product: not matched
