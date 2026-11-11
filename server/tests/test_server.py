@@ -349,6 +349,12 @@ class ServerTest(unittest.TestCase):
                                                  None, None, {}, self.today)["profiles"]["certin"]["controls"] for ch in g["checks"]}
         self.assertEqual([pr[k]["status"] for k in ("cfg.smb1", "cfg.rdp", "cfg.remreg", "cfg.psv2")], ["fail", "unknown", "pass", "warn"])
         self.assertTrue(pr["cfg.smb1"]["fix"].startswith("On the PC, in an administrator PowerShell"))
+        # F-8 firmware age: days only; never "out of date"
+        fwc = lambda d: {ch["id"]: ch for g in judge.assess({**SNAP, "posture": {**SNAP["posture"], "bios_age_days": d}}, None, None, {}, self.today)["controls"]
+                         for ch in g["checks"]}["upd.firmware"]
+        self.assertEqual([fwc(d)["status"] for d in (600, 1200, None)], ["pass", "warn", "unknown"])
+        self.assertEqual(fwc(None)["detail"], "The device could not read its firmware's release date.")
+        self.assertNotIn("upd.firmware", [ch["id"] for g in judge.assess(SNAP, None, None, {}, self.today)["controls"] for ch in g["checks"]])
         d = self.http.get(f"/api/v1/devices/{self.dev_a}", headers=self.auth(self.admin_a)).json()
         self.assertEqual(([a["name"] for a in d["flaws"]["apps"]], d["flaws"]["apps"][0]["cves"][0]["id"], d["flaws"]["apps"][0]["cves"][0]["kev"]),
                          (["Kettle Archive"], "CVE-2026-0001", True))       # 'Notes' is another maker's product: not matched

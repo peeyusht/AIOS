@@ -28,7 +28,8 @@ def pc(**over):
          "screensaver": {"active": "1", "secure": "1", "timeout": "600"}, "inactivity": 0,
          "display_off": 0, "sleep_after": 0, "lock_on_wake": -1, "autoplay_off": 1, "autorun_policy": 0, "inbound_allow_rules": 40,
          "lockout_threshold": 10, "pw_min_length": 14, "pw_max_age_days": 90, "pw_history": 5,
-         "smb1_on": False, "rdp_on": False, "rdp_nla": True, "remote_registry_on": False, "psv2_present": False}
+         "smb1_on": False, "rdp_on": False, "rdp_nla": True, "remote_registry_on": False, "psv2_present": False,
+         "bios_version": "F39", "bios_date": "2024-03-22"}
     p.update(over)
     return p
 
@@ -172,6 +173,17 @@ class ChecksTest(unittest.TestCase):
             self.assertEqual(set(st(smb1_on=bad, rdp_on=bad, remote_registry_on=bad, psv2_present=bad).values()), {"unknown"}, bad)
         self.assertIn("Set-SmbServerConfiguration -EnableSMB1Protocol $false", compliance.protocol_checks(pc(smb1_on=True))[0]["fix"])
 
+    def test_firmware_age(self):
+        """F-8: older than 3 years (our own number, and the text says so) is a look; never "out of date"."""
+        fw = lambda d: by_id(compliance.update_checks(pc(bios_date=d), None, None, TODAY))["upd.firmware"]
+        self.assertEqual([fw(d)["status"] for d in ("2024-03-22", "2023-10-13", "2023-10-11", "2015-01-01", "", None, "2027-01-01")],
+                         ["pass", "pass", "warn", "warn", "unknown", "unknown", "unknown"])     # 1095 days is still within
+        self.assertIn("our own limit", fw("2015-01-01")["detail"])
+        self.assertIn("F39 released 2015-01-01", fw("2015-01-01")["detail"])
+        self.assertNotIn("out of date", fw("2015-01-01")["detail"])
+        self.assertEqual([compliance.firmware_check(x)["status"] for x in (0, 1095, 1096, -1, None, True, "900")],
+                         ["pass", "pass", "warn", "unknown", "unknown", "unknown", "unknown"])
+
     def test_windows_monthly_release(self):
         due = compliance.security_release_due
         # second Tuesdays: 8 Sep, 13 Oct, 10 Nov 2026; 9 Dec 2025, 13 Jan 2026
@@ -191,14 +203,14 @@ class ChecksTest(unittest.TestCase):
     def test_updates(self):
         c = by_id(compliance.update_checks(pc(), VUL, APPS, TODAY))
         self.assertEqual({k: v["status"] for k, v in c.items()},
-                         {"upd.supported": "pass", "upd.windows": "pass", "upd.automatic": "pass", "upd.flaws": "fail",
+                         {"upd.supported": "pass", "upd.windows": "pass", "upd.firmware": "pass", "upd.automatic": "pass", "upd.flaws": "fail",
                           "upd.coverage": "info", "upd.pending": "warn"})
         # only high or critical flaws older than 14 days count: the 7.5 from a week ago and the 5.0 do not
         self.assertEqual(c["upd.flaws"]["evidence"], ["Kettle Archive 24.08: 1 high or critical, oldest 72 days, fix: update to 25.01"])
         self.assertIn("1 of the flaws is being used in real attacks", c["upd.flaws"]["detail"])
         old = by_id(compliance.update_checks(pc(build=19045, last_update="2026-08-01", no_auto_update=1), None, None, TODAY))
         self.assertEqual({k: v["status"] for k, v in old.items()},
-                         {"upd.supported": "fail", "upd.windows": "fail", "upd.automatic": "fail", "upd.flaws": "unknown", "upd.pending": "unknown"})
+                         {"upd.supported": "fail", "upd.windows": "fail", "upd.firmware": "pass", "upd.automatic": "fail", "upd.flaws": "unknown", "upd.pending": "unknown"})
         self.assertIn("Windows 10", old["upd.supported"]["detail"])
         self.assertEqual(compliance.windows_name(pc()), "Windows 11 Professional 25H2")     # the registry still says "Windows 10"
         paused = by_id(compliance.update_checks(pc(paused_until="2026-11-01T00:00:00Z"), VUL, APPS, TODAY))

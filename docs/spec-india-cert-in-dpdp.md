@@ -122,7 +122,7 @@ actor)` with row-level security and a line in the isolation test.
 | | | Guest account off | M | **BUILT** `cfg.guest` |
 | | | Built-in Administrator (RID 500) enabled | M | **NEW** (the account list is already read; add the check) |
 | PM.1 | Patch OS, applications, firmware | Windows monthly release within 14 days, auto-update on, CVEs, pending updates, browsers | M | **BUILT** `upd.windows`, `upd.automatic`, `upd.flaws`, `upd.pending`, `upd.browsers` |
-| | | F-8 BIOS/firmware version and date | M | **PARTIAL**: `Win32_BIOS` is already read for the serial; version and release date are not |
+| | | F-8 BIOS/firmware version and date | M | **BUILT** 11 Nov 2026 `upd.firmware` (age; version shown on the PC only) |
 | PM.2 | Monitor vendor notices and CERT-In advisories | CVE + CISA KEV lists | S | **BUILT** (`cve.py`) |
 | | | F-9 CERT-In advisories matched to installed software | S | **NEW**. First check that CERT-In publishes something machine-readable; if not, drop it |
 | IM.1 | Documented incident response plan | Declared | D | **BUILT** `incident_plan` (as a question; no document, no date) |
@@ -213,7 +213,12 @@ Original: SMBv1 server enabled (`Get-SmbServerConfiguration`), RDP enabled
 PowerShell v2 feature present. Facts: four booleans. Checks `cfg.smb1` (fail), `cfg.rdp` (warn if RDP on
 without NLA; info if on with NLA), `cfg.remreg` (warn), `cfg.psv2` (warn).
 
-**F-8 Firmware (M).** Add `SMBIOSBIOSVersion` and `ReleaseDate` to the existing `Win32_BIOS` read.
+**F-8 Firmware (M) — BUILT 11 Nov 2026** (`upd.firmware`, payload `bios_age_days`). Built differently: the
+payload carries the age in days, not the date (approved with D-1), and not the version; the PC's own page shows
+version and date. The check is in all three frameworks (CE updates, CERT-In PM, DPDP "other"); its text names
+3 years as our own limit and never says "out of date". A date in the future or unreadable is unknown.
+Measured on the owner's PC: F39 of 22 Mar 2024, 964 days: pass.
+Original: Add `SMBIOSBIOSVersion` and `ReleaseDate` to the existing `Win32_BIOS` read.
 Fact `bios_date`. Check `upd.firmware`: warn if older than 3 years (our own number; say so). The maker's
 latest version cannot be known offline; do not claim "out of date".
 

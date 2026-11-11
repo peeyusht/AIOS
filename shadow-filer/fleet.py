@@ -19,7 +19,8 @@ SENT, per kind:
              the password policy: minimum length, maximum age in days, how many old passwords are remembered
              (three numbers; added 11 Nov 2026 with the owner's yes, spec F-13), and five true/false: SMBv1 on,
              Remote Desktop on, Remote Desktop asks for sign-in first, Remote Registry on, PowerShell 2.0 installed
-             (spec F-7, same yes)
+             (spec F-7, same yes), and how many days old the firmware (BIOS) is (a number; spec F-8, same yes;
+             not its version or date)
 
 NEVER SENT, and `payload()` is built so they cannot slip in (it copies named fields, never whole records):
   anything about files or documents (the whole file-organising half); account names; install folders and
@@ -72,6 +73,15 @@ def _steady(e: dict) -> bool:
     return e["reach"] == "network" and not (e["port"] >= 49152 and (e["proto"] == "UDP" or e["windows"]))
 
 
+def _age(iso) -> int | None:
+    """Days since a yyyy-mm-dd date; None for anything else, or a date in the future."""
+    try:
+        days = (datetime.now().date() - datetime.strptime(str(iso)[:10], "%Y-%m-%d").date()).days
+    except ValueError:
+        return None
+    return days if isinstance(iso, str) and days >= 0 else None
+
+
 def payload(cfg: dict, settings: dict | None = None, posture=None) -> dict:
     """Exactly what a check-in sends. Reads what the other modules already hold; asks Windows only for the
     settings read the Compliance page also makes. The device agent has no Library settings and reads the PC's
@@ -111,6 +121,7 @@ def payload(cfg: dict, settings: dict | None = None, posture=None) -> dict:
             "lockout_threshold": raw["lockout_threshold"] if type(raw.get("lockout_threshold")) is int and raw["lockout_threshold"] >= 0 else None,
             **{k: raw[k] if type(raw.get(k)) is int and raw[k] >= 0 else None for k in ("pw_min_length", "pw_max_age_days", "pw_history")},
             **{k: raw[k] if type(raw.get(k)) is bool else None for k in ("smb1_on", "rdp_on", "rdp_nla", "remote_registry_on", "psv2_present")},
+            "bios_age_days": _age(raw.get("bios_date")),
             "browser_updates_off": [k for k, v in (raw.get("browser_policy") or {}).items()
                                     if (k.endswith("_default") or k.endswith("_period")) and v == "0" or k == "firefox_off" and v == "1"]}
     if s["enabled"] and s["applications"]:
