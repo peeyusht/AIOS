@@ -173,6 +173,15 @@ try {
     }
   }
 } catch { } finally { Remove-Item -LiteralPath $af -Force -ErrorAction SilentlyContinue }
+# Backups (spec F-12): which kinds of backup are set up, never what or where. A backup agent's service (a short,
+# named list; not switched off), File History set up for the person, OneDrive folder backup on for the person.
+$bk = @()
+$bsv = @(Get-CimInstance Win32_Service -Filter "Name LIKE 'Veeam%' OR Name LIKE 'Acronis%' OR Name = 'afcdpsrv' OR Name LIKE 'Macrium%' OR Name = 'bzserv' OR Name LIKE 'Carbonite%' OR Name LIKE 'IDrive%' OR Name LIKE 'Code42%' OR Name LIKE 'CrashPlan%'" | Where-Object { $_.StartMode -ne 'Disabled' })
+if ($bsv.Count) { $bk += 'agent' }
+$prof = if ($system) { if ($usid) { "$(Reg "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$usid" 'ProfileImagePath')" } else { '' } } else { "$env:USERPROFILE" }
+if ($prof -and (Test-Path -LiteralPath "$prof\AppData\Local\Microsoft\Windows\FileHistory\Configuration\Config1.xml")) { $bk += 'filehistory' }
+$kfm = @(Get-ChildItem -LiteralPath "$hkcu\Software\Microsoft\OneDrive\Accounts" -ErrorAction SilentlyContinue | Where-Object { [int64](Get-ItemProperty -LiteralPath $_.PSPath).KfmFoldersProtectedNow -gt 0 })
+if ($kfm.Count) { $bk += 'onedrive' }
 $usb = if ((Reg $rsd 'Deny_All') -eq 1 -or $usbstor -eq 4 -or (Reg $rdisk 'Deny_Read') -eq 1) { 'blocked' } elseif ((Reg $rdisk 'Deny_Write') -eq 1) { 'read_only' } elseif ($null -ne $usbstor) { 'allowed' } else { '' }
 $out = [pscustomobject]@{
   computer = "$env:COMPUTERNAME"; user = "$env:USERNAME"; manufacturer = "$($cs.Manufacturer)"; model = "$($cs.Model)";
@@ -191,7 +200,7 @@ $out = [pscustomobject]@{
   rdp_on = if ($null -ne $deny) { [int]$deny -eq 0 } else { $null };
   rdp_nla = if ($null -ne $nla) { [int]$nla -eq 1 } else { $null };
   remote_registry_on = if ($rr) { $rr.State -eq 'Running' -or $rr.StartMode -eq 'Auto' } else { $null };
-  usb_storage = $usb; wifi = $wifi; logs = $logs; audit = $audit;
+  usb_storage = $usb; wifi = $wifi; logs = $logs; audit = $audit; backups = @($bk);
   psv2_present = if ($feat.Count) { [bool]@($feat | Where-Object { $_.Name -like 'MicrosoftWindowsPowerShellV2*' -and [int]$_.InstallState -eq 1 }).Count } else { $null };
   screensaver = [pscustomobject]@{ active = "$(Reg $desk 'ScreenSaveActive')"; secure = "$(Reg $desk 'ScreenSaverIsSecure')";
     timeout = "$(Reg $desk 'ScreenSaveTimeOut')" };
@@ -631,6 +640,44 @@ def log_checks(f: dict, rule: str = "ce", labels=()) -> list:
             {**aud, "fact": {k: f.get(k) for k in ("audit_logon", "audit_account_mgmt")}}]
 
 
+BACKUP_KINDS = {"agent": "a backup program's service (Veeam, Acronis, Macrium, Backblaze, Carbonite, IDrive or CrashPlan)",
+                "filehistory": "Windows File History", "onedrive": "OneDrive folder backup"}
+
+
+def backup_facts(p: dict) -> dict:
+    """The two backup facts that may leave the PC (spec F-12). When the last backup ran cannot be told from what is
+    read today for any of these, so `backup_last_days` is None (not known) until a reading for it is added."""
+    b = p.get("backups")
+    kinds = [k for k in (b if isinstance(b, list) else []) if k in BACKUP_KINDS]
+    return {"backup_tool": bool(kinds) if isinstance(b, list) else None, "backup_last_days": None, "_kinds": kinds}
+
+
+def backup_check(f: dict, rule: str = "ce") -> dict:
+    """Backups (spec F-12; CERT-In DPBP.1, DPDP 6(1)(d) "continued processing ... such as by way of data-backups").
+    Never a fail: a backup taken elsewhere (a NAS, a server, a cloud service) is invisible from the PC, and the
+    declared answer stays the evidence. Cyber Essentials does not ask for backups: a note there."""
+    tool, last, kinds = f.get("backup_tool"), f.get("backup_last_days"), f.get("_kinds") or []
+    title = "A backup tool is set up on this PC"
+    asked = rule != "ce"
+    fact = {"backup_tool": tool, "backup_last_days": last}
+    if not isinstance(tool, bool):
+        return {**_check("bak.recent", title, "unknown" if asked else "info", "Whether a backup tool is set up could not be read."), "fact": fact}
+    old = isinstance(last, int) and not isinstance(last, bool) and last > 7
+    found = ("Found: " + ", ".join(BACKUP_KINDS[k] for k in kinds) + "." if kinds else "A backup tool is set up.") if tool else \
+        "None of the backup tools this check knows was found."
+    detail = (found + (f" The last backup ran {last} days ago." if isinstance(last, int) and not isinstance(last, bool) else
+                       " When it last ran is not known from here." if tool else "")
+              + " A backup taken elsewhere (a NAS, a server, a cloud service) is not visible from the PC; the declared answer is the evidence."
+              + ("" if asked else " Cyber Essentials does not ask for backups."))
+    return {**_check("bak.recent", title, ("warn" if not tool or old else "pass") if asked else ("pass" if tool and not old else "info"), detail,
+                     fix=None if tool and not old else "Set up a backup with a copy kept offline or unchangeable, and record it under Declared."),
+            "fact": fact}
+
+
+def _with_kinds(f: dict) -> dict:
+    return {**backup_check(f), "kinds": f["_kinds"]}
+
+
 def security_release_due(today: date) -> date:
     """The newest monthly Windows security release (second Tuesday) whose 14 days are over on `today`."""
     d = today - timedelta(days=THRESHOLDS["patch_days"])
@@ -899,7 +946,7 @@ FRAMEWORKS = {
            "controls": tuple((k, t, a, ids) for (k, t, a), ids in zip(CONTROLS, (
                FW_IDS, ("cfg.lock", "cfg.unlock", "cfg.pwpolicy", "cfg.autoplay", "cfg.guest", "cfg.builtin_admin", "cfg.password", "cfg.unused",
                         "cfg.smb1", "cfg.rdp", "cfg.remreg", "cfg.psv2", "cfg.usb", "cfg.encryption"),
-               UPD_IDS, ("acc.daily", "acc.admins"), MAL_IDS + LOG_IDS))),
+               UPD_IDS, ("acc.daily", "acc.admins"), MAL_IDS + LOG_IDS + ("bak.recent",)))),
            "declared": tuple((k, why) for k, _, why in DECLARED),
            "footer": "This follows the Cyber Essentials control areas but is not a certificate."},
     "certin": {"title": "CERT-In MSME", "scheme": "CERT-In Elemental Cyber Defense Controls for MSMEs v1.0 (CISG-2025-03, 1 Sep 2025)",
@@ -922,7 +969,9 @@ FRAMEWORKS = {
                    ("acim", "Access control (ACIM)", "ACIM.1, ACIM.2 and ACIM.4: accounts in use, least privilege, administrator "
                                                      "rights only when essential.", ("acc.daily", "acc.admins", "cfg.unused")),
                    ("lm", "Logging (LM)", "LM.1: logging on, and logs kept for 180 days. Where they are kept (within India) is declared, "
-                                          "not measured; this product never collects them.", LOG_IDS)),
+                                          "not measured; this product never collects them.", LOG_IDS),
+                   ("dpbp", "Backups (DPBP)", "DPBP.1: regular backups, encrypted, with a copy offsite and offline. Only whether a backup "
+                                              "tool is set up can be seen from the PC; the rest is declared.", ("bak.recent",))),
                "declared": (("mfa", "CERT-In RPP.3: multi-factor login for critical systems, administrators and remote access."),
                             ("perimeter", "CERT-In NES.1: a perimeter firewall."),
                             ("backups", "CERT-In DPBP.1: regular backups, encrypted, with a copy offsite and offline."),
@@ -941,6 +990,8 @@ FRAMEWORKS = {
                  ("access", "6(1)(b) Access control", "Access to the computer resources that hold personal data is controlled. "
                                                       "The rule gives no numbers; lockout and password length use Cyber Essentials' own.",
                   ("cfg.unlock", "cfg.pwpolicy", "cfg.password", "cfg.guest", "cfg.builtin_admin", "cfg.unused", "cfg.lock", "acc.daily", "acc.admins") + FW_IDS),
+                 ("cont", "6(1)(d) Continuity", "Continued processing if personal data is lost or damaged, such as by way of "
+                                                "data-backups. Only whether a backup tool is set up can be seen from the PC.", ("bak.recent",)),
                  ("logs", "6(1)(c) and (e) Logs", "Visibility on the accessing of personal data through logs, and logs kept for one "
                                                   "year on a device that holds personal data.", LOG_IDS),
                  ("other", "Other reasonable safeguards", "Patching, malware protection and old protocols switched off. Rule 6 does not "
@@ -976,6 +1027,8 @@ def _on_pc(ch: dict) -> dict:
         ch["detail"] = "The device could not read its audit settings (an agent that is not the installed service cannot)."
     if ch["status"] in ("unknown", "info") and ch["id"] == "cfg.usb" and ch.get("fact") is None:
         ch["detail"] = "The device could not read whether USB drives can be used."
+    if ch["id"] == "bak.recent" and ch["detail"].startswith("Whether a backup tool"):
+        ch["detail"] = "The device could not read whether a backup tool is set up."
     if ch["status"] == "unknown" and ch["id"] == "net.wifi":
         ch["detail"] = "The device could not read its Wi-Fi settings."
     if ch["status"] == "unknown" and ch["id"] == "upd.firmware":
@@ -997,6 +1050,11 @@ def verdict(fw: str, ch: dict, labels=(), remote: bool = False) -> dict:
         x = ch["fact"]
         u = password_policy_check({"pw_min_length": x["min_length"], "pw_max_age_days": x["max_age_days"], "pw_history": x["history"]}, f["pwpolicy"])
         ch.update({k: u[k] for k in ("title", "status", "detail", "fix")})
+        if remote:
+            _on_pc(ch)
+    if ch["id"] == "bak.recent" and "fact" in ch and fw != "ce":
+        u = backup_check({**ch["fact"], "_kinds": ch.get("kinds") or []}, fw)
+        ch.update({k: u[k] for k in ("status", "detail", "fix")})
         if remote:
             _on_pc(ch)
     if ch["id"] in LOG_IDS and "fact" in ch and f.get("logs"):
@@ -1150,7 +1208,7 @@ def measure(cfg: dict, raw: dict, net: dict | None, vul: dict | None, appsv: dic
     """Every check once, as Cyber Essentials words it; the frameworks judge copies of these."""
     wf = wifi_facts(raw)
     return (firewall_checks(net) + ([wifi_check(wf)] if wf else []) + configuration_checks(raw) + update_checks(raw, vul, appsv, today, cfg)
-            + access_checks(raw) + malware_checks(raw) + log_checks(log_facts(raw, today)))
+            + access_checks(raw) + malware_checks(raw) + log_checks(log_facts(raw, today)) + [_with_kinds(backup_facts(raw))])
 
 
 def assess(cfg: dict, raw: dict, net: dict | None, vul: dict | None, appsv: dict | None, today: date | None = None,

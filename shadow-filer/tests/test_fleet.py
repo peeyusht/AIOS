@@ -73,6 +73,8 @@ class FleetTest(unittest.TestCase):
         self.assertEqual([sn["posture"][k] for k in ("wifi_connected", "wifi_auth", "wifi_open_autoconnect")], [True, "wpa2", 0])
         self.assertEqual([sn["posture"][k] for k in ("log_mode_security", "audit_logon", "audit_account_mgmt")], ["circular", True, True])
         self.assertEqual(sn["posture"]["log_days_security"], (datetime.now().date() - datetime(2026, 1, 1).date()).days)
+        self.assertEqual((sn["posture"]["backup_tool"], sn["posture"]["backup_last_days"]), (True, None))
+        self.assertNotIn("_kinds", sn["posture"])
         self.assertEqual((sn["posture"]["daily_account_is_admin"], sn["posture"]["admin_accounts"], sn["posture"]["drives_encrypted"]), (True, 1, True))
         self.assertEqual((sn["network"]["shared_folders"], sn["network"]["rules"]["programs"]), (1, 1))
         self.assertEqual(sorted(sn["network"]["listening"][0]), ["port", "process", "proto", "reach", "windows"])
@@ -121,6 +123,12 @@ class FleetTest(unittest.TestCase):
             sent = fleet.payload(self.cfg)["snapshots"]["posture"]
         self.assertEqual([sent[k] for k in ("log_mode_security", "audit_logon", "audit_account_mgmt")], ["circular", None, None])
         for never in (SECRET_USER, "10.9.8.7", "last_event", "Success"):
+            self.assertNotIn(never, json.dumps(sent))
+        bk = pc(backups=["agent", f"\\\\nas\\{SECRET_USER}\\Backups", "D:\\Backups"])
+        with mock.patch("compliance._posture", return_value=bk):
+            sent = fleet.payload(self.cfg)["snapshots"]["posture"]
+        self.assertEqual(sent["backup_tool"], True)
+        for never in (SECRET_USER, "nas", "Backups", "agent"):
             self.assertNotIn(never, json.dumps(sent))
         self.assertEqual([fleet._age(x) for x in ("2999-01-01", 20240322, None, "2024-13-01")], [None] * 4)
         self.assertNotIn(SECRET_USER, json.dumps(sent))

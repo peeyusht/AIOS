@@ -178,7 +178,8 @@ remembered history as three numbers, and whether SMBv1, Remote Desktop (and its 
 and PowerShell 2.0 are on, how many days old the firmware is, whether USB storage is blocked, read-only or allowed, whether the built-in Administrator is enabled, how many
 enabled accounts never signed in, and for Wi-Fi only whether it is connected, the kind of encryption and how many
 saved open networks join by themselves; how many days the Security log reaches back, its mode, and whether
-sign-ins and account changes are audited).
+sign-ins and account changes are audited; whether a known backup tool is set up and how many days ago it last
+ran, when known).
 
 Never sent: anything about files or documents (the whole file-organising half), account names, install
 folders and program paths (they contain the user name), IP and MAC addresses, the addresses of open

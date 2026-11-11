@@ -134,7 +134,7 @@ actor)` with row-level security and a line in the isolation test.
 | AT.1 | Awareness training at least twice a year | Training dates, reminder every 6 months | W | **PARTIAL**: `training` declared yes/no exists; dates and cadence NEW |
 | AT.2 | CERT-In workshops and drills | Declared | D | **NEW** question |
 | TPRM.1–2 | Vendor due diligence; same baseline for vendors | F-22 vendor register | W | **NEW** |
-| DPBP.1 | Regular backups, encrypted, offsite and offline | F-12 backup detection | M | **NEW** |
+| DPBP.1 | Regular backups, encrypted, offsite and offline | F-12 backup detection | M | **BUILT** 11 Nov 2026 `bak.recent` (whether a tool is set up; last run not yet known) |
 | | | Declared | D | **BUILT** `backups` |
 | DPBP.2 | Test restores | Declared, with a date | D | **BUILT** `backup_test` (12-month wording; keep) |
 | DPBP.3 | Minimum business continuity plan | Declared | D | **NEW** question |
@@ -163,7 +163,7 @@ actor)` with row-level security and a line in the isolation test.
 | 6(1)(a) encryption | BitLocker per drive | M | **PARTIAL**: measured (`cfg.encryption`, payload `drives_encrypted`), but always `info`. DPDP profile: fail on personal-data devices (F-0, F-1) |
 | 6(1)(b) access control | Password policy, lockout, guest, accounts without password, admins, daily account, lock | M | **PARTIAL**: all BUILT except F-13 password policy |
 | 6(1)(c) logs, monitoring, review | F-10 audit policy on; F-24 log review sign-off | M+W | **PARTIAL**: `log.audit` BUILT 11 Nov 2026; review sign-off (F-24) NEW |
-| 6(1)(d) continuity, backups | F-12; declared `backups`, `backup_test` | M+D | **PARTIAL** (declared BUILT, detection NEW) |
+| 6(1)(d) continuity, backups | F-12; declared `backups`, `backup_test` | M+D | **BUILT** 11 Nov 2026 (`bak.recent` plus the declarations) |
 | 6(1)(e) one-year retention | F-10 oldest Security log entry ≥365 days on personal-data devices | M | **BUILT** 11 Nov 2026 `log.retention` (DPDP profile, personal-data label) |
 | 6(1)(f) processor contracts | F-22 vendor register with "security clause" and contract upload | W | **NEW** |
 | 6(1)(g) effective observance | Daily history, evidence report, share link, audit log | S | **BUILT** (server phase 2–3) |
@@ -274,7 +274,16 @@ files skipped (`is_cloud_only`), password-protected PDFs never opened. Fact per 
 the number of files, nothing else (no names, no paths, no numbers). Suggests label F-1. **Breaks two rules**:
 the device agent has no file-reading code (D-2), and the payload gains a file-derived fact (D-1).
 
-**F-12 Backups (M).** Detect: Windows File History configured and its last backup time; Windows Server
+**F-12 Backups (M) — BUILT 11 Nov 2026** (`bak.recent`, payload `backup_tool`, `backup_last_days`). Built
+differently: detection is a backup agent's service by name (Veeam, Acronis, Macrium, Backblaze, Carbonite, IDrive,
+CrashPlan/Code42; not switched off), File History set up for the person (its Config1.xml), and OneDrive folder
+backup (`KfmFoldersProtectedNow`). Windows' own `fhsvc` and `wbengine` services exist on every PC and prove
+nothing, so they are not used; `wbadmin` is not read (needs administrator rights and prints English text). When
+the last backup ran is not known for any of these yet, so `backup_last_days` is always null for now and the
+7-day look never fires; reading it (File History's catalogue, an agent's own records) is left open. Cyber
+Essentials does not ask for backups: a note there; CERT-In (new area DPBP) and DPDP (new area 6(1)(d)
+Continuity) make "none found" a look. Never a fail. Measured on the owner's PC: none found (look).
+Original: Detect: Windows File History configured and its last backup time; Windows Server
 Backup / `wbadmin` last success where present; known backup agents among installed programs and their
 services' state (a small, named list: Veeam Agent, Acronis, Macrium, Backblaze, OneDrive Known Folder Move).
 Facts: `backup_tool` (bool), `backup_last_days` (int or null when not knowable). Check `bak.recent`: warn if
@@ -337,7 +346,7 @@ rest) must come first.
 
 1. **F-0 profiles** and the CERT-In lockout threshold. No payload change. Unblocks everything. **BUILT 11 Nov 2026.**
 2. **Measured, payload change needed (D-1; approved 11 Nov 2026):** BUILT so far: F-13, F-7, F-8, F-5, built-in
-   Administrator, never-used accounts, F-2, F-10 (11 Nov 2026). F-13 password policy, F-7 protocols, F-8 firmware, F-5 USB,
+   Administrator, never-used accounts, F-2, F-10, F-12: step 2 is complete (11 Nov 2026). F-13 password policy, F-7 protocols, F-8 firmware, F-5 USB,
    built-in Administrator enabled, never-used account count, F-2 Wi-Fi, F-10 logs, F-12 backups.
 3. **Server workflows without uploads:** F-1 labels, F-21 incidents, F-24 reviews, F-23 (without document),
    new declared questions with dates.
