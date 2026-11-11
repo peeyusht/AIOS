@@ -57,6 +57,9 @@ const PRIORITY = {
 
 type LogRow = { ts: string; kind: string; tone: string; text: string };
 
+/** The word on each action-queue button: what the page it opens lets you do. */
+const ACTION_WORD: Record<string, string> = { "/security": "See fix", "/network": "Review", "/cleanup": "Review", "/compliance": "See check", "/inbox": "File them" };
+
 export function DashboardPage() {
   const q = usePoll<DashboardResponse>(api.dashboard, 60_000);
   const comp = usePoll<ComplianceResponse>(() => api.compliance(), 300_000);
@@ -75,7 +78,7 @@ export function DashboardPage() {
     ...(remedy?.enabled ? remedy.recent : []).map((r) => ({ ts: r.ts, kind: r.action, tone: r.ok ? "text-success" : "text-destructive", text: r.message })),
   ].sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, 8);
 
-  return <>
+  return <div className="text-[13px]">
     <PageHeader
       title="Today"
       sub={<span className="font-mono text-xs">{new Date().toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}{d && <> · updated {when(d.generated_at)}</>}</span>}
@@ -110,7 +113,7 @@ export function DashboardPage() {
             </div>
             {d.attention.length === 0 ? <div className="p-4"><Notice tone="success" icon={<Check />}>Nothing needs your attention.</Notice></div> : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[560px] text-sm">
+                <table className="w-full min-w-[560px]">
                   <thead><tr className="label-caps text-left text-muted-foreground">
                     <th className="px-4 py-2 font-medium">Priority</th><th className="px-2 py-2 font-medium">Area</th><th className="px-2 py-2 font-medium">Item</th><th className="px-4 py-2"><span className="sr-only">Open</span></th>
                   </tr></thead>
@@ -119,10 +122,10 @@ export function DashboardPage() {
                       const p = PRIORITY[a.level];
                       return (
                         <tr key={i} className="border-t align-top">
-                          <td className="whitespace-nowrap px-4 py-2.5"><span className={cn("inline-flex items-center gap-1.5 rounded px-2 font-mono text-[11px] font-semibold leading-5", p.cls)}><span aria-hidden>{p.glyph}</span>{p.label}<span className="sr-only">{a.level === "danger" ? " urgent" : a.level === "warning" ? " soon" : " when you can"}</span></span></td>
-                          <td className="whitespace-nowrap px-2 py-2.5 text-muted-foreground">{AREA[a.to] ?? a.to.slice(1)}</td>
-                          <td className="px-2 py-2.5">{a.text}</td>
-                          <td className="whitespace-nowrap px-4 py-2 text-right"><a href={"#" + a.to} className="inline-flex h-7 items-center rounded-md border px-2.5 text-xs font-medium hover:bg-muted">Open</a></td>
+                          <td className="whitespace-nowrap px-4 py-3"><span className={cn("inline-flex items-center gap-1.5 rounded px-2 font-mono text-[11px] font-semibold leading-5", p.cls)}><span aria-hidden>{p.glyph}</span>{p.label}<span className="sr-only">{a.level === "danger" ? " urgent" : a.level === "warning" ? " soon" : " when you can"}</span></span></td>
+                          <td className="whitespace-nowrap px-2 py-3 text-muted-foreground">{AREA[a.to] ?? a.to.slice(1)}</td>
+                          <td className="px-2 py-3">{a.text}</td>
+                          <td className="whitespace-nowrap px-4 py-2 text-right align-middle"><a href={"#" + a.to} className="inline-flex h-8 items-center rounded-md border px-3 text-xs font-medium hover:bg-muted">{ACTION_WORD[a.to] ?? "Open"}</a></td>
                         </tr>
                       );
                     })}
@@ -133,7 +136,7 @@ export function DashboardPage() {
           </Card>
 
           <Card className="overflow-hidden rounded-lg">
-            <div className="flex items-center gap-3 border-b px-4 py-3"><h2 className="flex-1 text-sm font-semibold">Recent changes</h2><a href="#/activity" className="text-xs text-primary hover:underline">Open Activity</a></div>
+            <div className="flex items-center gap-3 border-b px-4 py-3"><h2 className="flex-1 text-sm font-semibold">Event log</h2><a href="#/activity" className="text-xs text-primary hover:underline">Open Activity</a></div>
             {log.length === 0 ? <div className="p-4">{quiet("No program installed, updated or removed recently, and nothing changed from the console.")}</div> : (
               <ul className="px-4 py-2.5 font-mono text-xs leading-7">
                 {log.map((r, i) => (
@@ -191,5 +194,5 @@ export function DashboardPage() {
         </div>
       </div>
     </div>}
-  </>;
+  </div>;
 }

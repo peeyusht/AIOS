@@ -11,8 +11,8 @@ import { EmptyState, Notice, Segmented, Spin, act } from "./ui";
 
 const fmt = (n: number) => n.toLocaleString();
 
-/** Read-only side panel showing the text the agent holds for a file. */
-export function FilePreview({ path, onClose }: { path: string | null; onClose: () => void }) {
+/** Loads what the agent can show for one file (its text, and whether it can be drawn as a document). */
+function usePreview(path: string | null) {
   const [data, setData] = useState<PreviewResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -40,12 +40,82 @@ export function FilePreview({ path, onClose }: { path: string | null; onClose: (
     else { setData(null); setError(null); setLoading(false); }
     return () => { requestId.current++; };
   }, [path, load]);
+  return { data, error, loading, mode, setMode, load };
+}
 
-  const name = data?.name ?? (path ? path.split(/[\\/]/).pop() : "") ?? "";
+/** The preview itself: the document as it looks (PDF, picture, .docx) or the indexed text. */
+function PreviewBody({ path, p, showOpen = true }: { path: string; p: ReturnType<typeof usePreview>; showOpen?: boolean }) {
+  const { data, error, loading, mode, setMode, load } = p;
   const copy = async () => {
     try { await navigator.clipboard.writeText(data?.text ?? ""); toast.success("Copied"); }
     catch { toast.error("Couldn't copy the text."); }
   };
+  const openBtn = showOpen && data?.openable ? (
+    <Button variant="outline" size="sm" onClick={() => act(() => api.searchOpen(data.path))}><ExternalLink /> Open</Button>
+  ) : null;
+  return (
+    <>
+      {loading && (
+        <div className="space-y-2.5" aria-busy="true" aria-label="Loading">
+          {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-4" style={{ width: `${70 + ((i * 37) % 30)}%` }} />)}
+        </div>
+      )}
+
+      {error && (
+        <Notice tone="danger">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>{error}</span>
+            <Button size="sm" variant="outline" onClick={() => load(path)}>Retry</Button>
+          </div>
+        </Notice>
+      )}
+
+      {data?.view && (
+        <div><Segmented value={mode} onChange={setMode} label="Preview view" options={[{ value: "document", label: "Document" }, { value: "text", label: "Text" }]} /></div>
+      )}
+      {data?.view && mode === "document" && (
+        <DocumentView key={path} data={data} openBtn={openBtn} onText={() => setMode("text")} />
+      )}
+
+      {data && (!data.view || mode === "text") && (
+        <>
+          {data.note && data.text && <Notice tone={data.status === "ocr" ? "info" : "warn"}>{data.note}</Notice>}
+          {data.text ? (
+            <div className="flex min-h-0 flex-1 flex-col gap-2">
+              {data.truncated && (
+                <p className="text-xs text-muted-foreground">Long document: this is the start of it ({fmt(data.chars)} characters). Open it to see everything.</p>
+              )}
+              <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+                <span className="tabular">{fmt(data.chars)} characters</span>
+                <Button variant="ghost" size="sm" onClick={copy}><Copy /> Copy</Button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border bg-muted/30 p-4 text-sm leading-relaxed select-text" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }} tabIndex={0}>
+                {data.text}
+              </div>
+            </div>
+          ) : (
+            <EmptyState icon={<FileText />} title="Nothing to preview">
+              <p>{data.note || "The agent holds no text for this file."}</p>
+              {openBtn && <div className="mt-3">{openBtn}</div>}
+            </EmptyState>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+/** The preview in a page pane (Inbox), for the selected file. */
+export function InlinePreview({ path }: { path: string }) {
+  const p = usePreview(path);
+  return <div className="flex min-h-[420px] flex-1 flex-col gap-3">{p.data || p.loading || p.error ? <PreviewBody path={path} p={p} showOpen={false} /> : null}</div>;
+}
+
+/** Read-only side panel showing the text the agent holds for a file. */
+export function FilePreview({ path, onClose }: { path: string | null; onClose: () => void }) {
+  const p = usePreview(path);
+  const { data } = p;
+  const name = data?.name ?? (path ? path.split(/[\\/]/).pop() : "") ?? "";
   const openBtn = data?.openable ? (
     <Button variant="outline" size="sm" onClick={() => act(() => api.searchOpen(data.path))}><ExternalLink /> Open</Button>
   ) : null;
@@ -71,53 +141,7 @@ export function FilePreview({ path, onClose }: { path: string | null; onClose: (
             <Button variant="ghost" size="sm" onClick={() => act(() => api.reveal(path))}><FolderSearch /> Show</Button>
           </div>
         )}
-
-        {loading && (
-          <div className="space-y-2.5" aria-busy="true" aria-label="Loading">
-            {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-4" style={{ width: `${70 + ((i * 37) % 30)}%` }} />)}
-          </div>
-        )}
-
-        {error && path && (
-          <Notice tone="danger">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span>{error}</span>
-              <Button size="sm" variant="outline" onClick={() => load(path)}>Retry</Button>
-            </div>
-          </Notice>
-        )}
-
-        {data?.view && (
-          <div><Segmented value={mode} onChange={setMode} label="Preview view" options={[{ value: "document", label: "Document" }, { value: "text", label: "Text" }]} /></div>
-        )}
-        {path && data?.view && mode === "document" && (
-          <DocumentView key={path} data={data} openBtn={openBtn} onText={() => setMode("text")} />
-        )}
-
-        {data && (!data.view || mode === "text") && (
-          <>
-            {data.note && data.text && <Notice tone={data.status === "ocr" ? "info" : "warn"}>{data.note}</Notice>}
-            {data.text ? (
-              <div className="flex min-h-0 flex-1 flex-col gap-2">
-                {data.truncated && (
-                  <p className="text-xs text-muted-foreground">Long document: this is the start of it ({fmt(data.chars)} characters). Open it to see everything.</p>
-                )}
-                <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
-                  <span className="tabular">{fmt(data.chars)} characters</span>
-                  <Button variant="ghost" size="sm" onClick={copy}><Copy /> Copy</Button>
-                </div>
-                <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border bg-muted/30 p-4 text-sm leading-relaxed select-text" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }} tabIndex={0}>
-                  {data.text}
-                </div>
-              </div>
-            ) : (
-              <EmptyState icon={<FileText />} title="Nothing to preview">
-                <p>{data.note || "The agent holds no text for this file."}</p>
-                {openBtn && <div className="mt-3">{openBtn}</div>}
-              </EmptyState>
-            )}
-          </>
-        )}
+        {path && <PreviewBody path={path} p={p} />}
       </SheetContent>
     </Sheet>
   );

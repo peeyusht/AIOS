@@ -10,7 +10,7 @@ import { usePoll } from "@/lib/hooks";
 import { when } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { CheckStatus, ComplianceCheck, ComplianceControl, ComplianceFramework, ComplianceResponse, DeclaredAnswer } from "@/lib/types";
-import { act, Card, Confirm, ListSkeleton, LoadError, PageHeader, Segmented, Spin, Tip, useBusy } from "../ui";
+import { act, Card, Confirm, ListSkeleton, LoadError, Segmented, WorkBar, Spin, Tip, useBusy } from "../ui";
 
 const ORDER: Record<CheckStatus, number> = { fail: 0, warn: 1, unknown: 2, info: 3, pass: 4 };
 const LABEL: Record<CheckStatus, string> = { pass: "Passed", fail: "Failing", warn: "Worth a look", unknown: "Could not be checked", info: "Note" };
@@ -249,26 +249,27 @@ export function CompliancePage() {
   const answered = d?.declared.filter((x) => x.answer).length ?? 0;
   const hist = (d?.history ?? []).slice(-30);
 
-  return <>
+  return <div className="flex flex-1 flex-col text-[13px]">
     {d?.assessed_at && <p data-print="only" className="mb-4 hidden text-lg font-semibold">Security posture of {dev.name ?? "this PC"}, assessed {assessedDate}</p>}
-    <PageHeader
+    <WorkBar
       title="Compliance evidence"
-      sub={<><div>{d?.title ?? "Cyber Essentials"}, measured on this PC and declared by you. Evidence, not a certificate; nothing is sent anywhere.</div>
-        {d?.scheme && <div className="mt-0.5 text-xs">Judged against {d.scheme}.</div>}
-        {deviceLine && <div className="mt-1 font-mono text-xs">{deviceLine}</div>}</>}
-      actions={<>
-        {shown.length > 1 && <span data-print-hide><Segmented label="Framework" value={d?.framework ?? shown[0]!.key} onChange={switchTo} options={shown.map((f) => ({ value: f.key, label: f.title }))} /></span>}
-        {frameworks.length > 0 && <span data-print-hide><FrameworkPicker all={frameworks} onSaved={switchTo} /></span>}
-        {d?.assessed_at && <span className="text-xs text-muted-foreground">Assessed {when(d.assessed_at)}</span>}
+      sub={<>{d?.title ?? "Cyber Essentials"}, measured on this PC and declared by you. Evidence, not a certificate; nothing is sent anywhere.
+        {d?.scheme && <> Judged against {d.scheme}.</>}
+        {deviceLine && <span className="block font-mono text-[11px]">{deviceLine}</span>}</>}
+    >
+      <div data-print-hide className="flex flex-wrap items-center gap-2">
+        {shown.length > 1 && <Segmented label="Framework" value={d?.framework ?? shown[0]!.key} onChange={switchTo} options={shown.map((f) => ({ value: f.key, label: f.title }))} />}
+        {frameworks.length > 0 && <FrameworkPicker all={frameworks} onSaved={switchTo} />}
+        {d?.assessed_at && <span className="font-mono text-[11px] text-muted-foreground">assessed {when(d.assessed_at)}</span>}
         <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={busy === "refresh"}>{busy === "refresh" ? <Spin /> : <RefreshCw />}Check again</Button>
         <Button variant="outline" size="sm" onClick={() => void copy()} disabled={!d?.text}><Copy />Copy as text</Button>
         <Button size="sm" onClick={() => window.print()} disabled={!d}><Printer />Print evidence</Button>
-      </>}
-    />
-    {q.error && <div className="mb-4"><LoadError error={q.error} onRetry={q.reload} /></div>}
-    {d && !d.assessed_at && <div className="mb-4"><LoadError error={new Error(d.error ?? "The assessment has not run yet.")} onRetry={() => void refresh()} /></div>}
-    {!d ? (!q.error && <ListSkeleton rows={5} />) : d.assessed_at && <div className="space-y-6">
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-px overflow-hidden rounded-lg border bg-border" data-print-card>
+      </div>
+    </WorkBar>
+    {q.error && <div className="px-6 pt-4"><LoadError error={q.error} onRetry={q.reload} /></div>}
+    {d && !d.assessed_at && <div className="px-6 pt-4"><LoadError error={new Error(d.error ?? "The assessment has not run yet.")} onRetry={() => void refresh()} /></div>}
+    {!d ? (!q.error && <div className="px-6 pt-4"><ListSkeleton rows={5} /></div>) : d.assessed_at && <div className="flex flex-1 flex-col">
+      <div className="hidden grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-px overflow-hidden rounded-lg border bg-border print:grid" data-print-card>
         {[
           ["Control areas met", `${s.controls_passing ?? "—"}/${s.controls ?? controls.length}`, s.controls_passing != null && s.controls_passing < (s.controls ?? controls.length) ? "text-warning" : ""],
           ["Failing checks", s.fail ?? "—", s.fail ? "text-destructive" : ""],
@@ -281,21 +282,29 @@ export function CompliancePage() {
         ))}
       </div>
 
-      <div data-print-hide className="grid items-start gap-4 min-[1300px]:grid-cols-[230px_minmax(0,1fr)_380px] min-[900px]:grid-cols-[230px_minmax(0,1fr)]">
-        <Card className="space-y-1 rounded-lg p-2 min-[900px]:sticky min-[900px]:top-16">
+      <div data-print-hide className="flex flex-1 flex-wrap items-stretch border-b">
+        <div className="min-w-0 flex-[1_1_240px] border-r bg-sidebar px-3 py-4 min-[1100px]:max-w-[300px]">
+         <div className="space-y-1 min-[900px]:sticky min-[900px]:top-[72px]">
+          <div className="flex items-baseline gap-2 px-2 pb-2.5">
+            <span className={cn("font-mono text-[26px] font-semibold leading-none tabular", s.controls_passing != null && s.controls_passing < (s.controls ?? controls.length) && "text-warning")}>{s.controls_passing ?? "—"}/{s.controls ?? controls.length}</span>
+            <span className="text-xs text-muted-foreground">control areas met</span>
+          </div>
+          <div className="flex flex-wrap gap-x-3 gap-y-0.5 px-2 pb-3 font-mono text-[11px] text-muted-foreground">
+            <span className={cn(s.fail ? "text-destructive" : "")}>{s.fail ?? 0} fail</span><span className={cn(s.warn ? "text-warning" : "")}>{s.warn ?? 0} look</span><span>{s.unknown ?? 0} unknown</span><span>{s.accepted ?? 0} accepted</span>
+          </div>
           <nav aria-label="Control areas" className="space-y-1">
             {[{ key: "all", title: "All areas", status: null as null | CheckStatus, sub: `${all.length} checks` },
               ...controls.map((c) => ({ key: c.key as string, title: c.title, status: c.status as CheckStatus, sub: [AREA_STATE[c.status], c.counts.fail && `${c.counts.fail} fail`, c.counts.warn && `${c.counts.warn} look`].filter(Boolean).join(" · ") })),
             ].map((x) => (
               <button key={x.key} aria-pressed={area === x.key} onClick={() => setArea(x.key)}
-                className={cn("flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors", area === x.key ? "bg-accent" : "hover:bg-muted/60")}>
+                className={cn("flex min-h-11 w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left transition-colors", area === x.key ? "bg-accent" : "hover:bg-muted/60")}>
                 <span aria-hidden className={cn("w-4 shrink-0 text-center font-mono text-sm font-bold", x.status ? CODE[x.status].cls.split(" ").find((k) => k.startsWith("text-")) : "text-muted-foreground")}>{x.status ? CODE[x.status].glyph : "≡"}</span>
                 <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{x.title}</span><span className="block truncate text-[11px] text-muted-foreground">{x.sub}</span></span>
               </button>
             ))}
             <div aria-hidden className="mx-2 my-1 h-px bg-border" />
             <button aria-pressed={area === "declared"} onClick={() => setArea("declared")}
-              className={cn("flex w-full items-center gap-2.5 rounded-md border border-dashed px-2.5 py-2 text-left", area === "declared" ? "bg-accent" : "hover:bg-muted/60")}>
+              className={cn("flex min-h-11 w-full items-center gap-2.5 rounded-lg border border-dashed px-2.5 py-1.5 text-left", area === "declared" ? "bg-accent" : "hover:bg-muted/60")}>
               <span aria-hidden className="w-4 shrink-0 text-center font-mono text-sm text-muted-foreground">✎</span>
               <span className="min-w-0 flex-1"><span className="block text-sm font-medium">Declared by you</span><span className="block text-[11px] text-muted-foreground">{answered} of {d.declared.length} answered</span></span>
             </button>
@@ -309,22 +318,23 @@ export function CompliancePage() {
               <div className="flex justify-between font-mono text-[10px] text-muted-foreground"><span>{hist[0]!.day.slice(5)}</span><span>today</span></div>
             </div>
           )}
-        </Card>
+         </div>
+        </div>
 
-        <Card className="min-w-0 overflow-hidden rounded-lg">
+        <section aria-label="Checks" className="min-w-0 flex-[999_1_520px]">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] text-sm">
-              <thead><tr className="label-caps border-b text-left text-muted-foreground"><th className="px-4 py-2 font-medium">Status</th><th className="px-2 py-2 font-medium">Check</th><th className="px-4 py-2 font-medium">Found</th></tr></thead>
+            <table className="w-full min-w-[600px]">
+              <thead><tr className="label-caps bg-sidebar text-left text-muted-foreground"><th className="py-2.5 pl-5 pr-2 font-medium">Status</th><th className="px-2 py-2.5 font-medium">Check</th><th className="py-2.5 pl-2 pr-5 font-medium">Found</th></tr></thead>
               {shownControls.map((ctl) => (
                 <tbody key={ctl.key}>
-                  <tr><th scope="rowgroup" colSpan={3} className="label-caps border-b bg-muted/40 px-4 py-1.5 text-left font-medium text-muted-foreground">{ctl.title}</th></tr>
+                  <tr><th scope="rowgroup" colSpan={3} className="label-caps border-t px-5 pb-1.5 pt-3.5 text-left font-medium text-muted-foreground">{ctl.title}</th></tr>
                   {[...ctl.checks].sort((a, b) => ORDER[a.status] - ORDER[b.status]).map((c) => {
                     const on = chosen?.kind === "check" && chosen.id === c.id;
                     return (
-                      <tr key={c.id} onClick={() => setPick({ kind: "check", id: c.id })} className={cn("cursor-pointer border-b align-top last:border-b-0", on ? "bg-accent shadow-[inset_2px_0_0_var(--color-primary)]" : "hover:bg-muted/40")}>
-                        <td className="whitespace-nowrap px-4 py-2"><Code status={c.status} accepted={!!c.accepted} /></td>
+                      <tr key={c.id} onClick={() => setPick({ kind: "check", id: c.id })} className={cn("cursor-pointer align-top", on ? "bg-accent shadow-[inset_2px_0_0_var(--color-primary)]" : "hover:bg-muted/40")}>
+                        <td className="whitespace-nowrap py-2 pl-5 pr-2"><Code status={c.status} accepted={!!c.accepted} /></td>
                         <td className="px-2 py-2"><button className="text-left font-medium hover:underline" aria-pressed={on} onClick={(e) => { e.stopPropagation(); setPick({ kind: "check", id: c.id }); }}>{c.title}</button></td>
-                        <td className="px-4 py-2 text-muted-foreground"><span className="line-clamp-2">{c.detail}</span></td>
+                        <td className="py-2 pl-2 pr-5 text-muted-foreground"><span className="line-clamp-2">{c.detail}</span></td>
                       </tr>
                     );
                   })}
@@ -332,14 +342,14 @@ export function CompliancePage() {
               ))}
               {showDeclared && (
                 <tbody>
-                  <tr><th scope="rowgroup" colSpan={3} className="label-caps border-b bg-muted/40 px-4 py-1.5 text-left font-medium text-muted-foreground">Declared by you · never measured</th></tr>
+                  <tr><th scope="rowgroup" colSpan={3} className="label-caps border-t px-5 pb-1.5 pt-3.5 text-left font-medium text-muted-foreground">Declared by you · never measured</th></tr>
                   {d.declared.map((x) => {
                     const on = chosen?.kind === "declared" && chosen.key === x.key;
                     return (
-                      <tr key={x.key} onClick={() => setPick({ kind: "declared", key: x.key })} className={cn("cursor-pointer border-b align-top last:border-b-0", on ? "bg-accent shadow-[inset_2px_0_0_var(--color-primary)]" : "hover:bg-muted/40")}>
-                        <td className="whitespace-nowrap px-4 py-2"><span className="inline-flex min-w-[76px] items-center gap-1.5 rounded border border-dashed px-1.5 font-mono text-[11px] font-semibold leading-5 text-muted-foreground"><span aria-hidden>✎</span>{x.answer === "yes" ? "YES" : x.answer === "no" ? "NO" : x.answer === "na" ? "N/A" : "—"}</span></td>
+                      <tr key={x.key} onClick={() => setPick({ kind: "declared", key: x.key })} className={cn("cursor-pointer align-top", on ? "bg-accent shadow-[inset_2px_0_0_var(--color-primary)]" : "hover:bg-muted/40")}>
+                        <td className="whitespace-nowrap py-2 pl-5 pr-2"><span className="inline-flex min-w-[76px] items-center gap-1.5 rounded border border-dashed px-1.5 font-mono text-[11px] font-semibold leading-5 text-muted-foreground"><span aria-hidden>✎</span>{x.answer === "yes" ? "YES" : x.answer === "no" ? "NO" : x.answer === "na" ? "N/A" : "—"}</span></td>
                         <td className="px-2 py-2"><button className="text-left font-medium hover:underline" aria-pressed={on} onClick={(e) => { e.stopPropagation(); setPick({ kind: "declared", key: x.key }); }}>{x.title}</button></td>
-                        <td className="px-4 py-2 text-muted-foreground">{x.answer ? [x.dated && `dated ${x.dated}`, x.note || `declared ${when(x.ts)}`].filter(Boolean).join(" · ") : "not answered"}</td>
+                        <td className="py-2 pl-2 pr-5 text-muted-foreground">{x.answer ? [x.dated && `dated ${x.dated}`, x.note || `declared ${when(x.ts)}`].filter(Boolean).join(" · ") : "not answered"}</td>
                       </tr>
                     );
                   })}
@@ -347,20 +357,21 @@ export function CompliancePage() {
               )}
             </table>
           </div>
-        </Card>
+        </section>
 
-        <div className="min-w-0 min-[900px]:max-[1299px]:col-span-2 min-[1300px]:sticky min-[1300px]:top-16">
+        <aside aria-label="Evidence" className="min-w-0 flex-[1_1_340px] border-l bg-sidebar max-[1000px]:border-l-0 max-[1000px]:border-t">
+         <div className="min-[1000px]:sticky min-[1000px]:top-[72px]">
           {chosen?.kind === "check" && (() => {
             const hit = all.find((x) => x.c.id === chosen.id);
             if (!hit) return null;
             const { c, ctl } = hit;
             return (
-              <Card className="space-y-3 rounded-lg p-5">
+              <div className="space-y-3.5 p-5">
                 <div className="flex flex-wrap items-center gap-2"><Code status={c.status} accepted={!!c.accepted} /><span className="text-xs text-muted-foreground">{ctl.title}</span></div>
-                <h2 className="font-semibold leading-snug">{c.title}</h2>
+                <h2 className="text-base font-semibold leading-snug">{c.title}</h2>
                 <p className="text-sm leading-relaxed">{c.detail}</p>
                 {c.evidence.length > 0 && (
-                  <div className="rounded-md border bg-background p-3 font-mono text-xs leading-6">
+                  <div className="rounded-lg border bg-background px-3.5 py-3 font-mono text-xs leading-7">
                     <div className="text-muted-foreground">$ evidence {c.id}{d.assessed_at && ` · ${d.assessed_at.slice(0, 16).replace("T", " ")}`}</div>
                     {c.evidence.map((e, i) => <div key={i} className="break-all">{e}</div>)}
                   </div>
@@ -372,27 +383,30 @@ export function CompliancePage() {
                     <button className="ml-2 text-xs text-primary hover:underline" onClick={() => void withdraw(c)}>Withdraw</button>
                   </div>
                 )}
-                <div className="flex flex-wrap gap-2 border-t pt-3">
+                <div className="flex flex-wrap gap-2">
                   {c.to && <Button asChild size="sm" variant={c.status === "fail" ? "default" : "outline"}><a href={"#" + c.to}>Open {PAGE[c.to] ?? c.to.slice(1)}</a></Button>}
                   {(c.status === "fail" || c.status === "warn") && !c.accepted && <Button variant="outline" size="sm" onClick={() => startAccept(c)}>Accept with a reason…</Button>}
                 </div>
                 {(c.status === "fail" || c.status === "warn") && <p className="text-xs text-muted-foreground">An accepted exception keeps its failing mark in the evidence; it only stops counting against its area.</p>}
-              </Card>
+              </div>
             );
           })()}
           {chosen?.kind === "declared" && (() => {
             const x = d.declared.find((y) => y.key === chosen.key);
             if (!x) return null;
             return (
-              <Card className="rounded-lg">
-                <div className="px-5 pt-4"><span className="inline-flex items-center gap-1.5 rounded border border-dashed px-1.5 font-mono text-[11px] font-semibold leading-5 text-muted-foreground">✎ DECLARED</span></div>
+              <div>
+                <div className="px-5 pt-5"><span className="inline-flex items-center gap-1.5 rounded border border-dashed px-1.5 font-mono text-[11px] font-semibold leading-5 text-muted-foreground">✎ DECLARED</span></div>
                 <Declared key={x.key + (x.ts ?? "")} d={x} onSave={(a, n, dt) => void declare(x.key, a, n, dt)} />
                 <p className="px-5 pb-4 text-xs text-muted-foreground">Your own statement. It is shown as declared in the evidence, never as measured.</p>
-              </Card>
+              </div>
             );
           })()}
-        </div>
+         </div>
+        </aside>
       </div>
+
+      <div className="space-y-6 px-6 py-6">
 
       <div data-print-hide>
         <Section title="History" sub="One line per control area, one square per day.">
@@ -434,6 +448,7 @@ export function CompliancePage() {
       </Section>
       <p className="text-xs text-muted-foreground">{d.footer ?? "Follows the Cyber Essentials control areas. It is not the scheme's own tool and passing here is not a certificate."}</p>
       <p data-print="only" className="hidden text-sm">Measured on the PC by Shadow Filer. {d.footer ?? "Follows the Cyber Essentials control areas; not a certificate."}</p>
+      </div>
     </div>}
 
     <Confirm
@@ -449,5 +464,5 @@ export function CompliancePage() {
       </label>
       <p>It stays listed as failing, marked as accepted, and no longer counts against the control area.</p>
     </Confirm>
-  </>;
+  </div>;
 }
