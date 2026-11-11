@@ -485,10 +485,29 @@ class ServerTest(unittest.TestCase):
         self.assertIn("may have a yearly baseline audit", t)
         self.assertNotIn("mandatory", t.lower())
         self.assertEqual(self.http.get("/api/v1/audit", headers=self.auth(self.admin_a)).json()["entries"][1]["action"], "frameworks.changed")
+        # F-1 labels: set by an admin or owner, recorded, and the device is judged again with it (DPDP encryption)
+        lab = f"/api/v1/devices/{self.dev_a}/labels"
+        self.assertEqual(self.http.post(lab, headers=self.auth(self.admin_a), json={"label": "personal_data", "on": True}).status_code, 403)
+        for bad in ({"label": "secret", "on": True}, {"label": "personal_data", "on": "yes"}):
+            self.assertEqual(self.owner_a.post(lab, json=bad).status_code, 400)
+        self.assertEqual(self.owner_b.post(lab, json={"label": "personal_data", "on": True}).status_code, 404)
+        self.assertEqual(self.owner_a.post(lab, json={"label": "personal_data", "on": True}).status_code, 200)
+        self.assertEqual(self.owner_a.post(lab, json={"label": "personal_data", "on": True}).status_code, 200)        # twice: one label
+        d = self.http.get(f"/api/v1/devices/{self.dev_a}", headers=self.auth(self.admin_a)).json()
+        self.assertEqual(d["labels"], ["personal_data"])
+        with as_worker():
+            self.assertEqual(worker.round_(self.lists, self.today), 1)                   # judged again because of the label
+        d = self.http.get(f"/api/v1/devices/{self.dev_a}", headers=self.auth(self.admin_a)).json()
+        enc = [g for g in d["compliance"]["profiles"]["dpdp"]["controls"] if g["key"] == "enc"][0]["checks"][0]
+        self.assertEqual((enc["id"], enc["status"]), ("cfg.encryption", "fail"))          # its last report: drives not encrypted
+        self.assertIn("marked as holding personal data", enc["detail"])
+        self.assertEqual(self.http.get("/api/v1/audit", headers=self.auth(self.admin_a)).json()["entries"][0]["action"], "device.labelled")
+        self.assertEqual(self.owner_a.post(lab, json={"label": "personal_data", "on": False}).status_code, 200)
+        self.assertEqual(self.http.get(f"/api/v1/devices/{self.dev_a}", headers=self.auth(self.admin_a)).json()["labels"], [])
 
     def test_7_judgements_stay_inside_their_organisation(self):
         with db.anon() as c:
-            for table in ("judgements", "compliance_history", "declarations", "exceptions", "users", "sessions", "setup_links",
+            for table in ("judgements", "compliance_history", "declarations", "exceptions", "device_labels", "users", "sessions", "setup_links",
                           "recovery_codes", "share_links"):
                 self.assertEqual(c.execute(f"SELECT count(*) AS n FROM {table}").fetchone()["n"], 0, table)
         with db.org(self.org_b) as c:
@@ -502,6 +521,12 @@ class ServerTest(unittest.TestCase):
         with self.assertRaises(psycopg.errors.InsufficientPrivilege):
             with db.org(self.org_b) as c:
                 c.execute("INSERT INTO exceptions (org_id, device_id, check_id, reason) VALUES (%s,%s,'fw.on','planted')", (self.org_a, self.dev_a))
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):      # F-1: nor label another organisation's device
+            with db.org(self.org_b) as c:
+                c.execute("INSERT INTO device_labels (org_id, device_id, label) VALUES (%s,%s,'personal_data')", (self.org_a, self.dev_a))
+        with db.org(self.org_b) as c:
+            self.assertEqual(c.execute("SELECT count(*) AS n FROM device_labels WHERE device_id = %s", (self.dev_a,)).fetchone()["n"], 0)
+            self.assertEqual(c.execute("DELETE FROM device_labels WHERE device_id = %s", (self.dev_a,)).rowcount, 0)
         with self.assertRaises(psycopg.errors.InsufficientPrivilege):      # the API cannot write a judgement of its own
             with db.org(self.org_a) as c:
                 c.execute("INSERT INTO judgements (device_id, org_id) VALUES (%s,%s)", (self.dev_a, self.org_a))

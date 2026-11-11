@@ -416,8 +416,8 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   `fleet.payload()`, which needs the user's yes. There is no Hide for a wrong CVE match on the server and
   no PDF: the report is text, a device page prints. The
   console was built locally in the Lovable style, not in Lovable. No cloud server has been rented.
-- Frameworks: the device agent's own PC has no labels, so DPDP encryption is a note there until device
-  labels (spec F-1) exist on the server. Shown by default: Cyber Essentials only (spec decision D-5 open).
+- Frameworks: the PC's own console has no labels, so DPDP encryption and log retention are notes there; on the
+  server a person labels a device (`device_labels`, spec F-1, 11 Nov 2026) and the worker judges it again. Shown by default: Cyber Essentials only (spec decision D-5 open).
 - Compliance is for one PC. Not checked: multi-factor login, backups and the router
   (declared). "Windows is up to date" means an update of any kind installed on or after the last monthly
   release whose 14 days are over, not "the security update is in" or "no newer build exists". The

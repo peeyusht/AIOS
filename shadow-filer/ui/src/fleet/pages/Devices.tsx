@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { usePoll } from "@/lib/hooks";
 import { when } from "@/lib/format";
 import { Card, EmptyState, ListSkeleton, LoadError, PageHeader, Tip } from "@/shadow/ui";
-import { api, type Devices } from "../api";
+import { api, LABELS, type Devices } from "../api";
 import { DeviceLink, FrameworkSwitch, LABEL, Mark, silentFor, useFramework } from "../parts";
 
 export function DevicesPage() {
@@ -37,6 +37,7 @@ export function DevicesPage() {
                   <tr key={x.id} className="align-top">
                     <td className="px-4 py-3">
                       <DeviceLink id={x.id} name={x.name} />
+                      {(x.labels ?? []).map((l) => <Badge key={l} variant="muted" className="ml-1.5">{LABELS[l]}</Badge>)}
                       <div className="text-xs text-muted-foreground">{[x.summary.windows, x.summary.model?.trim()].filter(Boolean).join(" · ") || "nothing reported yet"}</div>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3">
