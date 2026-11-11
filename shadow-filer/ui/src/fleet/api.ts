@@ -58,6 +58,10 @@ export const api = {
   accept: (d: string, check_id: string, reason: string) => request<{ ok: boolean }>("POST", `/api/v1/devices/${id(d)}/exceptions`, { check_id, reason }),
   removeDevice: (d: string) => request<{ ok: boolean }>("POST", `/api/v1/devices/${id(d)}/remove`),
   label: (d: string, label: Label, on: boolean) => request<{ ok: boolean }>("POST", `/api/v1/devices/${id(d)}/labels`, { label, on }),
+  // incident register (spec F-21)
+  incidents: () => request<Incidents>("GET", "/api/v1/incidents"),
+  addIncident: (f: Record<string, unknown>) => request<{ ok: boolean; id: string }>("POST", "/api/v1/incidents", f),
+  changeIncident: (i: string, f: Record<string, unknown>) => request<{ ok: boolean }>("POST", `/api/v1/incidents/${id(i)}`, f),
   // who has access
   access: () => request<Access>("GET", "/api/v1/access"),
   addUser: (email: string, name: string, role: Role) => request<{ ok: boolean; setup_token: string; valid_days: number }>("POST", "/api/v1/users", { email, name, role }),
@@ -207,4 +211,12 @@ export interface SoftwareItem {
   versions: { version: string; devices: { id: string; name: string }[] }[];
 }
 export interface Software { devices: number; programs: SoftwareItem[] }
+export interface Incident {
+  id: string; title: string; kind: string; description: string; systems: string; actions: string; contact: string; personal_data: boolean;
+  devices: { id: string; name: string }[]; occurred_at: string | null; detected_at: string; certin_reported_at: string | null;
+  board_reported_at: string | null; people_told_at: string | null; closed_at: string | null;
+  created_at: string; created_by: string; updated_at: string; updated_by: string;
+  certin_due: string; certin: "done" | "overdue" | "running"; board_due: string | null; board: "done" | "overdue" | "running" | null;
+}
+export interface Incidents { kinds: string[]; certin_hours: number; board_hours: number; generated_at: string; incidents: Incident[] }
 export interface AuditEntry { at: string; actor: string; action: string; detail: Record<string, unknown> }

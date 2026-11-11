@@ -16,6 +16,7 @@ organisation key can read but change nothing):
                 POST /api/v1/devices/{id}/exceptions    accept a failing check with a reason, or withdraw that
                 POST /api/v1/frameworks                 which frameworks the console shows (Cyber Essentials, CERT-In, DPDP)
                 POST /api/v1/devices/{id}/labels        mark a device as holding personal data, or as critical
+                GET/POST /api/v1/incidents[/{id}]       the incident register with CERT-In's and DPDP's clocks (app/incidents.py)
                 (fleet, report and shared take ?framework=ce|certin|dpdp; the default is the organisation's first)
                 GET  /api/v1/audit
                 GET  /api/v1/agent/installer            the newest agent installer, for whoever may add a PC
@@ -36,7 +37,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from psycopg.types.json import Jsonb
 
-from . import agents, db, judge, people
+from . import agents, db, incidents, judge, people
 from .agents import device
 from .people import editor, reader
 
@@ -57,6 +58,7 @@ async def lifespan(_app):
 app = FastAPI(title="Shadow Filer fleet server", version="0.2.0", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.include_router(people.router)
 app.include_router(agents.router)
+app.include_router(incidents.router)
 if (CONSOLE / "assets").is_dir():
     app.mount("/assets", StaticFiles(directory=CONSOLE / "assets"), name="assets")
 

@@ -132,7 +132,7 @@ actor)` with row-level security and a line in the isolation test.
 | | | F-9 CERT-In advisories matched to installed software | S | **NEW**. First check that CERT-In publishes something machine-readable; if not, drop it |
 | IM.1 | Documented incident response plan | Declared | D | **BUILT** `incident_plan` (as a question; no document, no date) |
 | IM.2 | Test the plan regularly | Last test date, reminder | W | **NEW** |
-| IM.3 | Report to CERT-In within 6 hours | F-21 incident register | W | **NEW** |
+| IM.3 | Report to CERT-In within 6 hours | F-21 incident register | W | **BUILT** 11 Nov 2026 (`incidents`, Incidents page) |
 | LM.1 | Logging on; logs kept ≥180 days, within India | F-10 log retention and audit policy | M | **BUILT** 11 Nov 2026 `log.retention`, `log.audit` ("within India" is not measured) |
 | LM.2 | Monitor network and privileged actions | Out of scope (that is SIEM/EDR). Shown as "not measured by this product" | – | not planned |
 | LM.3 | Monitoring tools (recommended) | Declared | D | **NEW** question |
@@ -172,7 +172,7 @@ actor)` with row-level security and a line in the isolation test.
 | 6(1)(e) one-year retention | F-10 oldest Security log entry ≥365 days on personal-data devices | M | **BUILT** 11 Nov 2026 `log.retention` (DPDP profile, personal-data label) |
 | 6(1)(f) processor contracts | F-22 vendor register with "security clause" and contract upload | W | **NEW** |
 | 6(1)(g) effective observance | Daily history, evidence report, share link, audit log | S | **BUILT** (server phase 2–3) |
-| 7 breach intimation | F-21 incident register with the 72-hour clock | W | **NEW** |
+| 7 breach intimation | F-21 incident register with the 72-hour clock | W | **BUILT** 11 Nov 2026 (72 h to the Board when personal data is involved; "people told" recorded) |
 | Which devices hold personal data? | F-11 personal-data discovery | M | **PARTIAL**: `watch.py` finds PAN, Aadhaar, card, account, passport, private keys in **Downloads only**, on the personal agent only, and nothing leaves the PC |
 
 ---
@@ -312,7 +312,13 @@ local policy via `net accounts` where available, otherwise unknown). Facts: `pw_
 destroyed, who, optional uploaded certificate, asset returned (PS.2). The device's history stays, marked
 retired. Covers EAM.2, DPBP.4, PS.2.
 
-**F-21 Incident register (W).** An incident: when detected, what, devices involved, whether personal data
+**F-21 Incident register (W) — BUILT 11 Nov 2026** (`server/app/incidents.py`, table `incidents` with row-level
+security and in the isolation test, the console's Incidents page). Kinds are CERT-In's list of reportable
+incidents (Annexure I of its 2022 directions), shortened, plus "Other". Clocks count from "noticed": CERT-In 6 h;
+DPDP 72 h for the detailed report to the Board only when personal data is involved, and the time the affected
+people were told is recorded (Rule 7 says "without delay", no number). The application role cannot delete an
+incident (no DELETE grant): it is closed instead. "Copy for the report" gives the fields as text. Nothing is
+submitted. Original: An incident: when detected, what, devices involved, whether personal data
 was involved. Two clocks on screen: CERT-In 6 hours from detection; DPDP 72 hours for the detailed report to
 the Board (only when personal data is involved). Fields laid out like CERT-In's incident reporting form so
 they can be copied; we do not submit anything. Audit-logged.
@@ -356,7 +362,7 @@ rest) must come first.
 2. **Measured, payload change needed (D-1; approved 11 Nov 2026):** BUILT so far: F-13, F-7, F-8, F-5, built-in
    Administrator, never-used accounts, F-2, F-10, F-12: step 2 is complete (11 Nov 2026). F-13 password policy, F-7 protocols, F-8 firmware, F-5 USB,
    built-in Administrator enabled, never-used account count, F-2 Wi-Fi, F-10 logs, F-12 backups.
-3. **Server workflows without uploads:** (F-1 BUILT 11 Nov 2026) F-1 labels, F-21 incidents, F-24 reviews, F-23 (without document),
+3. **Server workflows without uploads:** (F-1, declared questions with dates, F-21 BUILT 11 Nov 2026) F-1 labels, F-21 incidents, F-24 reviews, F-23 (without document),
    new declared questions with dates.
 4. **Uploads**, after phase 6 hardening: F-20, F-22, F-23 documents, F-25.
 5. **Decision-gated:** F-11 (D-1, D-2), F-3 (D-3), F-9 (feasibility), F-30 (own design).
