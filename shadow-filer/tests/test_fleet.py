@@ -70,6 +70,7 @@ class FleetTest(unittest.TestCase):
         self.assertNotIn("F39", json.dumps(sn["posture"]))                         # nor the version
         self.assertEqual(sn["posture"]["usb_storage"], "read_only")
         self.assertEqual((sn["posture"]["builtin_admin_enabled"], sn["posture"]["accounts_never_used"]), (False, 0))   # never which
+        self.assertEqual([sn["posture"][k] for k in ("wifi_connected", "wifi_auth", "wifi_open_autoconnect")], [True, "wpa2", 0])
         self.assertEqual((sn["posture"]["daily_account_is_admin"], sn["posture"]["admin_accounts"], sn["posture"]["drives_encrypted"]), (True, 1, True))
         self.assertEqual((sn["network"]["shared_folders"], sn["network"]["rules"]["programs"]), (1, 1))
         self.assertEqual(sorted(sn["network"]["listening"][0]), ["port", "process", "proto", "reach", "windows"])
@@ -100,6 +101,17 @@ class FleetTest(unittest.TestCase):
         self.assertEqual((sent["builtin_admin_enabled"], sent["accounts_never_used"]), (True, 1))      # "yes" is not true
         self.assertNotIn(SECRET_USER, json.dumps(sent))
         self.assertNotIn("S-1-5-21-9", json.dumps(sent))
+        # Wi-Fi: a network's name planted where the kind should be never comes out; no adapter, no Wi-Fi fields at all
+        ssid = pc(wifi={"adapter": True, "connected": True, "auth": "HomeNet-5G-Alexandra", "open_auto": "Cafe Free WiFi",
+                        "ssid": "HomeNet-5G-Alexandra", "names": ["Cafe Free WiFi"]})
+        with mock.patch("compliance._posture", return_value=ssid):
+            sent = fleet.payload(self.cfg)["snapshots"]["posture"]
+        self.assertEqual([sent[k] for k in ("wifi_connected", "wifi_auth", "wifi_open_autoconnect")], [True, None, None])
+        for never in ("HomeNet", "Alexandra", "Cafe", "ssid", "names"):
+            self.assertNotIn(never, json.dumps(sent))
+        with mock.patch("compliance._posture", return_value=pc(wifi={"adapter": False, "connected": False, "auth": "", "open_auto": -1})):
+            sent = fleet.payload(self.cfg)["snapshots"]["posture"]
+        self.assertFalse([k for k in sent if k.startswith("wifi")])
         self.assertEqual([fleet._age(x) for x in ("2999-01-01", 20240322, None, "2024-13-01")], [None] * 4)
         self.assertNotIn(SECRET_USER, json.dumps(sent))
 

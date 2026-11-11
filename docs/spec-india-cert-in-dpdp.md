@@ -107,7 +107,7 @@ actor)` with row-level security and a line in the isolation test.
 | EAM.2 | Asset lifecycle to secure disposal | Device retirement record (F-20) | W | **NEW**. Today "remove a device" only deletes it |
 | NES.1 | Perimeter firewall; host firewall on and configured | Windows Firewall per profile, default inbound block, wide-open and left-over rules | M | **BUILT** `fw.on`, `fw.default`, `fw.rules` |
 | | | Perimeter firewall | D | **PARTIAL**: declared item `router` exists, worded for Cyber Essentials (router password, firmware). Add a CERT-In wording. Later: F-30 FortiGate read-only |
-| NES.2 | Wi-Fi WPA2/WPA3, no default creds, guest segregated, no auto-connect to open Wi-Fi | F-2 Wi-Fi posture | M | **NEW** |
+| NES.2 | Wi-Fi WPA2/WPA3, no default creds, guest segregated, no auto-connect to open Wi-Fi | F-2 Wi-Fi posture | M | **BUILT** 11 Nov 2026 `net.wifi` (the PC's side only; the access point's credentials and guest network are not visible) |
 | NES.3 | Encrypted VPN with MFA for remote access | Declared | D | **NEW** question |
 | NES.4 | SPF, DKIM, DMARC | F-3 mail domain check | S | **NEW**. Needs decision D-3 |
 | EMS.1 | Licensed AV, current; Defender and Firewall not disabled | AV present and on, real-time, definition age | M | **BUILT** `mal.present`, `mal.realtime`, `mal.signatures`, `fw.on` |
@@ -177,7 +177,17 @@ actor)` with row-level security and a line in the isolation test.
 Every new measured fact is a count, a number of days or true/false. None of them names an account, a file, a
 path, an SSID or an address. Each one added to `fleet.payload()` needs the owner's yes (D-1).
 
-**F-2 Wi-Fi posture (M).** `netsh wlan show interfaces` and `netsh wlan show profiles` (fixed commands, no
+**F-2 Wi-Fi posture (M) — BUILT 11 Nov 2026** (`net.wifi`, payload `wifi_connected`, `wifi_auth`,
+`wifi_open_autoconnect`). Built differently: `netsh wlan show interfaces` and `show profiles` print English text,
+and reading one profile needs its name on the command line (data-built arguments), so instead the Wi-Fi adapter
+is found with `Get-NetAdapter` (physical medium 9) and all saved profiles are exported once with `netsh wlan
+export profile folder=<new temp folder>` (fixed arguments; XML, the same in every language; keys only
+encrypted), read, and the folder removed at once. The connected network's profile is matched by name inside
+PowerShell; names never leave it. OWE ("Enhanced Open") counts as WPA3, being encrypted. A PC without a Wi-Fi
+adapter gets no check and its payload has no Wi-Fi fields (not `null`s, which would read as unknown). The check
+is in all three frameworks with the spec's statuses (CE firewalls area, CERT-In NES, DPDP access control).
+Measured on the owner's PC: Intel Wireless-AC adapter, not connected, one saved WPA2 profile (manual): pass.
+Original: `netsh wlan show interfaces` and `netsh wlan show profiles` (fixed commands, no
 arguments built from data). Facts: `wifi_connected` (bool), `wifi_auth` of the connected network (`open`,
 `wep`, `wpa`, `wpa2`, `wpa3`; never the SSID), `wifi_open_autoconnect` (count of saved open networks set to
 connect by themselves). Check `net.wifi`: fail on open or WEP, warn on WPA (v1) or open networks saved with
@@ -310,7 +320,7 @@ rest) must come first.
 
 1. **F-0 profiles** and the CERT-In lockout threshold. No payload change. Unblocks everything. **BUILT 11 Nov 2026.**
 2. **Measured, payload change needed (D-1; approved 11 Nov 2026):** BUILT so far: F-13, F-7, F-8, F-5, built-in
-   Administrator, never-used accounts (11 Nov 2026). F-13 password policy, F-7 protocols, F-8 firmware, F-5 USB,
+   Administrator, never-used accounts, F-2 (11 Nov 2026). F-13 password policy, F-7 protocols, F-8 firmware, F-5 USB,
    built-in Administrator enabled, never-used account count, F-2 Wi-Fi, F-10 logs, F-12 backups.
 3. **Server workflows without uploads:** F-1 labels, F-21 incidents, F-24 reviews, F-23 (without document),
    new declared questions with dates.

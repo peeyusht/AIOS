@@ -429,6 +429,9 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   the firmware's age (F-8) is sent as days (`bios_age_days`), never its version or date; 3 years is our own limit.
   USB storage (F-5) is one word: blocked, read_only or allowed; only CERT-In makes "allowed" a look. The
   built-in Administrator (by its -500 id) is sent as true/false and never-used enabled accounts as a count.
+  Wi-Fi (F-2, `net.wifi`): saved profiles are exported to a fresh temp folder that is removed at once; only the
+  kind of encryption and counts leave PowerShell, never a network name (SSID), and a PC with no Wi-Fi adapter
+  sends no Wi-Fi fields at all.
 - Network: view only except for switching Windows Firewall on (through `remedy.py`); a network's
   Public/Private mark, rules and shares cannot be changed from the page. The firewall button has run on demo
   data only: on 12 Oct 2026 the user's firewall was still off on all profiles and switching it on was left to them. No names for devices (no vendor lookup, no reverse DNS) and no per-connection traffic amounts.

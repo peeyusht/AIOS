@@ -119,6 +119,37 @@ $rr = Get-CimInstance Win32_Service -Filter "Name='RemoteRegistry'"
 $usbstor = Reg 'HKLM:\SYSTEM\CurrentControlSet\Services\USBSTOR' 'Start'
 $rsd = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices'
 $rdisk = "$rsd\{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}"
+# Wi-Fi (spec F-2): kinds and counts only, never a network's name. Saved profiles are exported as XML (the same
+# in every language) into a new folder under TEMP that is removed at once; their keys are in it only encrypted.
+# adapter: $false = no Wi-Fi adapter (no check); auth '' = could not be told; open_auto -1 = could not be read.
+function WifiKind($a, $e) {
+  if ($e -eq 'WEP' -or $a -eq 'shared') { 'wep' } elseif ($a -eq 'open') { 'open' } elseif ($a -match '^(WPA3|OWE)') { 'wpa3' }
+  elseif ($a -match '^WPA2') { 'wpa2' } elseif ($a -match '^WPA') { 'wpa' } else { '' } }
+$wifi = $null
+try {
+  $wa = @(Get-NetAdapter -Physical -ErrorAction Stop | Where-Object { $_.NdisPhysicalMedium -eq 9 })
+  $wifi = [pscustomobject]@{ adapter = [bool]$wa.Count; connected = [bool]@($wa | Where-Object { $_.Status -eq 'Up' }).Count; auth = ''; open_auto = -1 }
+} catch { }
+if ($wifi -and $wifi.adapter) {
+  $wd = Join-Path ([IO.Path]::GetTempPath()) ('sf-wlan-' + [guid]::NewGuid().ToString('N'))
+  try {
+    New-Item -ItemType Directory -Path $wd | Out-Null
+    netsh wlan export profile folder="$wd" | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+      $profs = @(Get-ChildItem -LiteralPath $wd -Filter *.xml | ForEach-Object {
+        $x = [xml](Get-Content -LiteralPath $_.FullName -Raw)
+        $ae = $x.WLANProfile.MSM.security.authEncryption
+        [pscustomobject]@{ names = @("$($x.WLANProfile.name)") + @($x.WLANProfile.SSIDConfig.SSID | ForEach-Object { "$($_.name)" });
+          kind = (WifiKind "$($ae.authentication)" "$($ae.encryption)"); auto = ("$($x.WLANProfile.connectionMode)" -eq 'auto') } })
+      $wifi.open_auto = @($profs | Where-Object { $_.kind -eq 'open' -and $_.auto }).Count
+      if ($wifi.connected) {
+        $cn = @($wa | Where-Object { $_.Status -eq 'Up' } | ForEach-Object { (Get-NetConnectionProfile -InterfaceIndex $_.ifIndex).Name })
+        $hit = @($profs | Where-Object { @($_.names | Where-Object { $cn -contains $_ }).Count } | Select-Object -First 1)
+        if ($hit.Count) { $wifi.auth = $hit[0].kind }
+      }
+    }
+  } catch { } finally { Remove-Item -LiteralPath $wd -Recurse -Force -ErrorAction SilentlyContinue }
+}
 $usb = if ((Reg $rsd 'Deny_All') -eq 1 -or $usbstor -eq 4 -or (Reg $rdisk 'Deny_Read') -eq 1) { 'blocked' } elseif ((Reg $rdisk 'Deny_Write') -eq 1) { 'read_only' } elseif ($null -ne $usbstor) { 'allowed' } else { '' }
 $out = [pscustomobject]@{
   computer = "$env:COMPUTERNAME"; user = "$env:USERNAME"; manufacturer = "$($cs.Manufacturer)"; model = "$($cs.Model)";
@@ -137,7 +168,7 @@ $out = [pscustomobject]@{
   rdp_on = if ($null -ne $deny) { [int]$deny -eq 0 } else { $null };
   rdp_nla = if ($null -ne $nla) { [int]$nla -eq 1 } else { $null };
   remote_registry_on = if ($rr) { $rr.State -eq 'Running' -or $rr.StartMode -eq 'Auto' } else { $null };
-  usb_storage = $usb;
+  usb_storage = $usb; wifi = $wifi;
   psv2_present = if ($feat.Count) { [bool]@($feat | Where-Object { $_.Name -like 'MicrosoftWindowsPowerShellV2*' -and [int]$_.InstallState -eq 1 }).Count } else { $null };
   screensaver = [pscustomobject]@{ active = "$(Reg $desk 'ScreenSaveActive')"; secure = "$(Reg $desk 'ScreenSaverIsSecure')";
     timeout = "$(Reg $desk 'ScreenSaveTimeOut')" };
@@ -477,6 +508,43 @@ def builtin_admin_check(enabled, names=()) -> dict:
                   if enabled else None)
 
 
+WIFI_KINDS = ("open", "wep", "wpa", "wpa2", "wpa3")
+
+
+def wifi_facts(p: dict) -> dict | None:
+    """The PC's Wi-Fi as the three facts that may leave it, or None when it has no Wi-Fi adapter (then there is no
+    check and nothing is sent). A reading that failed gives the facts as None: unknown."""
+    w = p.get("wifi")
+    if isinstance(w, dict) and w.get("adapter") is False:
+        return None
+    if not isinstance(w, dict) or w.get("adapter") is not True or not isinstance(w.get("connected"), bool):
+        return {"wifi_connected": None, "wifi_auth": None, "wifi_open_autoconnect": None}
+    n = w.get("open_auto")
+    return {"wifi_connected": w["connected"], "wifi_auth": w.get("auth") if w["connected"] and w.get("auth") in WIFI_KINDS else None,
+            "wifi_open_autoconnect": n if isinstance(n, int) and not isinstance(n, bool) and n >= 0 else None}
+
+
+def wifi_check(f: dict) -> dict:
+    """Wi-Fi (spec F-2, CERT-In NES.2: WPA2/WPA3, no automatic connection to open networks). Connected to an open
+    or WEP network fails; WPA (the first one) or open networks saved to connect by themselves are a look."""
+    title = "Wi-Fi is encrypted (WPA2 or WPA3) and open networks are not joined by themselves"
+    con, kind, auto = f.get("wifi_connected"), f.get("wifi_auth"), f.get("wifi_open_autoconnect")
+    if not isinstance(con, bool) or (con and kind not in WIFI_KINDS):
+        return _check("net.wifi", title, "unknown", "The Wi-Fi settings could not be read on the PC.")
+    bad = con and kind in ("open", "wep")
+    look = (con and kind == "wpa") or (isinstance(auto, int) and auto > 0)
+    words = {"open": "an open network, with no encryption", "wep": "a WEP network, whose encryption is broken",
+             "wpa": "a WPA (first version) network", "wpa2": "a WPA2 network", "wpa3": "a WPA3 network"}
+    parts = [f"Connected to {words[kind]}." if con else "Not connected to Wi-Fi."]
+    if isinstance(auto, int) and auto > 0:
+        parts.append(f"{auto} saved open network{'s' if auto != 1 else ''} {'are' if auto != 1 else 'is'} set to connect by itself.")
+    elif auto is None:
+        parts.append("Whether open networks are joined by themselves could not be read.")
+    return _check("net.wifi", title, "fail" if bad else "warn" if look else "unknown" if auto is None else "pass", " ".join(parts),
+                  fix="Use only WPA2 or WPA3 networks, or a VPN on others; set saved open networks not to connect automatically "
+                      "(Settings > Network & internet > Wi-Fi > Manage known networks)." if bad or look else None)
+
+
 def security_release_due(today: date) -> date:
     """The newest monthly Windows security release (second Tuesday) whose 14 days are over on `today`."""
     d = today - timedelta(days=THRESHOLDS["patch_days"])
@@ -728,7 +796,7 @@ DECLARED = (("mfa", QUESTIONS["mfa"], "Cyber Essentials v3.3: every cloud servic
             ("router", QUESTIONS["router"], "Cyber Essentials: boundary firewall."),
             ("admin_separate", QUESTIONS["admin_separate"], "Cyber Essentials: user access control."))
 
-FW_IDS = ("fw.on", "fw.default", "fw.ports", "fw.rules", "fw.shares")
+FW_IDS = ("fw.on", "fw.default", "fw.ports", "fw.rules", "fw.shares", "net.wifi")
 UPD_IDS = ("upd.supported", "upd.windows", "upd.firmware", "upd.automatic", "upd.flaws", "upd.coverage", "upd.unsupported", "upd.browsers", "upd.pending")
 MAL_IDS = ("mal.present", "mal.realtime", "mal.signatures")
 CERTIN = "CERT-In"
@@ -750,7 +818,8 @@ FRAMEWORKS = {
     "certin": {"title": "CERT-In MSME", "scheme": "CERT-In Elemental Cyber Defense Controls for MSMEs v1.0 (CISG-2025-03, 1 Sep 2025)",
                "unlock": (3, 5), "unlock_ref": CERTIN, "encryption": "note", "pwpolicy": "certin", "usb": "strict",
                "controls": (
-                   ("nes", "Network security (NES)", "NES.1: the host firewall is on and configured.", ("fw.on", "fw.default", "fw.rules")),
+                   ("nes", "Network security (NES)", "NES.1 and NES.2: the host firewall is on and configured; Wi-Fi is WPA2 or WPA3 and "
+                                                     "does not join open networks by itself.", ("fw.on", "fw.default", "fw.rules", "net.wifi")),
                    ("ems", "Endpoint security (EMS)", "EMS.1 and EMS.4: antivirus on and current; removable media restricted, and a "
                                                       "plugged-in drive runs nothing by itself.",
                     MAL_IDS + ("cfg.autoplay", "cfg.usb")),
@@ -807,6 +876,8 @@ def _on_pc(ch: dict) -> dict:
         ch["detail"] = "The device could not read its account lockout setting."
     if ch["status"] == "unknown" and ch["id"] == "cfg.pwpolicy":
         ch["detail"] = "The device could not read its password policy."
+    if ch["status"] == "unknown" and ch["id"] == "net.wifi":
+        ch["detail"] = "The device could not read its Wi-Fi settings."
     if ch["status"] == "unknown" and ch["id"] == "upd.firmware":
         ch["detail"] = "The device could not read its firmware's release date."
     if ch.get("fix") and not ch["fix"].startswith("On the PC"):
@@ -970,7 +1041,8 @@ def set_frameworks(db_path, keys) -> bool:
 # --------------------------------------------------------------------------- putting it together
 def measure(cfg: dict, raw: dict, net: dict | None, vul: dict | None, appsv: dict | None, today: date) -> list:
     """Every check once, as Cyber Essentials words it; the frameworks judge copies of these."""
-    return (firewall_checks(net) + configuration_checks(raw) + update_checks(raw, vul, appsv, today, cfg)
+    wf = wifi_facts(raw)
+    return (firewall_checks(net) + ([wifi_check(wf)] if wf else []) + configuration_checks(raw) + update_checks(raw, vul, appsv, today, cfg)
             + access_checks(raw) + malware_checks(raw))
 
 

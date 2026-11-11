@@ -29,7 +29,8 @@ def pc(**over):
          "display_off": 0, "sleep_after": 0, "lock_on_wake": -1, "autoplay_off": 1, "autorun_policy": 0, "inbound_allow_rules": 40,
          "lockout_threshold": 10, "pw_min_length": 14, "pw_max_age_days": 90, "pw_history": 5,
          "smb1_on": False, "rdp_on": False, "rdp_nla": True, "remote_registry_on": False, "psv2_present": False,
-         "bios_version": "F39", "bios_date": "2024-03-22", "usb_storage": "read_only"}
+         "bios_version": "F39", "bios_date": "2024-03-22", "usb_storage": "read_only",
+         "wifi": {"adapter": True, "connected": True, "auth": "wpa2", "open_auto": 0}}
     p.update(over)
     return p
 
@@ -186,6 +187,26 @@ class ChecksTest(unittest.TestCase):
         self.assertNotIn("cfg.unused", by_id(compliance.configuration_checks(pc())))                       # none: no line, as before
         self.assertEqual([compliance.builtin_admin_check(x)["status"] for x in (True, False, None, 1)], ["warn", "pass", "unknown", "unknown"])
         self.assertEqual([bool(compliance.unused_check(x)) for x in (2, 0, None, True)], [True, False, False, False])
+
+    def test_wifi(self):
+        """F-2: open or WEP fails, WPA (v1) or open networks joined by themselves are a look; no adapter, no check;
+        a reading that failed is unknown; the facts are kinds and counts only."""
+        w = lambda **o: compliance.wifi_facts(pc(wifi={"adapter": True, "connected": True, "auth": "wpa2", "open_auto": 0, **o}))
+        st = lambda **o: compliance.wifi_check(w(**o))["status"]
+        self.assertEqual([st(auth=a) for a in ("wpa3", "wpa2", "wpa", "wep", "open", "", "WPA2PSK")],
+                         ["pass", "pass", "warn", "fail", "fail", "unknown", "unknown"])
+        self.assertEqual([st(connected=False, auth=""), st(open_auto=2), st(connected=False, open_auto=-1), st(connected="yes")],
+                         ["pass", "warn", "unknown", "unknown"])
+        self.assertIsNone(compliance.wifi_facts(pc(wifi={"adapter": False, "connected": False, "auth": "", "open_auto": -1})))   # no Wi-Fi
+        self.assertEqual(compliance.wifi_facts(pc(wifi=None)), {"wifi_connected": None, "wifi_auth": None, "wifi_open_autoconnect": None})
+        self.assertEqual(w(connected=False), {"wifi_connected": False, "wifi_auth": None, "wifi_open_autoconnect": 0})
+        tmp = Path(tempfile.mkdtemp(prefix="sf-test-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        cfg = {"database": tmp / "t.db", "cve_database": tmp / "cve.db"}
+        ids = lambda raw: [c["id"] for c in compliance.measure(cfg, raw, net(), VUL, APPS, TODAY)]
+        self.assertIn("net.wifi", ids(pc()))
+        self.assertNotIn("net.wifi", ids(pc(wifi={"adapter": False})))
+        self.assertIn("Connected to an open network", compliance.wifi_check(w(auth="open"))["detail"])
 
     def test_usb_storage(self):
         """F-5: allowed USB storage is a note in Cyber Essentials and DPDP, a look in CERT-In (restrict or control,

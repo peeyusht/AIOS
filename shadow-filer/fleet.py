@@ -22,7 +22,9 @@ SENT, per kind:
              (spec F-7, same yes), and how many days old the firmware (BIOS) is (a number; spec F-8, same yes;
              not its version or date), whether USB storage is blocked, read-only or allowed (spec F-5, same yes),
              whether the built-in Administrator account is enabled and how many enabled accounts never signed
-             in (true/false and a count, same yes; never which accounts)
+             in (true/false and a count, same yes; never which accounts), and Wi-Fi: connected or not, the kind of
+             encryption of the network it is on (open, WEP, WPA, WPA2, WPA3) and how many saved open networks join by
+             themselves (spec F-2, same yes; never a network's name; nothing at all on a PC without Wi-Fi)
 
 NEVER SENT, and `payload()` is built so they cannot slip in (it copies named fields, never whole records):
   anything about files or documents (the whole file-organising half); account names; install folders and
@@ -127,6 +129,7 @@ def payload(cfg: dict, settings: dict | None = None, posture=None) -> dict:
             **{k: raw[k] if type(raw.get(k)) is bool else None for k in ("smb1_on", "rdp_on", "rdp_nla", "remote_registry_on", "psv2_present")},
             "bios_age_days": _age(raw.get("bios_date")),
             "usb_storage": raw.get("usb_storage") if raw.get("usb_storage") in ("blocked", "read_only", "allowed") else None,
+            **(compliance.wifi_facts(raw) or {}),
             "browser_updates_off": [k for k, v in (raw.get("browser_policy") or {}).items()
                                     if (k.endswith("_default") or k.endswith("_period")) and v == "0" or k == "firefox_off" and v == "1"]}
     if s["enabled"] and s["applications"]:
