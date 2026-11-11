@@ -62,6 +62,10 @@ export const api = {
   incidents: () => request<Incidents>("GET", "/api/v1/incidents"),
   addIncident: (f: Record<string, unknown>) => request<{ ok: boolean; id: string }>("POST", "/api/v1/incidents", f),
   changeIncident: (i: string, f: Record<string, unknown>) => request<{ ok: boolean }>("POST", `/api/v1/incidents/${id(i)}`, f),
+  // governance and reviews (spec F-23, F-24)
+  records: () => request<Records>("GET", "/api/v1/records"),
+  addReview: (kind: string, reviewed_on: string, note: string) => request<{ ok: boolean }>("POST", "/api/v1/reviews", { kind, reviewed_on, note }),
+  setGovernance: (f: Record<string, string>) => request<{ ok: boolean }>("POST", "/api/v1/governance", f),
   // who has access
   access: () => request<Access>("GET", "/api/v1/access"),
   addUser: (email: string, name: string, role: Role) => request<{ ok: boolean; setup_token: string; valid_days: number }>("POST", "/api/v1/users", { email, name, role }),
@@ -170,7 +174,7 @@ export interface Declared { key: string; title: string; about: string; answer: A
 export interface FleetDay { day: string; devices: number; all_passing: number; areas: Record<string, number> }
 export interface Fleet {
   organisation: string; generated_at: string; devices: number; judged: number; all_passing: number; silent_hours: number;
-  framework: string; frameworks: Framework[];
+  framework: string; frameworks: Framework[]; records_due?: { kind: string; text: string }[];
   silent: { id: string; name: string; last_seen: string | null }[];
   areas: ({ key: string; title: string; about: string } & Record<CheckStatus, number>)[];
   failing: { id: string; title: string; control: string; devices: { id: string; name: string }[] }[];
@@ -219,4 +223,11 @@ export interface Incident {
   certin_due: string; certin: "done" | "overdue" | "running"; board_due: string | null; board: "done" | "overdue" | "running" | null;
 }
 export interface Incidents { kinds: string[]; certin_hours: number; board_hours: number; generated_at: string; incidents: Incident[] }
+export interface Records {
+  reviews: Record<string, { title: string; days: number; about: string; last: string | null; due: string | null; state: "done" | "overdue" | "never";
+    history: { reviewed_on: string; note: string; actor: string; at: string }[] }>;
+  governance: { incharge_name: string; incharge_contact: string; policy_approved_on: string | null; policy_next_review: string | null;
+    updated_at: string; updated_by: string } | null;
+  due: { kind: string; text: string }[];
+}
 export interface AuditEntry { at: string; actor: string; action: string; detail: Record<string, unknown> }

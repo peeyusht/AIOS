@@ -144,8 +144,8 @@ actor)` with row-level security and a line in the isolation test.
 | DPBP.2 | Test restores | Declared, with a date | D | **BUILT** `backup_test` (12-month wording; keep) |
 | DPBP.3 | Minimum business continuity plan | Declared | D | **NEW** question |
 | DPBP.4 | Secure disposal of media | F-20 retirement record | W | **NEW** |
-| GC.1 | Named security in-charge / SPoC | F-23 governance record | W | **NEW** |
-| GC.2–3 | Approved security policy, periodic review | F-23 | W | **NEW** |
+| GC.1 | Named security in-charge / SPoC | F-23 governance record | W | **BUILT** 11 Nov 2026 (without the document) |
+| GC.2–3 | Approved security policy, periodic review | F-23 | W | **PARTIAL**: approval and next-review dates BUILT 11 Nov 2026; the document waits for D-4 |
 | GC.4 | Follow CERT-In and regulator directions | Declared | D | **NEW** question |
 | RPP.1 | Length 8–12+, complexity, expiry, no reuse | F-13 password policy | M | **BUILT** 11 Nov 2026 `cfg.pwpolicy` (length, expiry, history; complexity not read) |
 | RPP.2 | Lock after 3–5 failed attempts | Lockout threshold | M | **BUILT** 11 Nov 2026 `cfg.unlock`: ≤10 in CE and DPDP, 3–5 in the CERT-In profile (F-0) |
@@ -153,7 +153,7 @@ actor)` with row-level security and a line in the isolation test.
 | RPP.4 | Passwords stored with secure hashing | Out of scope for an endpoint agent | – | not planned |
 | ACIM.1 | Unique user IDs, no shared accounts | Enabled accounts, accounts with no password, never-used accounts | M | **BUILT** 11 Nov 2026: `cfg.password`; `cfg.unused` now on the server too (payload `accounts_never_used`, a count) |
 | ACIM.2 | Role-based, least privilege | Daily account not admin | M | **BUILT** `acc.daily` |
-| ACIM.3 | Review access quarterly and on exit | F-24 access review | W | **NEW** |
+| ACIM.3 | Review access quarterly and on exit | F-24 access review | W | **BUILT** 11 Nov 2026 (every 90 days; "on exit" is in the wording, not tracked per leaver) |
 | ACIM.4 | Admin rights only when essential | Admin account count | M | **BUILT** `acc.admins` |
 | PS.1–2 | Physical controls; asset return on exit | Declared; asset return part of F-20 | D/W | **NEW** |
 | VAA.1 | Independent VA at least yearly; fix findings | F-25 VA report record | W | **NEW**. Our own CVE list is **not** "independent"; never present it as the VA |
@@ -167,7 +167,7 @@ actor)` with row-level security and a line in the isolation test.
 |---|---|---|---|
 | 6(1)(a) encryption | BitLocker per drive | M | **PARTIAL**: measured (`cfg.encryption`, payload `drives_encrypted`), but always `info`. DPDP profile: fail on personal-data devices (F-0, F-1) |
 | 6(1)(b) access control | Password policy, lockout, guest, accounts without password, admins, daily account, lock | M | **PARTIAL**: all BUILT except F-13 password policy |
-| 6(1)(c) logs, monitoring, review | F-10 audit policy on; F-24 log review sign-off | M+W | **PARTIAL**: `log.audit` BUILT 11 Nov 2026; review sign-off (F-24) NEW |
+| 6(1)(c) logs, monitoring, review | F-10 audit policy on; F-24 log review sign-off | M+W | **BUILT** 11 Nov 2026: `log.audit`; log review sign-off every 30 days (our own number) |
 | 6(1)(d) continuity, backups | F-12; declared `backups`, `backup_test` | M+D | **BUILT** 11 Nov 2026 (`bak.recent` plus the declarations) |
 | 6(1)(e) one-year retention | F-10 oldest Security log entry ≥365 days on personal-data devices | M | **BUILT** 11 Nov 2026 `log.retention` (DPDP profile, personal-data label) |
 | 6(1)(f) processor contracts | F-22 vendor register with "security clause" and contract upload | W | **NEW** |
@@ -327,7 +327,14 @@ they can be copied; we do not submit anything. Audit-logged.
 "contract has security clauses" (DPDP 6(1)(f)), contract upload, and the vendor's own evidence: a share link
 from their organisation on this server, or an uploaded report. Covers TPRM.1–2 and 6(1)(f).
 
-**F-23 Governance record (W).** Security in-charge (name, contact), policy document upload with approval date
+**F-23 Governance record and F-24 Reviews (W) — BUILT 11 Nov 2026, together** (`server/app/records.py`, tables
+`governance` and `reviews` with row-level security, in the isolation test; the Evidence page's "Governance and
+reviews"). Built together because they share one module and one page section. A review sign-off is a person's
+statement: added, never changed (the API role has no UPDATE on `reviews`). Access review every 90 days (CERT-In
+ACIM.3 "quarterly"); log review every 30 days, our own number (DPDP gives no period). Overdue items (and no
+in-charge, no policy date, a passed policy review) show under "Needs attention" on the Overview of CERT-In and
+DPDP, not Cyber Essentials, which does not ask. Reminders are on the page only; the server sends no email. The
+policy document waits for D-4. Original F-23: Security in-charge (name, contact), policy document upload with approval date
 and next review date, reminders. Covers GC.1–3.
 
 **F-24 Reviews (W).** Quarterly access review and periodic log review: who signed off, when, a note. Overdue
@@ -362,7 +369,8 @@ rest) must come first.
 2. **Measured, payload change needed (D-1; approved 11 Nov 2026):** BUILT so far: F-13, F-7, F-8, F-5, built-in
    Administrator, never-used accounts, F-2, F-10, F-12: step 2 is complete (11 Nov 2026). F-13 password policy, F-7 protocols, F-8 firmware, F-5 USB,
    built-in Administrator enabled, never-used account count, F-2 Wi-Fi, F-10 logs, F-12 backups.
-3. **Server workflows without uploads:** (F-1, declared questions with dates, F-21 BUILT 11 Nov 2026) F-1 labels, F-21 incidents, F-24 reviews, F-23 (without document),
+3. **Server workflows without uploads:** all BUILT 11 Nov 2026 (F-1, declared questions with dates, F-21, F-23 without the
+   document, F-24). F-1 labels, F-21 incidents, F-24 reviews, F-23 (without document),
    new declared questions with dates.
 4. **Uploads**, after phase 6 hardening: F-20, F-22, F-23 documents, F-25.
 5. **Decision-gated:** F-11 (D-1, D-2), F-3 (D-3), F-9 (feasibility), F-30 (own design).
