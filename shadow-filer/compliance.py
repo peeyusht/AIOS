@@ -114,6 +114,12 @@ $ts = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'
 $deny = Reg $ts 'fDenyTSConnections'
 $nla = Reg "$ts\WinStations\RDP-Tcp" 'UserAuthentication'
 $rr = Get-CimInstance Win32_Service -Filter "Name='RemoteRegistry'"
+# USB storage (spec F-5): the USB storage driver switched off (Start 4), or the "Removable Storage Access" policy
+# for all removable storage or for removable disks. '' when the driver's setting could not be read and no policy blocks.
+$usbstor = Reg 'HKLM:\SYSTEM\CurrentControlSet\Services\USBSTOR' 'Start'
+$rsd = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices'
+$rdisk = "$rsd\{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}"
+$usb = if ((Reg $rsd 'Deny_All') -eq 1 -or $usbstor -eq 4 -or (Reg $rdisk 'Deny_Read') -eq 1) { 'blocked' } elseif ((Reg $rdisk 'Deny_Write') -eq 1) { 'read_only' } elseif ($null -ne $usbstor) { 'allowed' } else { '' }
 $out = [pscustomobject]@{
   computer = "$env:COMPUTERNAME"; user = "$env:USERNAME"; manufacturer = "$($cs.Manufacturer)"; model = "$($cs.Model)";
   serial = "$($bios.SerialNumber)"; bios_version = "$($bios.SMBIOSBIOSVersion)"; bios_date = (Iso $bios.ReleaseDate); edition = "$($cv.EditionID)"; display_version = "$($cv.DisplayVersion)";
@@ -131,6 +137,7 @@ $out = [pscustomobject]@{
   rdp_on = if ($null -ne $deny) { [int]$deny -eq 0 } else { $null };
   rdp_nla = if ($null -ne $nla) { [int]$nla -eq 1 } else { $null };
   remote_registry_on = if ($rr) { $rr.State -eq 'Running' -or $rr.StartMode -eq 'Auto' } else { $null };
+  usb_storage = $usb;
   psv2_present = if ($feat.Count) { [bool]@($feat | Where-Object { $_.Name -like 'MicrosoftWindowsPowerShellV2*' -and [int]$_.InstallState -eq 1 }).Count } else { $null };
   screensaver = [pscustomobject]@{ active = "$(Reg $desk 'ScreenSaveActive')"; secure = "$(Reg $desk 'ScreenSaverIsSecure')";
     timeout = "$(Reg $desk 'ScreenSaveTimeOut')" };
@@ -286,6 +293,7 @@ def configuration_checks(p: dict) -> list:
     out.append(unlock_check(p))
     out.append(password_policy_check(p))
     out += protocol_checks(p)
+    out.append(usb_check(p))
     auto_off = p.get("autoplay_off") == 1 or (p.get("autorun_policy") or 0) >= 0x91
     out.append(_check("cfg.autoplay", "AutoPlay is off, so a plugged-in drive runs nothing by itself",
                       "pass" if auto_off else "fail",
@@ -420,6 +428,27 @@ def protocol_checks(p: dict) -> list:
                       fix="In an administrator PowerShell: Disable-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2Root"
                       if ps2 else None))
     return out
+
+
+USB_STATES = ("blocked", "read_only", "allowed")
+
+
+def usb_check(p: dict, strict: bool = False) -> dict:
+    """USB storage (spec F-5). Cyber Essentials asks only that a plugged-in drive runs nothing by itself (AutoPlay,
+    its own check), so allowed USB storage is a note there and in DPDP. CERT-In EMS.4 asks to "restrict or
+    control" removable media, so there (strict) allowed is a look, not a fail: blocking is not required."""
+    u = p.get("usb_storage")
+    title = "USB storage is blocked or read-only"
+    if u not in USB_STATES:
+        return _check("cfg.usb", title, "unknown", "Whether USB drives can be used could not be read on the PC.")
+    if u != "allowed":
+        return _check("cfg.usb", title, "pass", "USB drives cannot be used for storage." if u == "blocked" else
+                      "USB drives can be read but not written to.")
+    return _check("cfg.usb", title, "warn" if strict else "info",
+                  "USB drives can be read and written. " + ("CERT-In EMS.4 asks to restrict or control removable media." if strict else
+                  "Cyber Essentials does not ask to restrict them (that AutoPlay is off is its rule); CERT-In does."),
+                  fix="Group Policy: Computer Configuration > Administrative Templates > System > Removable Storage Access > "
+                      "Removable Disks: Deny write access (or deny all access).")
 
 
 def security_release_due(today: date) -> date:
@@ -688,16 +717,17 @@ FRAMEWORKS = {
            "encryption": "note",
            "controls": tuple((k, t, a, ids) for (k, t, a), ids in zip(CONTROLS, (
                FW_IDS, ("cfg.lock", "cfg.unlock", "cfg.pwpolicy", "cfg.autoplay", "cfg.guest", "cfg.password", "cfg.unused",
-                        "cfg.smb1", "cfg.rdp", "cfg.remreg", "cfg.psv2", "cfg.encryption"),
+                        "cfg.smb1", "cfg.rdp", "cfg.remreg", "cfg.psv2", "cfg.usb", "cfg.encryption"),
                UPD_IDS, ("acc.daily", "acc.admins"), MAL_IDS))),
            "declared": tuple((k, why) for k, _, why in DECLARED),
            "footer": "This follows the Cyber Essentials control areas but is not a certificate."},
     "certin": {"title": "CERT-In MSME", "scheme": "CERT-In Elemental Cyber Defense Controls for MSMEs v1.0 (CISG-2025-03, 1 Sep 2025)",
-               "unlock": (3, 5), "unlock_ref": CERTIN, "encryption": "note", "pwpolicy": "certin",
+               "unlock": (3, 5), "unlock_ref": CERTIN, "encryption": "note", "pwpolicy": "certin", "usb": "strict",
                "controls": (
                    ("nes", "Network security (NES)", "NES.1: the host firewall is on and configured.", ("fw.on", "fw.default", "fw.rules")),
-                   ("ems", "Endpoint security (EMS)", "EMS.1 and EMS.4: antivirus on and current; a plugged-in drive runs nothing by itself.",
-                    MAL_IDS + ("cfg.autoplay",)),
+                   ("ems", "Endpoint security (EMS)", "EMS.1 and EMS.4: antivirus on and current; removable media restricted, and a "
+                                                      "plugged-in drive runs nothing by itself.",
+                    MAL_IDS + ("cfg.autoplay", "cfg.usb")),
                    ("sc", "Secure configuration (SC)", "SC.2 and SC.3: unneeded ports, shares, services and protocols off, default "
                                                        "accounts off, unsupported software removed.",
                     ("fw.ports", "fw.shares", "cfg.smb1", "cfg.rdp", "cfg.remreg", "cfg.psv2", "cfg.guest", "upd.unsupported", "cfg.lock", "cfg.encryption")),
@@ -728,7 +758,7 @@ FRAMEWORKS = {
                   ("cfg.unlock", "cfg.pwpolicy", "cfg.password", "cfg.guest", "cfg.unused", "cfg.lock", "acc.daily", "acc.admins") + FW_IDS),
                  ("other", "Other reasonable safeguards", "Patching, malware protection and old protocols switched off. Rule 6 does not "
                                                           "name these; placing them under its reasonable security safeguards is our own mapping.",
-                  UPD_IDS + MAL_IDS + ("cfg.autoplay", "cfg.smb1", "cfg.rdp", "cfg.remreg", "cfg.psv2"))),
+                  UPD_IDS + MAL_IDS + ("cfg.autoplay", "cfg.usb", "cfg.smb1", "cfg.rdp", "cfg.remreg", "cfg.psv2"))),
              "declared": (("backups", "DPDP Rule 6(1)(d): continuity measures, including backups."),
                           ("backup_test", "DPDP Rule 6(1)(d): backups that can be restored."),
                           ("incident_plan", "DPDP Rule 7: a breach is told to the Board and to the people affected, with a detailed "
@@ -771,6 +801,9 @@ def verdict(fw: str, ch: dict, labels=(), remote: bool = False) -> dict:
         ch.update({k: u[k] for k in ("title", "status", "detail", "fix")})
         if remote:
             _on_pc(ch)
+    if ch["id"] == "cfg.usb" and f.get("usb") == "strict" and ch["status"] == "info":
+        u = usb_check({"usb_storage": "allowed"}, strict=True)
+        ch.update(status=u["status"], detail=u["detail"])
     if ch["id"] == "cfg.encryption" and f["encryption"] == "personal_data" and ch["status"] == "info":
         base = ch["detail"].split(" Not a Cyber Essentials")[0]
         if ch.get("fix"):

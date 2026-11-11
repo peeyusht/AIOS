@@ -114,7 +114,7 @@ actor)` with row-level security and a line in the isolation test.
 | EMS.2 | No pirated or unauthorised software; only authorised people install | F-4 approved-software list; daily account not admin | M+S | **PARTIAL**: `acc.daily` BUILT; approved list NEW |
 | EMS.3 | Onboard with Cyber Swachhta Kendra | Declared | D | **NEW** question |
 | EMS.4 | Restrict USB and removable media; disable autorun | AutoPlay/autorun off | M | **BUILT** `cfg.autoplay` |
-| | | F-5 USB storage policy | M | **NEW** |
+| | | F-5 USB storage policy | M | **BUILT** 11 Nov 2026 `cfg.usb` |
 | SC.1 | Baseline configurations, approved by the entity | F-6 baseline drift | S | **NEW** |
 | SC.2 | Disable unnecessary features, ports, services, protocols | Listening ports, non-Windows services, shares | M | **BUILT** `fw.ports`, `fw.shares`, services snapshot |
 | | | F-7 SMBv1, RDP and NLA, remote registry, PowerShell v2 | M | **BUILT** 11 Nov 2026 `cfg.smb1`, `cfg.rdp`, `cfg.remreg`, `cfg.psv2` |
@@ -192,7 +192,12 @@ domain). Needs D-3.
 **F-4 Approved software (S).** The organisation marks programs as approved in the server's Software page; a
 device with a program that is not approved gets `acc.unapproved` (warn). No list = check not shown.
 
-**F-5 USB storage (M).** Read `HKLM\SYSTEM\CurrentControlSet\Services\USBSTOR\Start` (4 = disabled) and the
+**F-5 USB storage (M) — BUILT 11 Nov 2026** (`cfg.usb`, payload `usb_storage`). Built as specified for CERT-In
+(allowed = `warn`); in Cyber Essentials and DPDP, which do not ask for it, allowed is a note (`info`). Blocked =
+the USB storage driver off, or "Deny all" / "Removable Disks: Deny read"; read-only = "Removable Disks: Deny
+write". Machine policy only (a per-user policy is not read). Measured on the owner's PC: allowed (driver on
+demand, no policy).
+Original: Read `HKLM\SYSTEM\CurrentControlSet\Services\USBSTOR\Start` (4 = disabled) and the
 removable-storage deny policies under `HKLM\SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices`.
 Fact `usb_storage`: `blocked` | `read_only` | `allowed`. CERT-In profile: `allowed` = warn (the text says
 "restrict or control", not "block").

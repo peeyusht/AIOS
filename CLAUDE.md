@@ -427,6 +427,7 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   payload fields (gate D-1) on 11 Nov 2026, each added with its own feature. Complexity is not read. Old
   protocols (F-7: SMBv1, Remote Desktop and NLA, Remote Registry, PowerShell 2.0) are five true/false fields;
   the firmware's age (F-8) is sent as days (`bios_age_days`), never its version or date; 3 years is our own limit.
+  USB storage (F-5) is one word: blocked, read_only or allowed; only CERT-In makes "allowed" a look.
 - Network: view only except for switching Windows Firewall on (through `remedy.py`); a network's
   Public/Private mark, rules and shares cannot be changed from the page. The firewall button has run on demo
   data only: on 12 Oct 2026 the user's firewall was still off on all profiles and switching it on was left to them. No names for devices (no vendor lookup, no reverse DNS) and no per-connection traffic amounts.

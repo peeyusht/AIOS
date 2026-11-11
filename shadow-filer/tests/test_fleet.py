@@ -68,6 +68,7 @@ class FleetTest(unittest.TestCase):
                          [False, False, True, False, False])
         self.assertEqual(sn["posture"]["bios_age_days"], (datetime.now().date() - datetime(2024, 3, 22).date()).days)   # days, not the date
         self.assertNotIn("F39", json.dumps(sn["posture"]))                         # nor the version
+        self.assertEqual(sn["posture"]["usb_storage"], "read_only")
         self.assertEqual((sn["posture"]["daily_account_is_admin"], sn["posture"]["admin_accounts"], sn["posture"]["drives_encrypted"]), (True, 1, True))
         self.assertEqual((sn["network"]["shared_folders"], sn["network"]["rules"]["programs"]), (1, 1))
         self.assertEqual(sorted(sn["network"]["listening"][0]), ["port", "process", "proto", "reach", "windows"])
@@ -84,12 +85,13 @@ class FleetTest(unittest.TestCase):
         """A posture value that is not a plain number (a name, a path, true/false) is sent as nothing."""
         odd = pc(user=SECRET_USER, pw_min_length=f"C:\\Users\\{SECRET_USER}", pw_max_age_days=True, pw_history=-1, lockout_threshold="10",
                  smb1_on="yes", rdp_on=1, rdp_nla=SECRET_USER, remote_registry_on=None, psv2_present={"path": "C:\\x"},
-                 bios_date=SECRET_USER)
+                 bios_date=SECRET_USER, usb_storage=f"D:\\{SECRET_USER}")
         with mock.patch("compliance._posture", return_value=odd):
             sent = fleet.payload(self.cfg)["snapshots"]["posture"]
         self.assertEqual([sent[k] for k in ("pw_min_length", "pw_max_age_days", "pw_history", "lockout_threshold")], [None] * 4)
         self.assertEqual([sent[k] for k in ("smb1_on", "rdp_on", "rdp_nla", "remote_registry_on", "psv2_present")], [None] * 5)
         self.assertIsNone(sent["bios_age_days"])
+        self.assertIsNone(sent["usb_storage"])                                      # only the three words
         self.assertEqual([fleet._age(x) for x in ("2999-01-01", 20240322, None, "2024-13-01")], [None] * 4)
         self.assertNotIn(SECRET_USER, json.dumps(sent))
 
