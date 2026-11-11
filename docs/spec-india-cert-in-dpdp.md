@@ -247,7 +247,14 @@ Original: Add `SMBIOSBIOSVersion` and `ReleaseDate` to the existing `Win32_BIOS`
 Fact `bios_date`. Check `upd.firmware`: warn if older than 3 years (our own number; say so). The maker's
 latest version cannot be known offline; do not claim "out of date".
 
-**F-9 CERT-In advisories (S).** Only if CERT-In publishes a feed that can be fetched without sending anything
+**F-9 CERT-In advisories (S) — INVESTIGATED 11 Nov 2026, NOT BUILT.** CERT-In publishes no feed (no RSS, Atom,
+JSON or CSV; checked on www.cert-in.org.in, where "Feed" appears only in "Feedback"). Vulnerability notes are HTML
+pages, readable without JavaScript, one per note (`s2cMainServlet?pageid=PUBVLNOTES01&VLCODE=CIVN-yyyy-nnnn`), with
+the note id, issue date, severity, "Software Affected" as prose, and CVE ids; lists are per year
+(`pageid=VLNLIST`). A request carries only the note id, nothing about a customer. Building it would mean scraping
+HTML (breaks when the site changes) and a new online source for the worker; the useful part would be matching
+the notes' CVE ids to the CVEs already found on devices ("CERT-In note CIVN-... covers a flaw on 3 devices").
+Needs the owner's decision on a new online step before any work. Original: Only if CERT-In publishes a feed that can be fetched without sending anything
 about a customer. Otherwise not built. Investigate before planning.
 
 **F-10 Logs (M) — BUILT 11 Nov 2026** (`log.retention`, `log.audit`; payload `log_days_security`,
@@ -401,7 +408,7 @@ rest) must come first.
    document, F-24). F-1 labels, F-21 incidents, F-24 reviews, F-23 (without document),
    new declared questions with dates.
 4. **Uploads**, after phase 6 hardening: F-20, F-22, F-23 documents, F-25. D-4: design only (11 Nov 2026); not built.
-5. **Decision-gated:** F-11 (D-1, D-2), F-3 (D-3), F-9 (feasibility), F-30 (own design).
+5. **Decision-gated:** F-11 (D-1, D-2; D-2 "later"), F-3 (D-3; BUILT 11 Nov 2026), F-9 (investigated: no feed, see F-9), F-30 (own design, not started).
 
 Tests for every step, in the existing suites: `shadow-filer/tests/test_compliance.py` (profiles, thresholds),
 `tests/test_fleet.py` (each new payload field is a count or boolean; planted names, paths, SSIDs and numbers
