@@ -343,6 +343,12 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(pw(pw_min_length=None)["ce"]["detail"], "The device could not read its password policy.")
         self.assertTrue(pw(pw_min_length=0)["certin"]["fix"].startswith("On the PC, in an administrator terminal: net accounts /minpwlen:8"))
         self.assertEqual(pw(), {"ce": None, "certin": None, "dpdp": None})
+        # F-7 old protocols: judged when sent; the fix says it is done on the PC
+        pr = {ch["id"]: ch for g in judge.assess({**SNAP, "posture": {**SNAP["posture"], "smb1_on": True, "rdp_on": True, "rdp_nla": None,
+                                                                      "remote_registry_on": False, "psv2_present": True}},
+                                                 None, None, {}, self.today)["profiles"]["certin"]["controls"] for ch in g["checks"]}
+        self.assertEqual([pr[k]["status"] for k in ("cfg.smb1", "cfg.rdp", "cfg.remreg", "cfg.psv2")], ["fail", "unknown", "pass", "warn"])
+        self.assertTrue(pr["cfg.smb1"]["fix"].startswith("On the PC, in an administrator PowerShell"))
         d = self.http.get(f"/api/v1/devices/{self.dev_a}", headers=self.auth(self.admin_a)).json()
         self.assertEqual(([a["name"] for a in d["flaws"]["apps"]], d["flaws"]["apps"][0]["cves"][0]["id"], d["flaws"]["apps"][0]["cves"][0]["kev"]),
                          (["Kettle Archive"], "CVE-2026-0001", True))       # 'Notes' is another maker's product: not matched

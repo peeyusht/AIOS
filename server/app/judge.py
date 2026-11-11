@@ -183,6 +183,8 @@ def configuration_checks(p) -> list:
         out.append(agent._on_pc(agent.unlock_check({"lockout_threshold": n if type(n) is int else -1})))   # keeps the number as `fact`
     if "pw_min_length" in p:                # sent from 11 Nov 2026 (F-13); older agents say nothing, so no check
         out.append(agent._on_pc(agent.password_policy_check({k: p.get(k) for k in ("pw_min_length", "pw_max_age_days", "pw_history")})))
+    if "smb1_on" in p:                      # F-7, sent from 11 Nov 2026
+        out += [agent._on_pc(c) for c in agent.protocol_checks(p)]
     off = bool(p.get("autoplay_off"))
     out.append(C("cfg.autoplay", "AutoPlay is off, so a plugged-in drive runs nothing by itself", "pass" if off else "fail",
                  "AutoPlay is off." if off else "AutoPlay is on for removable drives.",

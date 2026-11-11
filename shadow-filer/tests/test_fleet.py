@@ -64,6 +64,8 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(sn["posture"]["accounts_without_password"], 1)        # a count, not who
         self.assertEqual(sn["posture"]["lockout_threshold"], 10)               # a number of tries, nothing else
         self.assertEqual([sn["posture"][k] for k in ("pw_min_length", "pw_max_age_days", "pw_history")], [14, 90, 5])
+        self.assertEqual([sn["posture"][k] for k in ("smb1_on", "rdp_on", "rdp_nla", "remote_registry_on", "psv2_present")],
+                         [False, False, True, False, False])
         self.assertEqual((sn["posture"]["daily_account_is_admin"], sn["posture"]["admin_accounts"], sn["posture"]["drives_encrypted"]), (True, 1, True))
         self.assertEqual((sn["network"]["shared_folders"], sn["network"]["rules"]["programs"]), (1, 1))
         self.assertEqual(sorted(sn["network"]["listening"][0]), ["port", "process", "proto", "reach", "windows"])
@@ -78,10 +80,12 @@ class FleetTest(unittest.TestCase):
 
     def test_numbers_stay_numbers(self):
         """A posture value that is not a plain number (a name, a path, true/false) is sent as nothing."""
-        odd = pc(user=SECRET_USER, pw_min_length=f"C:\\Users\\{SECRET_USER}", pw_max_age_days=True, pw_history=-1, lockout_threshold="10")
+        odd = pc(user=SECRET_USER, pw_min_length=f"C:\\Users\\{SECRET_USER}", pw_max_age_days=True, pw_history=-1, lockout_threshold="10",
+                 smb1_on="yes", rdp_on=1, rdp_nla=SECRET_USER, remote_registry_on=None, psv2_present={"path": "C:\\x"})
         with mock.patch("compliance._posture", return_value=odd):
             sent = fleet.payload(self.cfg)["snapshots"]["posture"]
         self.assertEqual([sent[k] for k in ("pw_min_length", "pw_max_age_days", "pw_history", "lockout_threshold")], [None] * 4)
+        self.assertEqual([sent[k] for k in ("smb1_on", "rdp_on", "rdp_nla", "remote_registry_on", "psv2_present")], [None] * 5)
         self.assertNotIn(SECRET_USER, json.dumps(sent))
 
     def test_enrol_checkin_leave(self):

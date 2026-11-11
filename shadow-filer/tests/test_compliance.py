@@ -27,7 +27,8 @@ def pc(**over):
          "admins": [{"name": "DEMO-PC\\admin", "kind": "User"}], "admins_read": True, "me_admin": False,
          "screensaver": {"active": "1", "secure": "1", "timeout": "600"}, "inactivity": 0,
          "display_off": 0, "sleep_after": 0, "lock_on_wake": -1, "autoplay_off": 1, "autorun_policy": 0, "inbound_allow_rules": 40,
-         "lockout_threshold": 10, "pw_min_length": 14, "pw_max_age_days": 90, "pw_history": 5}
+         "lockout_threshold": 10, "pw_min_length": 14, "pw_max_age_days": 90, "pw_history": 5,
+         "smb1_on": False, "rdp_on": False, "rdp_nla": True, "remote_registry_on": False, "psv2_present": False}
     p.update(over)
     return p
 
@@ -112,7 +113,7 @@ class ChecksTest(unittest.TestCase):
         c = by_id(compliance.configuration_checks(bad))
         self.assertEqual({k: v["status"] for k, v in c.items()},
                          {"cfg.lock": "info", "cfg.unlock": "fail", "cfg.pwpolicy": "warn", "cfg.autoplay": "fail", "cfg.guest": "fail", "cfg.password": "fail",
-                          "cfg.unused": "warn", "cfg.encryption": "info"})
+                          "cfg.unused": "warn", "cfg.encryption": "info", "cfg.smb1": "pass", "cfg.rdp": "pass", "cfg.remreg": "pass", "cfg.psv2": "pass"})
         # Cyber Essentials v3.3 sets no lock time and does not ask for encryption: notes, never failing the area
         self.assertEqual(compliance._roll([c["cfg.lock"], c["cfg.encryption"], c["cfg.guest"] | {"status": "pass"}]), "pass")
         self.assertEqual(compliance._roll([c["cfg.lock"], c["cfg.encryption"]]), "info")         # notes alone are not "met"
@@ -156,6 +157,20 @@ class ChecksTest(unittest.TestCase):
         c = compliance.password_policy_check(pc(pw_min_length=0, pw_max_age_days=0, pw_history=0), "certin")
         self.assertIn("our own suggestion", c["fix"])
         self.assertIn("passwords never expire; old passwords can be used again", c["detail"])
+
+    def test_old_protocols(self):
+        """F-7: SMBv1 fails; Remote Desktop without sign-in first is a look, with it a note; Remote Registry and
+        PowerShell 2.0 are looks. Anything that is not true/false is unknown, never a pass."""
+        st = lambda **o: {c["id"]: c["status"] for c in compliance.protocol_checks(pc(**o))}
+        self.assertEqual(st(), {"cfg.smb1": "pass", "cfg.rdp": "pass", "cfg.remreg": "pass", "cfg.psv2": "pass"})
+        self.assertEqual(st(smb1_on=True, rdp_on=True, rdp_nla=False, remote_registry_on=True, psv2_present=True),
+                         {"cfg.smb1": "fail", "cfg.rdp": "warn", "cfg.remreg": "warn", "cfg.psv2": "warn"})
+        self.assertEqual(st(rdp_on=True)["cfg.rdp"], "info")                     # on, with sign-in first
+        self.assertEqual(st(rdp_on=True, rdp_nla=None)["cfg.rdp"], "unknown")
+        self.assertEqual(st(rdp_on=False, rdp_nla=None)["cfg.rdp"], "pass")      # off: how it would sign in does not matter
+        for bad in (None, 0, 1, "False"):
+            self.assertEqual(set(st(smb1_on=bad, rdp_on=bad, remote_registry_on=bad, psv2_present=bad).values()), {"unknown"}, bad)
+        self.assertIn("Set-SmbServerConfiguration -EnableSMB1Protocol $false", compliance.protocol_checks(pc(smb1_on=True))[0]["fix"])
 
     def test_windows_monthly_release(self):
         due = compliance.security_release_due

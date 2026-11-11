@@ -117,7 +117,7 @@ actor)` with row-level security and a line in the isolation test.
 | | | F-5 USB storage policy | M | **NEW** |
 | SC.1 | Baseline configurations, approved by the entity | F-6 baseline drift | S | **NEW** |
 | SC.2 | Disable unnecessary features, ports, services, protocols | Listening ports, non-Windows services, shares | M | **BUILT** `fw.ports`, `fw.shares`, services snapshot |
-| | | F-7 SMBv1, RDP and NLA, remote registry, PowerShell v2 | M | **NEW** |
+| | | F-7 SMBv1, RDP and NLA, remote registry, PowerShell v2 | M | **BUILT** 11 Nov 2026 `cfg.smb1`, `cfg.rdp`, `cfg.remreg`, `cfg.psv2` |
 | SC.3 | Remove unused software; change default passwords | End-of-life programs | M | **BUILT** `upd.unsupported` |
 | | | Guest account off | M | **BUILT** `cfg.guest` |
 | | | Built-in Administrator (RID 500) enabled | M | **NEW** (the account list is already read; add the check) |
@@ -200,7 +200,15 @@ Fact `usb_storage`: `blocked` | `read_only` | `allowed`. CERT-In profile: `allow
 **F-6 Baseline drift (S).** The organisation picks one device's current posture as its approved baseline
 (or the defaults of a profile). Each device shows which posture facts differ. Uses facts already sent.
 
-**F-7 Insecure protocols (M).** SMBv1 server enabled (`Get-SmbServerConfiguration`), RDP enabled
+**F-7 Insecure protocols (M) — BUILT 11 Nov 2026** (payload `smb1_on`, `rdp_on`, `rdp_nla`, `remote_registry_on`,
+`psv2_present`). Built differently: PowerShell 2.0 is read with `Win32_OptionalFeature` (works without
+administrator rights; `Get-WindowsOptionalFeature` needs them), and a feature missing from that list counts as
+not installed only when the list itself was read. Remote Registry counts as on when it runs or starts by
+itself. RDP off is a pass whatever NLA says. The four checks are in all three frameworks (CE secure
+configuration, CERT-In SC, DPDP "other"), not CERT-In only. The extra readings add about 2 s to the settings
+read (optional features 1.3 s); it is cached for 5 minutes. Measured on the owner's PC: SMBv1 off, Remote
+Desktop on with NLA (a note), Remote Registry disabled, PowerShell 2.0 not present (removed from this build).
+Original: SMBv1 server enabled (`Get-SmbServerConfiguration`), RDP enabled
 (`fDenyTSConnections`) and whether NLA is required (`UserAuthentication`), Remote Registry running,
 PowerShell v2 feature present. Facts: four booleans. Checks `cfg.smb1` (fail), `cfg.rdp` (warn if RDP on
 without NLA; info if on with NLA), `cfg.remreg` (warn), `cfg.psv2` (warn).

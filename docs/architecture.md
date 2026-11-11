@@ -174,7 +174,8 @@ product, version, port numbers); firewall state per profile, the network's Publi
 ports (number, program name, reachable from the network or not), counts of rules and shared folders; security
 settings as true/false or counts (antivirus on, drives encrypted, lock, AutoPlay, how many administrator
 accounts, after how many wrong passwords accounts lock, the password policy's minimum length, maximum age and
-remembered history as three numbers).
+remembered history as three numbers, and whether SMBv1, Remote Desktop (and its sign-in first), Remote Registry
+and PowerShell 2.0 are on).
 
 Never sent: anything about files or documents (the whole file-organising half), account names, install
 folders and program paths (they contain the user name), IP and MAC addresses, the addresses of open

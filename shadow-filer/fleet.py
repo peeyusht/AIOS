@@ -17,7 +17,9 @@ SENT, per kind:
              Windows update date, how many administrator accounts, whether the everyday account is one,
              after how many wrong passwords accounts lock (a number; added 11 Nov 2026 with the owner's yes),
              the password policy: minimum length, maximum age in days, how many old passwords are remembered
-             (three numbers; added 11 Nov 2026 with the owner's yes, spec F-13)
+             (three numbers; added 11 Nov 2026 with the owner's yes, spec F-13), and five true/false: SMBv1 on,
+             Remote Desktop on, Remote Desktop asks for sign-in first, Remote Registry on, PowerShell 2.0 installed
+             (spec F-7, same yes)
 
 NEVER SENT, and `payload()` is built so they cannot slip in (it copies named fields, never whole records):
   anything about files or documents (the whole file-organising half); account names; install folders and
@@ -108,6 +110,7 @@ def payload(cfg: dict, settings: dict | None = None, posture=None) -> dict:
             "windows_updates_paused": bool(raw.get("paused_until")),
             "lockout_threshold": raw["lockout_threshold"] if type(raw.get("lockout_threshold")) is int and raw["lockout_threshold"] >= 0 else None,
             **{k: raw[k] if type(raw.get(k)) is int and raw[k] >= 0 else None for k in ("pw_min_length", "pw_max_age_days", "pw_history")},
+            **{k: raw[k] if type(raw.get(k)) is bool else None for k in ("smb1_on", "rdp_on", "rdp_nla", "remote_registry_on", "psv2_present")},
             "browser_updates_off": [k for k, v in (raw.get("browser_policy") or {}).items()
                                     if (k.endswith("_default") or k.endswith("_period")) and v == "0" or k == "firefox_off" and v == "1"]}
     if s["enabled"] and s["applications"]:
