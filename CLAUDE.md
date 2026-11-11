@@ -431,7 +431,9 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   built-in Administrator (by its -500 id) is sent as true/false and never-used enabled accounts as a count.
   Wi-Fi (F-2, `net.wifi`): saved profiles are exported to a fresh temp folder that is removed at once; only the
   kind of encryption and counts leave PowerShell, never a network name (SSID), and a PC with no Wi-Fi adapter
-  sends no Wi-Fi fields at all.
+  sends no Wi-Fi fields at all. Logs (F-10): only how far back the Security log reaches, its mode and two audit
+  settings are read and sent, never anything from a log; they need administrator rights, so the file agent shows
+  them as unknown and only the SYSTEM device agent reads them. We never collect logs (spec F-10).
 - Network: view only except for switching Windows Firewall on (through `remedy.py`); a network's
   Public/Private mark, rules and shares cannot be changed from the page. The firewall button has run on demo
   data only: on 12 Oct 2026 the user's firewall was still off on all profiles and switching it on was left to them. No names for devices (no vendor lookup, no reverse DNS) and no per-connection traffic amounts.

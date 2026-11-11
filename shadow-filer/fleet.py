@@ -24,7 +24,9 @@ SENT, per kind:
              whether the built-in Administrator account is enabled and how many enabled accounts never signed
              in (true/false and a count, same yes; never which accounts), and Wi-Fi: connected or not, the kind of
              encryption of the network it is on (open, WEP, WPA, WPA2, WPA3) and how many saved open networks join by
-             themselves (spec F-2, same yes; never a network's name; nothing at all on a PC without Wi-Fi)
+             themselves (spec F-2, same yes; never a network's name; nothing at all on a PC without Wi-Fi), and
+             logs: how many days the Security log reaches back, its mode (circular, autobackup, retain), and whether
+             sign-ins and account changes are audited (spec F-10, same yes; never anything from the log itself)
 
 NEVER SENT, and `payload()` is built so they cannot slip in (it copies named fields, never whole records):
   anything about files or documents (the whole file-organising half); account names; install folders and
@@ -130,6 +132,7 @@ def payload(cfg: dict, settings: dict | None = None, posture=None) -> dict:
             "bios_age_days": _age(raw.get("bios_date")),
             "usb_storage": raw.get("usb_storage") if raw.get("usb_storage") in ("blocked", "read_only", "allowed") else None,
             **(compliance.wifi_facts(raw) or {}),
+            **compliance.log_facts(raw, datetime.now().date()),
             "browser_updates_off": [k for k, v in (raw.get("browser_policy") or {}).items()
                                     if (k.endswith("_default") or k.endswith("_period")) and v == "0" or k == "firefox_off" and v == "1"]}
     if s["enabled"] and s["applications"]:

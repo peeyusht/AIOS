@@ -374,6 +374,17 @@ class ServerTest(unittest.TestCase):
         nes = [g for g in judge.assess({**SNAP, "posture": {**SNAP["posture"], "wifi_connected": False, "wifi_auth": None, "wifi_open_autoconnect": 1}},
                                        None, None, {}, self.today)["profiles"]["certin"]["controls"] if g["key"] == "nes"][0]
         self.assertIn("net.wifi", [ch["id"] for ch in nes["checks"]])
+        # F-10 logs: judged per framework from the facts; DPDP retention only on a personal-data device
+        lp = {"log_days_security": 40, "log_mode_security": "circular", "audit_logon": True, "audit_account_mgmt": False}
+        for labels, want in (((), {"ce": ("info", "info"), "certin": ("fail", "warn"), "dpdp": ("info", "warn")}),
+                             (("personal_data",), {"ce": ("info", "info"), "certin": ("fail", "warn"), "dpdp": ("fail", "warn")})):
+            got = {k: (lambda x: (x["log.retention"]["status"], x["log.audit"]["status"]))({ch["id"]: ch for g in p["controls"] for ch in g["checks"]})
+                   for k, p in judge.assess({**SNAP, "posture": {**SNAP["posture"], **lp}}, None, None, {}, self.today, labels)["profiles"].items()}
+            self.assertEqual(got, want, labels)
+        x = {ch["id"]: ch for g in judge.assess({**SNAP, "posture": {**SNAP["posture"], **{k: None for k in lp}}}, None, None, {}, self.today)["controls"]
+             for ch in g["checks"]}
+        self.assertTrue(x["log.retention"]["detail"].startswith("The device could not read its Security log"))
+        self.assertNotIn("log.retention", acc())
         self.assertNotIn("upd.firmware", [ch["id"] for g in judge.assess(SNAP, None, None, {}, self.today)["controls"] for ch in g["checks"]])
         d = self.http.get(f"/api/v1/devices/{self.dev_a}", headers=self.auth(self.admin_a)).json()
         self.assertEqual(([a["name"] for a in d["flaws"]["apps"]], d["flaws"]["apps"][0]["cves"][0]["id"], d["flaws"]["apps"][0]["cves"][0]["kev"]),
@@ -388,9 +399,9 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(f["history"][-1]["areas"]["malware"], 1)
         self.assertEqual((f["framework"], [x["key"] for x in f["frameworks"] if x["shown"]]), ("ce", ["ce"]))     # nothing changes until chosen
         c = self.http.get("/api/v1/fleet?framework=certin", headers=self.auth(self.admin_a)).json()
-        self.assertEqual(([a["key"] for a in c["areas"]], c["framework"]), (["nes", "ems", "sc", "pm", "rpp", "acim"], "certin"))
+        self.assertEqual(([a["key"] for a in c["areas"]], c["framework"]), (["nes", "ems", "sc", "pm", "rpp", "acim", "lm"], "certin"))
         self.assertEqual({a["key"]: (a["pass"], a["fail"]) for a in c["areas"]}["ems"], (1, 0))
-        self.assertEqual(sorted(c["history"][-1]["areas"]), ["acim", "ems", "nes", "pm", "rpp", "sc"])
+        self.assertEqual(sorted(c["history"][-1]["areas"]), ["acim", "ems", "lm", "nes", "pm", "rpp", "sc"])
         self.assertEqual({k: len(h) for k, h in d["histories"].items()}, {"ce": 1, "certin": 1, "dpdp": 1})
         sw = self.http.get("/api/v1/software", headers=self.auth(self.admin_a)).json()["programs"]
         self.assertEqual((sw[0]["name"], sw[0]["exploited"], sw[0]["ended"], sw[0]["versions"][0]["devices"][0]["name"]), ("Kettle Archive", 1, True, "DEMO-PC"))

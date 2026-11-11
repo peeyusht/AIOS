@@ -128,7 +128,7 @@ actor)` with row-level security and a line in the isolation test.
 | IM.1 | Documented incident response plan | Declared | D | **BUILT** `incident_plan` (as a question; no document, no date) |
 | IM.2 | Test the plan regularly | Last test date, reminder | W | **NEW** |
 | IM.3 | Report to CERT-In within 6 hours | F-21 incident register | W | **NEW** |
-| LM.1 | Logging on; logs kept ≥180 days, within India | F-10 log retention and audit policy | M | **NEW** |
+| LM.1 | Logging on; logs kept ≥180 days, within India | F-10 log retention and audit policy | M | **BUILT** 11 Nov 2026 `log.retention`, `log.audit` ("within India" is not measured) |
 | LM.2 | Monitor network and privileged actions | Out of scope (that is SIEM/EDR). Shown as "not measured by this product" | – | not planned |
 | LM.3 | Monitoring tools (recommended) | Declared | D | **NEW** question |
 | AT.1 | Awareness training at least twice a year | Training dates, reminder every 6 months | W | **PARTIAL**: `training` declared yes/no exists; dates and cadence NEW |
@@ -162,9 +162,9 @@ actor)` with row-level security and a line in the isolation test.
 |---|---|---|---|
 | 6(1)(a) encryption | BitLocker per drive | M | **PARTIAL**: measured (`cfg.encryption`, payload `drives_encrypted`), but always `info`. DPDP profile: fail on personal-data devices (F-0, F-1) |
 | 6(1)(b) access control | Password policy, lockout, guest, accounts without password, admins, daily account, lock | M | **PARTIAL**: all BUILT except F-13 password policy |
-| 6(1)(c) logs, monitoring, review | F-10 audit policy on; F-24 log review sign-off | M+W | **NEW** |
+| 6(1)(c) logs, monitoring, review | F-10 audit policy on; F-24 log review sign-off | M+W | **PARTIAL**: `log.audit` BUILT 11 Nov 2026; review sign-off (F-24) NEW |
 | 6(1)(d) continuity, backups | F-12; declared `backups`, `backup_test` | M+D | **PARTIAL** (declared BUILT, detection NEW) |
-| 6(1)(e) one-year retention | F-10 oldest Security log entry ≥365 days on personal-data devices | M | **NEW** |
+| 6(1)(e) one-year retention | F-10 oldest Security log entry ≥365 days on personal-data devices | M | **BUILT** 11 Nov 2026 `log.retention` (DPDP profile, personal-data label) |
 | 6(1)(f) processor contracts | F-22 vendor register with "security clause" and contract upload | W | **NEW** |
 | 6(1)(g) effective observance | Daily history, evidence report, share link, audit log | S | **BUILT** (server phase 2–3) |
 | 7 breach intimation | F-21 incident register with the 72-hour clock | W | **NEW** |
@@ -240,7 +240,24 @@ latest version cannot be known offline; do not claim "out of date".
 **F-9 CERT-In advisories (S).** Only if CERT-In publishes a feed that can be fetched without sending anything
 about a customer. Otherwise not built. Investigate before planning.
 
-**F-10 Logs (M).** Fixed PowerShell: for the Security, System and Application logs, `MaximumSizeInBytes`,
+**F-10 Logs (M) — BUILT 11 Nov 2026** (`log.retention`, `log.audit`; payload `log_days_security`,
+`log_mode_security`, `audit_logon`, `audit_account_mgmt`). The Gazette text was read first (G.S.R. 846(E) pages,
+from a copy at dpdpa.com; egazette.gov.in failed its TLS check): 6(1)(c) "visibility on the accessing of such
+personal data, through appropriate logs, monitoring and review", 6(1)(e) "retain such logs and personal data for
+a period of one year, unless compliance with any law for the time being in force requires otherwise"; Rule 6 is
+in force 18 months after 13 Nov 2025. Built differently:
+- Only a log that overwrites itself (circular) is failed on its age; one that archives (AutoBackup) or stops
+  (Retain) loses nothing and passes. The detail notes that a log that has not filled up yet only shows how long
+  the PC has been logging. Size limits are not read.
+- `audit_logon` = the Logon subcategory records success and failure; `audit_account_mgmt` = User Account
+  Management records success (Windows' default), read from `auditpol /backup` (a numeric CSV column, so not
+  language-bound) into a temp file removed at once. Logon off fails; account changes off is a look.
+- Cyber Essentials does not ask about logs: both checks are notes there. DPDP judges `log.audit` on every device
+  and `log.retention` only on a personal-data device (a note otherwise).
+- Everything here needs administrator rights: the file agent (not elevated) always shows both as unknown; the
+  device agent, as SYSTEM, reads them. Run once as SYSTEM on the owner's PC: Security log circular, oldest entry
+  2 days back (CERT-In fail, as predicted); logons and account changes audited (pass).
+Original: Fixed PowerShell: for the Security, System and Application logs, `MaximumSizeInBytes`,
 `LogMode` (Circular / AutoBackup / Retain) and the `TimeCreated` of the oldest record; plus `auditpol /get
 /category:*` for Logon/Logoff and Account Management (success and failure). Facts: `log_days_security`
 (age of the oldest entry), `log_mode_security`, `audit_logon` (bool), `audit_account_mgmt` (bool).
@@ -320,7 +337,7 @@ rest) must come first.
 
 1. **F-0 profiles** and the CERT-In lockout threshold. No payload change. Unblocks everything. **BUILT 11 Nov 2026.**
 2. **Measured, payload change needed (D-1; approved 11 Nov 2026):** BUILT so far: F-13, F-7, F-8, F-5, built-in
-   Administrator, never-used accounts, F-2 (11 Nov 2026). F-13 password policy, F-7 protocols, F-8 firmware, F-5 USB,
+   Administrator, never-used accounts, F-2, F-10 (11 Nov 2026). F-13 password policy, F-7 protocols, F-8 firmware, F-5 USB,
    built-in Administrator enabled, never-used account count, F-2 Wi-Fi, F-10 logs, F-12 backups.
 3. **Server workflows without uploads:** F-1 labels, F-21 incidents, F-24 reviews, F-23 (without document),
    new declared questions with dates.

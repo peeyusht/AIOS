@@ -71,6 +71,8 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(sn["posture"]["usb_storage"], "read_only")
         self.assertEqual((sn["posture"]["builtin_admin_enabled"], sn["posture"]["accounts_never_used"]), (False, 0))   # never which
         self.assertEqual([sn["posture"][k] for k in ("wifi_connected", "wifi_auth", "wifi_open_autoconnect")], [True, "wpa2", 0])
+        self.assertEqual([sn["posture"][k] for k in ("log_mode_security", "audit_logon", "audit_account_mgmt")], ["circular", True, True])
+        self.assertEqual(sn["posture"]["log_days_security"], (datetime.now().date() - datetime(2026, 1, 1).date()).days)
         self.assertEqual((sn["posture"]["daily_account_is_admin"], sn["posture"]["admin_accounts"], sn["posture"]["drives_encrypted"]), (True, 1, True))
         self.assertEqual((sn["network"]["shared_folders"], sn["network"]["rules"]["programs"]), (1, 1))
         self.assertEqual(sorted(sn["network"]["listening"][0]), ["port", "process", "proto", "reach", "windows"])
@@ -112,6 +114,14 @@ class FleetTest(unittest.TestCase):
         with mock.patch("compliance._posture", return_value=pc(wifi={"adapter": False, "connected": False, "auth": "", "open_auto": -1})):
             sent = fleet.payload(self.cfg)["snapshots"]["posture"]
         self.assertFalse([k for k in sent if k.startswith("wifi")])
+        # logs: a planted event (a user name, a path) never comes out; only the four facts
+        ev = pc(logs={"mode": "circular", "oldest": "2026-01-01", "last_event": f"{SECRET_USER} logged on from 10.9.8.7"},
+                audit={"logon": "Success and Failure", "users": True, "who": SECRET_USER})
+        with mock.patch("compliance._posture", return_value=ev):
+            sent = fleet.payload(self.cfg)["snapshots"]["posture"]
+        self.assertEqual([sent[k] for k in ("log_mode_security", "audit_logon", "audit_account_mgmt")], ["circular", None, None])
+        for never in (SECRET_USER, "10.9.8.7", "last_event", "Success"):
+            self.assertNotIn(never, json.dumps(sent))
         self.assertEqual([fleet._age(x) for x in ("2999-01-01", 20240322, None, "2024-13-01")], [None] * 4)
         self.assertNotIn(SECRET_USER, json.dumps(sent))
 
