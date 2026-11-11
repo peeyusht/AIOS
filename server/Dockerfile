@@ -12,6 +12,8 @@ WORKDIR /ui
 COPY shadow-filer/ui/package.json shadow-filer/ui/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY shadow-filer/ui/ ./
+ARG GIT_COMMIT=""
+ENV GIT_COMMIT=$GIT_COMMIT
 RUN npm run build:fleet && mv /ui/dist-fleet/fleet.html /ui/dist-fleet/index.html
 
 FROM python:3.12-slim AS app

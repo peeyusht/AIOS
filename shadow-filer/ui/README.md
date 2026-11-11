@@ -73,6 +73,10 @@ built here at the user's request; **send it to Lovable or it is lost on the next
 - `Compliance.tsx`: area list, one table of every check and the declarations, an evidence panel; the
   printed evidence still uses the full control cards (shown only in print).
 - `ui.tsx`: smaller page titles. The fleet console shares `styles.css` and `ui.tsx`, so it changed too.
+- Version and changelog (11 Nov 2026, local, not in Lovable): `src/version.ts`, `src/changelog.ts`, `build-info.ts`
+  (both Vite configs `define` the version, commit and build time), `src/shadow/pages/Changelog.tsx` (route
+  `#/changelog` in both consoles), and the version link at the foot of the rail (`App.tsx`) and of the fleet
+  sidebar (`fleet/App.tsx`).
 - Frameworks (11 Nov 2026, local, not in Lovable): `Compliance.tsx` has a framework switch and a Frameworks
   dialog (`api.compliance(refresh, framework)`, `api.complianceFrameworks`, `ComplianceFramework` type, area
   status `info` for an area of notes only); `Dashboard.tsx` labels its key number with the framework shown
