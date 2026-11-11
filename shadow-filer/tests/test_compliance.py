@@ -226,8 +226,13 @@ class ChecksTest(unittest.TestCase):
         self.assertEqual(st(("personal_data",), logs={"mode": "autobackup", "oldest": "2026-09-01"})["dpdp"], ("pass", "pass"))   # archives
         self.assertEqual(st(audit={"logon": 1, "users": 1}), {"ce": ("info", "info"), "certin": ("pass", "fail"), "dpdp": ("info", "fail")})
         self.assertEqual(st(audit={"logon": 3, "users": 2})["certin"], ("pass", "warn"))
-        self.assertEqual(st(logs=None, audit=None), {k: ("unknown", "unknown") for k in ("ce", "certin", "dpdp")})     # not elevated
+        # not elevated: unknown where the framework asks, a note where it does not (it must not pull a CE area down)
+        self.assertEqual(st(logs=None, audit=None), {"ce": ("info", "info"), "certin": ("unknown", "unknown"), "dpdp": ("info", "unknown")})
+        self.assertEqual(st(("personal_data",), logs=None, audit=None)["dpdp"], ("unknown", "unknown"))
+        v = compliance.judge_framework("ce", compliance.measure(cfg, pc(logs=None, audit=None, usb_storage=None), net(), VUL, APPS, TODAY), {})
+        self.assertEqual({g["key"]: g["status"] for g in v["controls"]}["malware"], "pass")
         self.assertEqual(st(logs={"mode": "Circular", "oldest": "2026-01-01"})["certin"][0], "unknown")
+        self.assertEqual(st(logs={"mode": "Circular", "oldest": "2026-01-01"})["ce"][0], "info")
         f = compliance.log_facts(pc(), TODAY)
         self.assertEqual(f, {"log_days_security": 284, "log_mode_security": "circular", "audit_logon": True, "audit_account_mgmt": True})
         c = compliance.log_checks({**f, "log_days_security": 10}, "certin")[0]
@@ -246,7 +251,8 @@ class ChecksTest(unittest.TestCase):
             return tuple(by_id([c for g in compliance.judge_framework(k, checks, {})["controls"] for c in g["checks"]])["cfg.usb"]["status"]
                          for k in ("ce", "certin", "dpdp"))
         self.assertEqual([st(u) for u in ("blocked", "read_only", "allowed", "", None, "BLOCKED")],
-                         [("pass",) * 3, ("pass",) * 3, ("info", "warn", "info"), ("unknown",) * 3, ("unknown",) * 3, ("unknown",) * 3])
+                         [("pass",) * 3, ("pass",) * 3, ("info", "warn", "info"), ("info", "unknown", "info"), ("info", "unknown", "info"),
+                          ("info", "unknown", "info")])
         self.assertIn("CERT-In EMS.4", compliance.usb_check({"usb_storage": "allowed"}, strict=True)["detail"])
 
     def test_firmware_age(self):

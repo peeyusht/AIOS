@@ -173,7 +173,9 @@ Task Scheduler task "ShadowFiler" (supervisor → agent, `pythonw`, no console).
   2026): the same checks are judged by each framework in `FRAMEWORKS` through `judge_framework`, which the
   server imports too; a framework may re-judge a check from its `fact` (CERT-In: lockout 3 to 5) or by a
   device label (DPDP: unencrypted drives fail only on a device labelled `personal_data`). Exceptions are per
-  check and hold in every framework. An area of notes only is `info` and does not count as met. Wording
+  check and hold in every framework. An area of notes only is `info` and does not count as met. A check a
+  framework does not ask for (USB storage and logs in Cyber Essentials, log retention in DPDP on an unlabelled
+  device) is a note there even when it could not be read: it must never pull that framework's area down. Wording
   rules: the CERT-In baseline audit is something an MSME "may" have, never "mandatory"; the DPDP page is
   "Rule 6 and 7 evidence", never "DPDP compliance"; our own mappings and numbers say so in the text.
 - `remedy.py` is the only code that changes installed software or a running service, and only while

@@ -494,17 +494,19 @@ def usb_check(p: dict, strict: bool = False) -> dict:
     its own check), so allowed USB storage is a note there and in DPDP. CERT-In EMS.4 asks to "restrict or
     control" removable media, so there (strict) allowed is a look, not a fail: blocking is not required."""
     u = p.get("usb_storage")
+    u = u if u in USB_STATES else None
     title = "USB storage is blocked or read-only"
-    if u not in USB_STATES:
-        return _check("cfg.usb", title, "unknown", "Whether USB drives can be used could not be read on the PC.")
+    if u is None:      # not asked by Cyber Essentials or DPDP: a check they do not ask for never pulls an area down
+        return {**_check("cfg.usb", title, "unknown" if strict else "info", "Whether USB drives can be used could not be read on the PC."),
+                "fact": u}
     if u != "allowed":
-        return _check("cfg.usb", title, "pass", "USB drives cannot be used for storage." if u == "blocked" else
-                      "USB drives can be read but not written to.")
-    return _check("cfg.usb", title, "warn" if strict else "info",
+        return {**_check("cfg.usb", title, "pass", "USB drives cannot be used for storage." if u == "blocked" else
+                         "USB drives can be read but not written to."), "fact": u}
+    return {**_check("cfg.usb", title, "warn" if strict else "info",
                   "USB drives can be read and written. " + ("CERT-In EMS.4 asks to restrict or control removable media." if strict else
                   "Cyber Essentials does not ask to restrict them (that AutoPlay is off is its rule); CERT-In does."),
                   fix="Group Policy: Computer Configuration > Administrative Templates > System > Removable Storage Access > "
-                      "Removable Disks: Deny write access (or deny all access).")
+                      "Removable Disks: Deny write access (or deny all access)."), "fact": u}
 
 
 def unused_check(n, names=()) -> dict | None:
@@ -594,9 +596,10 @@ def log_checks(f: dict, rule: str = "ce", labels=()) -> list:
     lim = {"certin": THRESHOLDS["log_days_certin"], "dpdp": THRESHOLDS["log_days_dpdp"]}.get(rule)
     applies = rule == "certin" or (rule == "dpdp" and "personal_data" in labels)
     title = f"The Security log reaches back {lim} days" if lim else "How far back the Security log reaches"
-    if not isinstance(days, int) or mode not in LOG_MODES:
-        ret = _check("log.retention", title, "unknown", "The Security log could not be read (it needs administrator rights; the "
-                                                         "installed device agent can read it, this console cannot).")
+    if not isinstance(days, int) or mode not in LOG_MODES:      # a check not asked for never pulls an area down
+        ret = _check("log.retention", title, "unknown" if applies else "info",
+                     "The Security log could not be read (it needs administrator rights; the installed device agent can read it, "
+                     "this console cannot).")
     else:
         keeps = mode != "circular"
         say = (f"The Security log reaches back {days} days and " + ("archives itself when full (AutoBackup), so older entries are kept "
@@ -614,7 +617,7 @@ def log_checks(f: dict, rule: str = "ce", labels=()) -> list:
                          fix="In an administrator terminal: wevtutil sl Security /rt:true /ab:true (archive instead of overwrite; watch "
                              "the disk), or send the logs to your own log collection. This product never collects logs." if short else None)
     if not isinstance(lo, bool) or not isinstance(us, bool):
-        aud = _check("log.audit", "Sign-ins and account changes are recorded", "unknown",
+        aud = _check("log.audit", "Sign-ins and account changes are recorded", "info" if rule == "ce" else "unknown",
                      "The audit settings could not be read (they need administrator rights).")
     else:
         gaps = (["sign-ins (success and failure) are not both recorded"] if not lo else []) + (["changes to user accounts are not recorded"] if not us else [])
@@ -967,10 +970,12 @@ def _on_pc(ch: dict) -> dict:
         ch["detail"] = "The device could not read its account lockout setting."
     if ch["status"] == "unknown" and ch["id"] == "cfg.pwpolicy":
         ch["detail"] = "The device could not read its password policy."
-    if ch["status"] == "unknown" and ch["id"] == "log.retention":
+    if ch["id"] == "log.retention" and ch["detail"].startswith("The Security log could not be read"):
         ch["detail"] = "The device could not read its Security log (an agent that is not the installed service cannot)."
-    if ch["status"] == "unknown" and ch["id"] == "log.audit":
+    if ch["id"] == "log.audit" and ch["detail"].startswith("The audit settings could not be read"):
         ch["detail"] = "The device could not read its audit settings (an agent that is not the installed service cannot)."
+    if ch["status"] in ("unknown", "info") and ch["id"] == "cfg.usb" and ch.get("fact") is None:
+        ch["detail"] = "The device could not read whether USB drives can be used."
     if ch["status"] == "unknown" and ch["id"] == "net.wifi":
         ch["detail"] = "The device could not read its Wi-Fi settings."
     if ch["status"] == "unknown" and ch["id"] == "upd.firmware":
@@ -999,9 +1004,11 @@ def verdict(fw: str, ch: dict, labels=(), remote: bool = False) -> dict:
         ch.update({k: u[k] for k in ("title", "status", "detail", "fix")})
         if remote:
             _on_pc(ch)
-    if ch["id"] == "cfg.usb" and f.get("usb") == "strict" and ch["status"] == "info":
-        u = usb_check({"usb_storage": "allowed"}, strict=True)
-        ch.update(status=u["status"], detail=u["detail"])
+    if ch["id"] == "cfg.usb" and f.get("usb") == "strict" and "fact" in ch:
+        u = usb_check({"usb_storage": ch["fact"]}, strict=True)
+        ch.update({k: u[k] for k in ("status", "detail", "fix")})
+        if remote:
+            _on_pc(ch)
     if ch["id"] == "cfg.encryption" and f["encryption"] == "personal_data" and ch["status"] == "info":
         base = ch["detail"].split(" Not a Cyber Essentials")[0]
         if ch.get("fix"):
