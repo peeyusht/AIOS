@@ -105,6 +105,15 @@ $lockout = NetNum '^Lockout threshold' 'Never'
 $pwmin = NetNum '^Minimum password length' ''
 $pwage = NetNum '^Maximum password age' 'Unlimited'
 $pwhist = NetNum '^Length of password history' 'None'
+# Old or risky ways in (spec F-7). Each is true/false, or $null when it could not be read. Win32_OptionalFeature
+# answers without administrator rights (DISM does not); a PowerShell 2.0 feature that is not listed at all was
+# removed from Windows, which counts as not installed, but only when the list itself could be read.
+$smb = Get-SmbServerConfiguration
+$feat = @(Get-CimInstance Win32_OptionalFeature -Filter "Name='MicrosoftWindowsPowerShellV2Root' OR Name='MicrosoftWindowsPowerShellV2' OR Name='SMB1Protocol'")
+$ts = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'
+$deny = Reg $ts 'fDenyTSConnections'
+$nla = Reg "$ts\WinStations\RDP-Tcp" 'UserAuthentication'
+$rr = Get-CimInstance Win32_Service -Filter "Name='RemoteRegistry'"
 $out = [pscustomobject]@{
   computer = "$env:COMPUTERNAME"; user = "$env:USERNAME"; manufacturer = "$($cs.Manufacturer)"; model = "$($cs.Model)";
   serial = "$($bios.SerialNumber)"; edition = "$($cv.EditionID)"; display_version = "$($cv.DisplayVersion)";
@@ -118,6 +127,11 @@ $out = [pscustomobject]@{
   me_admin = if ($system) { [bool]($usid -and (@($admins | ForEach-Object { $_.sid }) -contains $usid)) } else { [bool]($who -match 'S-1-5-32-544') };
   as_system = $system; user_hive = $hive; lockout_threshold = $lockout;
   pw_min_length = $pwmin; pw_max_age_days = $pwage; pw_history = $pwhist;
+  smb1_on = if ($smb) { [bool]$smb.EnableSMB1Protocol } else { $null };
+  rdp_on = if ($null -ne $deny) { [int]$deny -eq 0 } else { $null };
+  rdp_nla = if ($null -ne $nla) { [int]$nla -eq 1 } else { $null };
+  remote_registry_on = if ($rr) { $rr.State -eq 'Running' -or $rr.StartMode -eq 'Auto' } else { $null };
+  psv2_present = if ($feat.Count) { [bool]@($feat | Where-Object { $_.Name -like 'MicrosoftWindowsPowerShellV2*' -and [int]$_.InstallState -eq 1 }).Count } else { $null };
   screensaver = [pscustomobject]@{ active = "$(Reg $desk 'ScreenSaveActive')"; secure = "$(Reg $desk 'ScreenSaverIsSecure')";
     timeout = "$(Reg $desk 'ScreenSaveTimeOut')" };
   inactivity = [int](Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'InactivityTimeoutSecs');
@@ -271,6 +285,7 @@ def configuration_checks(p: dict) -> list:
                   fix=None if ways else "Settings > Accounts > Sign-in options, and Settings > System > Power > Screen and sleep.")]
     out.append(unlock_check(p))
     out.append(password_policy_check(p))
+    out += protocol_checks(p)
     auto_off = p.get("autoplay_off") == 1 or (p.get("autorun_policy") or 0) >= 0x91
     out.append(_check("cfg.autoplay", "AutoPlay is off, so a plugged-in drive runs nothing by itself",
                       "pass" if auto_off else "fail",
@@ -362,6 +377,49 @@ def password_policy_check(p: dict, rule: str = "ce") -> dict:
                      + (f" Passwords are forced to change every {age} days, which Cyber Essentials advises against." if age > 0 else ""),
                      fix=None if ok else f"In an administrator terminal: net accounts /minpwlen:{lim}, or turn on multi-factor login."),
             "fact": fact}
+
+
+def _b(v):
+    return v if isinstance(v, bool) else None
+
+
+def protocol_checks(p: dict) -> list:
+    """Old or risky ways into the PC (spec F-7, CERT-In SC.2 "disable unnecessary features, ports, services and
+    protocols"): SMBv1, Remote Desktop without sign-in first (NLA), Remote Registry, PowerShell 2.0. Each reading
+    is true/false; anything else (not read, another type) is unknown, never a pass."""
+    smb1, rdp, nla, rr, ps2 = (_b(p.get(k)) for k in ("smb1_on", "rdp_on", "rdp_nla", "remote_registry_on", "psv2_present"))
+    nope = "Could not be read on the PC."
+    out = [_check("cfg.smb1", "The old SMBv1 file-sharing protocol is off",
+                  "unknown" if smb1 is None else "fail" if smb1 else "pass",
+                  nope if smb1 is None else
+                  "SMBv1 is switched on for file sharing. It is the protocol WannaCry spread through; nothing current needs it." if smb1 else
+                  "SMBv1 is off.",
+                  fix="In an administrator PowerShell: Set-SmbServerConfiguration -EnableSMB1Protocol $false" if smb1 else None)]
+    on_no_nla = rdp and nla is False
+    out.append(_check("cfg.rdp", "Remote Desktop is off, or asks for sign-in before a session starts",
+                      "unknown" if rdp is None or (rdp and nla is None) else "warn" if on_no_nla else "info" if rdp else "pass",
+                      nope if rdp is None or (rdp and nla is None) else
+                      "Remote Desktop is on and does not ask for sign-in first (Network Level Authentication is off), so anyone who "
+                      "can reach it gets the Windows sign-in screen." if on_no_nla else
+                      "Remote Desktop is on and asks for sign-in before a session starts (Network Level Authentication). Keep it "
+                      "reachable only from where it is needed; CERT-In NES.3 asks for remote access over a VPN with multi-factor login." if rdp else
+                      "Remote Desktop is off.",
+                      fix="Settings > System > Remote Desktop: switch it off, or require devices to use Network Level Authentication."
+                      if on_no_nla else None))
+    out.append(_check("cfg.remreg", "Remote Registry is not running",
+                      "unknown" if rr is None else "warn" if rr else "pass",
+                      nope if rr is None else
+                      "The Remote Registry service is running or starts by itself, so the registry can be read over the network." if rr else
+                      "Remote Registry is stopped and does not start by itself.",
+                      fix="In an administrator terminal: sc config RemoteRegistry start= disabled, then sc stop RemoteRegistry" if rr else None))
+    out.append(_check("cfg.psv2", "PowerShell 2.0 is not installed",
+                      "unknown" if ps2 is None else "warn" if ps2 else "pass",
+                      nope if ps2 is None else
+                      "PowerShell 2.0 is installed. It has none of the logging and protections of later versions and is used to get "
+                      "around them." if ps2 else "PowerShell 2.0 is not installed.",
+                      fix="In an administrator PowerShell: Disable-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2Root"
+                      if ps2 else None))
+    return out
 
 
 def security_release_due(today: date) -> date:
@@ -610,7 +668,8 @@ FRAMEWORKS = {
     "ce": {"title": "Cyber Essentials", "scheme": SCHEME, "unlock": (1, THRESHOLDS["unlock_tries"]), "unlock_ref": "Cyber Essentials",
            "encryption": "note",
            "controls": tuple((k, t, a, ids) for (k, t, a), ids in zip(CONTROLS, (
-               FW_IDS, ("cfg.lock", "cfg.unlock", "cfg.pwpolicy", "cfg.autoplay", "cfg.guest", "cfg.password", "cfg.unused", "cfg.encryption"),
+               FW_IDS, ("cfg.lock", "cfg.unlock", "cfg.pwpolicy", "cfg.autoplay", "cfg.guest", "cfg.password", "cfg.unused",
+                        "cfg.smb1", "cfg.rdp", "cfg.remreg", "cfg.psv2", "cfg.encryption"),
                UPD_IDS, ("acc.daily", "acc.admins"), MAL_IDS))),
            "declared": tuple((k, why) for k, _, why in DECLARED),
            "footer": "This follows the Cyber Essentials control areas but is not a certificate."},
@@ -620,9 +679,9 @@ FRAMEWORKS = {
                    ("nes", "Network security (NES)", "NES.1: the host firewall is on and configured.", ("fw.on", "fw.default", "fw.rules")),
                    ("ems", "Endpoint security (EMS)", "EMS.1 and EMS.4: antivirus on and current; a plugged-in drive runs nothing by itself.",
                     MAL_IDS + ("cfg.autoplay",)),
-                   ("sc", "Secure configuration (SC)", "SC.2 and SC.3: unneeded ports and shares closed, default accounts off, "
-                                                       "unsupported software removed.",
-                    ("fw.ports", "fw.shares", "cfg.guest", "upd.unsupported", "cfg.lock", "cfg.encryption")),
+                   ("sc", "Secure configuration (SC)", "SC.2 and SC.3: unneeded ports, shares, services and protocols off, default "
+                                                       "accounts off, unsupported software removed.",
+                    ("fw.ports", "fw.shares", "cfg.smb1", "cfg.rdp", "cfg.remreg", "cfg.psv2", "cfg.guest", "upd.unsupported", "cfg.lock", "cfg.encryption")),
                    ("pm", "Patch management (PM)", "PM.1 and PM.2: Windows and applications patched; known-exploited flaws followed.",
                     ("upd.supported", "upd.windows", "upd.automatic", "upd.flaws", "upd.coverage", "upd.browsers", "upd.pending")),
                    ("rpp", "Password policy (RPP)", "RPP.1 and RPP.2: passwords of 8 characters or more that expire and are not reused; "
@@ -648,9 +707,9 @@ FRAMEWORKS = {
                  ("access", "6(1)(b) Access control", "Access to the computer resources that hold personal data is controlled. "
                                                       "The rule gives no numbers; lockout and password length use Cyber Essentials' own.",
                   ("cfg.unlock", "cfg.pwpolicy", "cfg.password", "cfg.guest", "cfg.unused", "cfg.lock", "acc.daily", "acc.admins") + FW_IDS),
-                 ("other", "Other reasonable safeguards", "Patching and malware protection. Rule 6 does not name these; placing them "
-                                                          "under its reasonable security safeguards is our own mapping.",
-                  UPD_IDS + MAL_IDS + ("cfg.autoplay",))),
+                 ("other", "Other reasonable safeguards", "Patching, malware protection and old protocols switched off. Rule 6 does not "
+                                                          "name these; placing them under its reasonable security safeguards is our own mapping.",
+                  UPD_IDS + MAL_IDS + ("cfg.autoplay", "cfg.smb1", "cfg.rdp", "cfg.remreg", "cfg.psv2"))),
              "declared": (("backups", "DPDP Rule 6(1)(d): continuity measures, including backups."),
                           ("backup_test", "DPDP Rule 6(1)(d): backups that can be restored."),
                           ("incident_plan", "DPDP Rule 7: a breach is told to the Board and to the people affected, with a detailed "
